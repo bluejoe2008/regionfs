@@ -21,10 +21,6 @@ class BlobFsClientException(msg: String, cause: Throwable = null) extends Runtim
 
 }
 
-case class NodeStat(nodeId: Int, rpcAddress: String) {
-
-}
-
 class FsClient(zks: String) extends Logging {
   val zk = new ZooKeeper(zks, 2000, new Watcher {
     override def process(event: WatchedEvent): Unit = {
@@ -33,8 +29,8 @@ class FsClient(zks: String) extends Logging {
   });
 
   //get all nodes
-  val nodes = ArrayBuffer[NodeStat]();
-  nodes ++= zk.getChildren("/blobfs/nodes", new Watcher() {
+  val clients = ArrayBuffer[FsNodeClient]();
+  clients ++= zk.getChildren("/blobfs/nodes", new Watcher() {
     override def process(event: WatchedEvent): Unit = {
       logger.debug("event:" + event);
     }
@@ -46,16 +42,16 @@ class FsClient(zks: String) extends Logging {
     }, null);
 
     val json = JSON.parseFull(new String(data)).get.asInstanceOf[Map[String, _]];
-    NodeStat(json("nodeId").asInstanceOf[Double].toInt, json("rpcAddress").asInstanceOf[String]);
+    FsNodeClient.connect(json("rpcAddress").asInstanceOf[String])
   });
 
-  if (nodes.isEmpty) {
+  if (clients.isEmpty) {
     throw new BlobFsClientException("no serving data nodes");
   }
 
   def writeFile(is: InputStream, totalLength: Long): FileId = {
-    val n = new Random().nextInt(nodes.size);
-    FsNodeClient.connect(nodes(n).rpcAddress).writeFile(is, totalLength);
+    val n = new Random().nextInt(clients.size);
+    clients(n).writeFile(is, totalLength);
   }
 }
 
@@ -68,7 +64,7 @@ object FsNodeClient {
 
 class FsNodeClient(host: String, port: Int) {
   val rpcConf = new RpcConf()
-  val config = RpcEnvClientConfig(rpcConf, "hello-client")
+  val config = RpcEnvClientConfig(rpcConf, "blobfs-client")
   val rpcEnv: RpcEnv = NettyRpcEnvFactory.create(config)
   val endPointRef: RpcEndpointRef = rpcEnv.setupEndpointRef(RpcAddress(host, port), "blobfs-service")
 
@@ -81,6 +77,7 @@ class FsNodeClient(host: String, port: Int) {
     val futures = ArrayBuffer[Future[(Int, Option[FileId])]]();
     try {
       while (n >= 0) {
+        //10k
         val bytes = new Array[Byte](10240);
         n = is.read(bytes);
         if (n > 0) {

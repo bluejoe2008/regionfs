@@ -1,7 +1,6 @@
 package cn.graiph.blobfs
 
 import java.io.InputStream
-import java.util.UUID
 
 import cn.graiph.blobfs.util.Logging
 import net.neoremind.kraps.RpcConf
@@ -17,7 +16,8 @@ import scala.concurrent.{Await, Future}
 import scala.util.Random
 import scala.util.parsing.json.JSON
 
-class BlobFsClientException(msg: String, cause: Throwable = null) extends RuntimeException(msg, cause) {
+class BlobFsClientException(msg: String, cause: Throwable = null)
+  extends RuntimeException(msg, cause) {
 
 }
 
@@ -68,58 +68,71 @@ class FsNodeClient(host: String, port: Int) {
   val rpcEnv: RpcEnv = NettyRpcEnvFactory.create(config)
   val endPointRef: RpcEndpointRef = rpcEnv.setupEndpointRef(RpcAddress(host, port), "blobfs-service")
 
+  val CHUNK_SIZE: Int = 10240
+
   def writeFile(is: InputStream, totalLength: Long): FileId = {
-    //split files, if required
-    var blocks = 0;
-    var n = 0;
-    var length = 0;
-    val uuid = UUID.randomUUID().toString;
-    val futures = ArrayBuffer[Future[(Int, Option[FileId])]]();
-    try {
-      while (n >= 0) {
-        //10k
-        val bytes = new Array[Byte](10240);
-        n = is.read(bytes);
-        if (n > 0) {
-          //send this block
+    //small file
+    if (totalLength <= CHUNK_SIZE) {
+      val bytes = new Array[Byte](CHUNK_SIZE);
+      val n = is.read(bytes);
+      val res = Await.result(endPointRef.ask[SendCompleteFileResponse](SendCompleteFileRequest(bytes, totalLength)),
+        Duration.apply("30s"));
 
-          val future: Future[(Int, Option[FileId])] = endPointRef.ask[(Int, Option[FileId])](
-            SendFileBlock(uuid, bytes.slice(0, n), length, n, totalLength, blocks))
+      res.fileId;
+    }
+    else {
+      //split files
+      val res = Await.result(endPointRef.ask[StartSendChunksResponse](StartSendChunksRequest(totalLength)),
+        Duration.apply("30s"));
+      val transId = res.transId;
 
-          futures += future;
+      var blocks = 0;
+      var offset = 0;
+      var n = 0;
+      val futures = ArrayBuffer[Future[SendChunkResponse]]();
+      try {
+        while (n >= 0) {
+          //10k
+          val bytes = new Array[Byte](CHUNK_SIZE);
+          n = is.read(bytes);
+          if (n > 0) {
+            //send this block
+            val future: Future[SendChunkResponse] = endPointRef.ask[SendChunkResponse](
+              SendChunkRequest(transId, bytes.slice(0, n), offset, n, blocks))
 
-          future.onComplete {
-            case scala.util.Success(value) => {
-              println(s"Got the result = $value")
+            futures += future;
+            future.onComplete {
+              case scala.util.Success(value) => {
+                println(s"Got the result = $value")
+              }
+
+              case scala.util.Failure(e) => println(s"Got error: $e")
             }
 
-            case scala.util.Failure(e) => println(s"Got error: $e")
+            blocks += 1;
+            offset += n;
+          }
+        }
+
+        //yes, end of file
+        //endPointRef.send(SendFileCompelte(fileId, blocks, length));
+        //Await.result(CompletableFuture.allOf(futures), Duration.apply("30s"))
+        //TODO: ugly code, use CompletableFuture instead, if possible:)
+        val res = futures.map(future =>
+          Await.result(future, Duration.apply("30s")))
+
+        res.head.fileId;
+      }
+      catch {
+        case e: Throwable =>
+          e.printStackTrace();
+
+          if (blocks > 0) {
+            endPointRef.send(DiscardChunksRequest(transId));
           }
 
-          blocks += 1;
-          length += n;
-        }
+          throw e;
       }
-
-      //yes, end of file
-      //endPointRef.send(SendFileCompelte(fileId, blocks, length));
-      //Await.result(CompletableFuture.allOf(futures), Duration.apply("30s"))
-      //TODO: ugly code, use CompletableFuture instead, if possible:)
-      futures.foreach(future =>
-        Await.result(future, Duration.apply("30s")))
-
-      val fileId = futures.flatMap(_.value).map(_.get._2).filter(_.isDefined).map(_.get).head;
-      fileId;
-    }
-    catch {
-      case e: Throwable =>
-        e.printStackTrace();
-
-        if (blocks > 0) {
-          endPointRef.send(SendFileDiscard(uuid));
-        }
-
-        throw e;
     }
   }
 }

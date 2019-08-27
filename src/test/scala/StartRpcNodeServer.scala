@@ -8,6 +8,6 @@ import cn.graiph.blobfs.{FileWriteCursor, FsRpcServer}
 object StartRpcNodeServer {
   def main(args: Array[String]) {
     new FsRpcServer(new File("./"), "localhost",
-      1224, FileWriteCursor(1, new File("./"), 1001, 0, 0)).start();
+      1224, Array(FileWriteCursor(1, new File("./"), 1001, 0, 0))).start();
   }
 }

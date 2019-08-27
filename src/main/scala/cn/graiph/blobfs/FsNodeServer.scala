@@ -1,8 +1,9 @@
 package cn.graiph.blobfs
 
 import java.io._
-import java.util.Properties
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.{CRC32, CheckedInputStream}
+import java.util.{Properties, Random}
 
 import cn.graiph.blobfs.util.{Configuration, ConfigurationEx, Logging}
 import com.google.gson.Gson
@@ -17,14 +18,12 @@ import scala.collection.mutable.ArrayBuffer
 import scala.collection.{JavaConversions, mutable}
 
 class BlobFsServersException(msg: String, cause: Throwable = null) extends RuntimeException(msg, cause) {
-
 }
 
 /**
   * Created by bluejoe on 2019/8/22.
   */
 object FsNodeServer {
-
   def build(configFile: File): FsNodeServer = {
     val props = new Properties();
     val fis = new FileInputStream(configFile);
@@ -43,19 +42,21 @@ object FsNodeServer {
     if (!storeDir.exists())
       throw new BlobFsServersException(s"store dir does not exist: ${storeDir.getCanonicalFile.getAbsolutePath}");
 
-    val nodeId = conf.getRequiredValueAsInt("data.nodeId");
+    //val nodeId = conf.getRequiredValueAsInt("data.nodeId");
+    val regions = conf.getRequiredValueAsString("data.regions").split(",").map(_.toInt);
+
     new FsNodeServer(
       conf.getRequiredValueAsString("zookeeper.address"),
-      nodeId,
+      regions,
       storeDir,
       conf.getValueAsString("server.host", "localhost"),
       conf.getValueAsInt("server.port", 1224),
-      FileWriteCursorIO.load(storeDir, nodeId)
+      FileWriteCursorIO.loadCursors(storeDir, regions).values.toArray
     )
   }
 }
 
-class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port: Int, cursor: FileWriteCursor) {
+class FsNodeServer(zks: String, regions: Array[Int], storeDir: File, host: String, port: Int, cursors: Array[FileWriteCursor]) {
   var rpcServer: FsRpcServer = null;
 
   def start() {
@@ -71,10 +72,12 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       zk.create("/blobfs/nodes", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
 
     val json = new Gson().toJson(JavaConversions.mapAsJavaMap(
-      Map("nodeId" -> nodeId, "rpcAddress" -> s"$host:$port"))).getBytes;
+      Map("regions" -> regions, "rpcAddress" -> s"$host:$port"))).getBytes;
+
+    val nodeId = s"${host}_${port}";
     zk.create(s"/blobfs/nodes/$nodeId", json, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL);
 
-    rpcServer = new FsRpcServer(storeDir, host, port, cursor);
+    rpcServer = new FsRpcServer(storeDir, host, port, cursors);
     rpcServer.start();
   }
 
@@ -85,23 +88,26 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 }
 
 object FileWriteCursorIO {
-  def load(storeDir: File, nodeId: Int): FileWriteCursor = {
-    val cursorFile = new File(storeDir, "cursor");
-    val values: (Int, Int, Long) = {
-      if (cursorFile.exists()) {
-        val dis = new DataInputStream(new FileInputStream(cursorFile));
-        val v1 = dis.readInt()
-        val v2 = dis.readInt()
-        val v3 = dis.readLong()
-        dis.close()
-        (v1, v2, v3)
+  def loadCursors(storeDir: File, regions: Array[Int]): Map[Int, FileWriteCursor] = {
+    regions.map((region: Int) => {
+      val regionDir = new File(storeDir, "" + region);
+      val cursorFile = new File(regionDir, "/cursor");
+      val values: (Int, Int, Long) = {
+        if (cursorFile.exists()) {
+          val dis = new DataInputStream(new FileInputStream(cursorFile));
+          val v1 = dis.readInt()
+          val v2 = dis.readInt()
+          val v3 = dis.readLong()
+          dis.close()
+          (v1, v2, v3)
+        }
+        else {
+          (0, 0, 0)
+        }
       }
-      else {
-        (0, 0, 0)
-      }
-    }
 
-    FileWriteCursor(nodeId, storeDir, values._1, values._2, values._3)
+      region -> FileWriteCursor(region, regionDir, values._1, values._2, values._3)
+    }).toMap
   }
 
   def save(storeDir: File, cursor: FileWriteCursor): Unit = {
@@ -229,11 +235,12 @@ case class FileWriteCursor(rangeId: Int, val storeDir: File,
   }
 }
 
-class FsRpcServer(storeDir: File, host: String, port: Int, cursor: FileWriteCursor) extends Logging {
+class FsRpcServer(storeDir: File, host: String, port: Int, cursors: Array[FileWriteCursor])
+  extends Logging {
   var rpcEnv: RpcEnv = null;
 
   def start() {
-    logger.debug(s"cursor: $cursor");
+    logger.debug(s"cursors: $cursors");
     logger.debug(s"storeDir: ${storeDir.getCanonicalFile.getAbsolutePath}")
     logger.debug(s"served on $host:$port");
 
@@ -249,7 +256,8 @@ class FsRpcServer(storeDir: File, host: String, port: Int, cursor: FileWriteCurs
       rpcEnv.shutdown();
   }
 
-  class FileRpcEndpoint(override val rpcEnv: RpcEnv, storeDir: File) extends RpcEndpoint with Logging {
+  class FileRpcEndpoint(override val rpcEnv: RpcEnv, storeDir: File)
+    extends RpcEndpoint with Logging {
     val queue = new FileTaskQueue(storeDir);
 
     override def onStart(): Unit = {
@@ -257,12 +265,22 @@ class FsRpcServer(storeDir: File, host: String, port: Int, cursor: FileWriteCurs
     }
 
     override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
-      case SendFileBlock(uuid: String, block: Array[Byte], offset: Int, blockLength: Int, totalLength: Long, blockIndex: Int) => {
-        logger.debug(s"received: ${SendFileBlock(uuid, block, offset, blockLength, totalLength, blockIndex)}");
-        val opt = queue.get(uuid, totalLength).write(block, offset, blockLength, totalLength, blockIndex);
-        opt.foreach(_ => queue.remove(uuid))
+      case SendCompleteFileRequest(block: Array[Byte], totalLength: Long) => {
+        logger.debug(s"received: ${SendCompleteFileRequest(block, totalLength)}");
+        val opt = new queue.FileTask(totalLength).write(block, 0, totalLength.toInt, 0);
+        context.reply(SendCompleteFileResponse(opt.get));
+      }
+      case StartSendChunksRequest(totalLength: Long) => {
+        val transId = queue.create(totalLength);
+        context.reply(StartSendChunksResponse(transId));
+      }
+      case SendChunkRequest(transId: Int, block: Array[Byte], offset: Long, blockLength: Int, blockIndex: Int) => {
+        logger.debug(s"received: ${SendChunkRequest(transId: Int, block: Array[Byte], offset: Long, blockLength: Int, blockIndex: Int)}");
+        val opt = queue.get(transId).write(block, offset, blockLength, blockIndex);
+        opt.foreach(_ => queue.remove(transId))
         context.reply(blockIndex -> opt);
       }
+
     }
 
     override def onStop(): Unit = {
@@ -271,18 +289,25 @@ class FsRpcServer(storeDir: File, host: String, port: Int, cursor: FileWriteCurs
   }
 
   class FileTaskQueue(storeDir: File) extends Logging {
-    val all = mutable.Map[String, FileTask]();
+    val transactionalTasks = mutable.Map[Int, FileTask]();
+    val transactionIdGen = new AtomicInteger();
+    val rand = new Random();
 
-    def remove(uuid: String) = all.remove(uuid)
+    def create(totalLength: Long): Int = {
+      val task = new FileTask(totalLength);
+      val transId = transactionIdGen.incrementAndGet();
+      transactionalTasks += transId -> task;
+      transId;
+    }
 
-    def get(uuid: String, totalLength: Long) = {
-      all.getOrElseUpdate(uuid, {
-        //create fileId
-        new FileTask(totalLength)
-      })
+    def remove(uuid: Int) = transactionalTasks.remove(uuid)
+
+    def get(transId: Int) = {
+      transactionalTasks(transId);
     }
 
     class FileTask(totalLength: Long) {
+      val cursor = cursors(rand.nextInt(cursors.size));
 
       case class Chunk(file: File, length: Int, index: Int) {
       }
@@ -310,7 +335,7 @@ class FsRpcServer(storeDir: File, host: String, port: Int, cursor: FileWriteCurs
         }
       }
 
-      def write(block: Array[Byte], offset: Int, blockLength: Int, totalLength: Long, blockIndex: Int): Option[FileId] = {
+      def write(block: Array[Byte], offset: Long, blockLength: Int, blockIndex: Int): Option[FileId] = {
         logger.debug(s"writing block: $blockIndex");
 
         val tmpFile = File.createTempFile("blobfs-", ".chunk");

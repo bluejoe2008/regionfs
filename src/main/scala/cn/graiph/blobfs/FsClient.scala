@@ -5,15 +5,15 @@ import java.io.InputStream
 import cn.graiph.blobfs.util.Logging
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.NettyRpcEnvFactory
-import net.neoremind.kraps.rpc.{RpcAddress, RpcEndpointRef, RpcEnv, RpcEnvClientConfig}
+import net.neoremind.kraps.rpc.{RpcAddress, RpcEnv, RpcEnvClientConfig}
 import org.apache.zookeeper.{WatchedEvent, Watcher, ZooKeeper}
 
 import scala.collection.JavaConversions._
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, Future}
-import scala.util.Random
 import scala.util.parsing.json.JSON
 
 class BlobFsClientException(msg: String, cause: Throwable = null)
@@ -45,44 +45,128 @@ class FsClient(zks: String) extends Logging {
     FsNodeClient.connect(json("rpcAddress").asInstanceOf[String])
   });
 
+  //TODO: replica vs. node number?
   if (clients.isEmpty) {
     throw new BlobFsClientException("no serving data nodes");
   }
 
+  //get stats
+  val MAX_REGION_SZIE = 1024 * 1024 * 128;
+  val mutableNodeStats = mutable.Map[FsNodeClient, NodeStat]();
+  doStat();
+
+  //TODO: move to agent node?
+  def doStat() = {
+    val nodeStats = clients.map(client => {
+      val ns = client.getNodeStat();
+      client -> NodeStat(ns.maxRegionId, ns.regionCount, ns.sizeMap.filter(_.totalSize < MAX_REGION_SZIE));
+    })
+
+    mutableNodeStats.synchronized {
+      mutableNodeStats.clear();
+      mutableNodeStats ++= nodeStats;
+    }
+  }
+
+  val thread = new Thread(new Runnable {
+    override def run(): Unit = {
+      while (true) {
+        Thread.sleep(1000);
+        doStat();
+      }
+    }
+  });
+
+  thread.start();
+
   def writeFile(is: InputStream, totalLength: Long): FileId = {
-    val n = new Random().nextInt(clients.size);
-    clients(n).writeFile(is, totalLength);
+    //[client1,NodeStat1][client2,NodeStat2]
+    val nodeStats = mutableNodeStats.synchronized(mutableNodeStats.toArray)
+    //exists available regions
+    val available = nodeStats.filter(!_._2.sizeMap.isEmpty);
+    if (!available.isEmpty) {
+      val region = available.
+        flatMap(x => x._2.sizeMap.map(x._1 -> _)). //[client1,(region11,size11)][client1,(region12,size12)][client2,(region21,size21)]
+        groupBy(_._2.regionId). //[region11,[[client1, (region11,size11)],[client2, (region11,size11)]]
+        map(x =>
+        x._1 -> (x._2.head._2.totalSize -> x._2) //[region11,(size11,[[...]])]
+      ).toArray.sortBy(_._2._1).head;
+
+      writeFile(region._2._2.map(_._1), region._1, is, totalLength);
+    }
+    else {
+      val regionIdNew = (nodeStats.map(_._2.maxRegionId) ++ Array(0)).max + 1;
+      val selected = nodeStats.sortBy(_._2.regionCount).take(2);
+      selected.foreach(_._1.createRegion(regionIdNew));
+      writeFile(selected.map(_._1), regionIdNew, is, totalLength);
+    }
+  }
+
+  private def writeFile(clients: Array[FsNodeClient], regionId: Int, is: InputStream, totalLength: Long): FileId = {
+    val res = clients.head.writeFile(regionId: Int, is: InputStream, totalLength,
+      clients.slice(1, clients.length).map(_.remoteAddress));
+
+    FileId.make(regionId, 0, res)
   }
 }
 
 object FsNodeClient {
-  def connect(address: String): FsNodeClient = {
-    val pair = address.split(":");
-    new FsNodeClient(pair(0), pair(1).toInt);
+  def connect(remoteAddress: NodeAddress): FsNodeClient = {
+    new FsNodeClient(remoteAddress);
+  }
+
+  def connect(remoteAddress: String): FsNodeClient = {
+    val pair = remoteAddress.split(":");
+    new FsNodeClient(NodeAddress(pair(0), pair(1).toInt));
   }
 }
 
-class FsNodeClient(host: String, port: Int) {
-  val rpcConf = new RpcConf()
-  val config = RpcEnvClientConfig(rpcConf, "blobfs-client")
-  val rpcEnv: RpcEnv = NettyRpcEnvFactory.create(config)
-  val endPointRef: RpcEndpointRef = rpcEnv.setupEndpointRef(RpcAddress(host, port), "blobfs-service")
+case class RegionStat(regionId: Int, totalSize: Long) {
+
+}
+
+case class NodeStat(maxRegionId: Int, regionCount: Int, sizeMap: Array[RegionStat]) {
+}
+
+case class NodeAddress(host: String, port: Int) {
+
+}
+
+class FsNodeClient(val remoteAddress: NodeAddress) {
+  val endPointRef = {
+    val rpcConf = new RpcConf()
+    val config = RpcEnvClientConfig(rpcConf, "blobfs-client")
+    val rpcEnv: RpcEnv = NettyRpcEnvFactory.create(config)
+
+    rpcEnv.setupEndpointRef(RpcAddress(remoteAddress.host, remoteAddress.port), "blobfs-service")
+  }
 
   val CHUNK_SIZE: Int = 10240
 
-  def writeFile(is: InputStream, totalLength: Long): FileId = {
+  def getNodeStat(): NodeStat = {
+    Await.result(endPointRef.ask[GetNodeStatResponse](GetNodeStatRequest()),
+      Duration.apply("30s")).nodeStat;
+  }
+
+  def createRegion(regionId: Int) = {
+    Await.result(endPointRef.ask[CreateRegionResponse](CreateRegionRequest(regionId)),
+      Duration.apply("30s"));
+  }
+
+  def writeFile(regionId: Int, is: InputStream, totalLength: Long, neighbours: Array[NodeAddress]): Int = {
     //small file
     if (totalLength <= CHUNK_SIZE) {
       val bytes = new Array[Byte](CHUNK_SIZE);
-      val n = is.read(bytes);
-      val res = Await.result(endPointRef.ask[SendCompleteFileResponse](SendCompleteFileRequest(bytes, totalLength)),
+      val res = Await.result(endPointRef.ask[SendCompleteFileResponse](
+        SendCompleteFileRequest(neighbours, regionId, bytes, totalLength)),
         Duration.apply("30s"));
 
-      res.fileId;
+      res.localId;
     }
     else {
       //split files
-      val res = Await.result(endPointRef.ask[StartSendChunksResponse](StartSendChunksRequest(totalLength)),
+      val res = Await.result(endPointRef.ask[StartSendChunksResponse](
+        StartSendChunksRequest(neighbours, regionId, totalLength)),
         Duration.apply("30s"));
       val transId = res.transId;
 
@@ -103,10 +187,10 @@ class FsNodeClient(host: String, port: Int) {
             futures += future;
             future.onComplete {
               case scala.util.Success(value) => {
-                println(s"Got the result = $value")
               }
 
-              case scala.util.Failure(e) => println(s"Got error: $e")
+              case scala.util.Failure(e) => {
+              }
             }
 
             blocks += 1;
@@ -121,7 +205,7 @@ class FsNodeClient(host: String, port: Int) {
         val res = futures.map(future =>
           Await.result(future, Duration.apply("30s")))
 
-        res.head.fileId;
+        res.head.localId;
       }
       catch {
         case e: Throwable =>

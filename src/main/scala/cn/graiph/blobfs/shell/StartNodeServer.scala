@@ -1,11 +1,13 @@
+package cn.graiph.blobfs.shell
+
 import java.io.File
 
 import cn.graiph.blobfs.FsNodeServer
 
 /**
-  * Created by bluejoe on 2019/8/25.
+  * Created by bluejoe on 2019/8/31.
   */
-object StartFsNodeServer {
+object StartNodeServer {
   def main(args: Array[String]) {
     if (args.length != 1)
       throw new RuntimeException("conf file is required!");

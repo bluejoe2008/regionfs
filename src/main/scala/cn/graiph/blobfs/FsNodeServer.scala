@@ -2,7 +2,6 @@ package cn.graiph.blobfs
 
 import java.io._
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.zip.{CRC32, CheckedInputStream}
 import java.util.{Properties, Random}
 
 import cn.graiph.blobfs.util.{Configuration, ConfigurationEx, Logging}
@@ -16,6 +15,8 @@ import org.apache.zookeeper.{CreateMode, WatchedEvent, Watcher, ZooKeeper}
 
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.{JavaConversions, mutable}
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
 
 class BlobFsServersException(msg: String, cause: Throwable = null) extends RuntimeException(msg, cause) {
 }
@@ -38,26 +39,24 @@ object FsNodeServer {
           None;
     })
 
-    val storeDir = conf.getRequiredValueAsFile("data.storeDir", configFile.getParentFile);
-    if (!storeDir.exists())
-      throw new BlobFsServersException(s"store dir does not exist: ${storeDir.getCanonicalFile.getAbsolutePath}");
+    val storeDir = conf.getRequiredValueAsFile("data.storeDir", configFile.getParentFile).
+      getCanonicalFile.getAbsoluteFile;
 
-    //val nodeId = conf.getRequiredValueAsInt("data.nodeId");
-    val regions = conf.getRequiredValueAsString("data.regions").split(",").map(_.toInt);
+    if (!storeDir.exists())
+      throw new BlobFsServersException(s"store dir does not exist: ${storeDir.getPath}");
 
     new FsNodeServer(
       conf.getRequiredValueAsString("zookeeper.address"),
-      regions,
       storeDir,
       conf.getValueAsString("server.host", "localhost"),
-      conf.getValueAsInt("server.port", 1224),
-      FileWriteCursorIO.loadCursors(storeDir, regions).values.toArray
+      conf.getValueAsInt("server.port", 1224)
     )
   }
 }
 
-class FsNodeServer(zks: String, regions: Array[Int], storeDir: File, host: String, port: Int, cursors: Array[FileWriteCursor]) {
+class FsNodeServer(zks: String, storeDir: File, host: String, port: Int) extends Logging {
   var rpcServer: FsRpcServer = null;
+  logger.debug(s"storeDir: ${storeDir.getCanonicalFile.getAbsolutePath}")
 
   def start() {
     val zk = new ZooKeeper(zks, 2000, new Watcher {
@@ -71,13 +70,18 @@ class FsNodeServer(zks: String, regions: Array[Int], storeDir: File, host: Strin
     if (zk.exists("/blobfs/nodes", false) == null)
       zk.create("/blobfs/nodes", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
 
+    if (zk.exists("/blobfs/regions", false) == null)
+      zk.create("/blobfs/regions", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+
+    val regionManager = new RegionManager(storeDir);
     val json = new Gson().toJson(JavaConversions.mapAsJavaMap(
-      Map("regions" -> regions, "rpcAddress" -> s"$host:$port"))).getBytes;
+      Map("regions" -> regionManager.regions.keys.toArray, "rpcAddress" -> s"$host:$port"))).getBytes;
 
     val nodeId = s"${host}_${port}";
     zk.create(s"/blobfs/nodes/$nodeId", json, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL);
 
-    rpcServer = new FsRpcServer(storeDir, host, port, cursors);
+    rpcServer = new FsRpcServer(host, port, regionManager);
+    logger.info(s"starting fs-node on $host:$port");
     rpcServer.start();
   }
 
@@ -87,166 +91,16 @@ class FsNodeServer(zks: String, regions: Array[Int], storeDir: File, host: Strin
   }
 }
 
-object FileWriteCursorIO {
-  def loadCursors(storeDir: File, regions: Array[Int]): Map[Int, FileWriteCursor] = {
-    regions.map((region: Int) => {
-      val regionDir = new File(storeDir, "" + region);
-      val cursorFile = new File(regionDir, "/cursor");
-      val values: (Int, Int, Long) = {
-        if (cursorFile.exists()) {
-          val dis = new DataInputStream(new FileInputStream(cursorFile));
-          val v1 = dis.readInt()
-          val v2 = dis.readInt()
-          val v3 = dis.readLong()
-          dis.close()
-          (v1, v2, v3)
-        }
-        else {
-          (0, 0, 0)
-        }
-      }
-
-      region -> FileWriteCursor(region, regionDir, values._1, values._2, values._3)
-    }).toMap
-  }
-
-  def save(storeDir: File, cursor: FileWriteCursor): Unit = {
-    val cursorFile = new File(storeDir, "cursor");
-    val dos = new DataOutputStream(new FileOutputStream(cursorFile));
-    dos.writeInt(cursor.sequenceId)
-    dos.writeInt(cursor.subId)
-    dos.writeLong(cursor.offset);
-    dos.close
-  }
-}
-
-case class FileWriteCursor(rangeId: Int, val storeDir: File,
-                           var sequenceId: Int, var subId: Int, var offset: Long) {
-
-  class Output {
-    var bodyPtr: FileOutputStream = _;
-    var metaPtr: DataOutputStream = _;
-
-    private def writeMeta(length: Long, crc32: Long): Unit = {
-      //each entry uses 30bytes
-      //[ssss][oooo][oooo][llll][llll][cccc][cccc][__]
-      metaPtr.writeInt(subId);
-      metaPtr.writeLong(offset);
-      metaPtr.writeLong(length);
-      metaPtr.writeLong(crc32);
-      metaPtr.write((0 to 1).map(_ => 0.toByte).toArray);
-    }
-
-    private def writeFileBody(src: File): Int = {
-      //TOOD: optimize writing
-      val is = new FileInputStream(src);
-      var n = 0;
-      var lengthWithPadding = 0;
-      while (n >= 0) {
-        //10K?
-        val bytes = new Array[Byte](10240);
-        n = is.read(bytes);
-        if (n > 0) {
-          bodyPtr.write(bytes);
-          lengthWithPadding += bytes.length;
-        }
-      }
-
-      lengthWithPadding
-    }
-
-    def write(src: File, length: Int): Int = {
-      if (bodyPtr == null) {
-        refresh();
-      }
-
-      val crc32Value = computeCrc32(src)
-      val lengthWithPadding = writeFileBody(src)
-      writeMeta(length, crc32Value);
-      lengthWithPadding;
-    }
-
-    def refresh() = {
-      if (bodyPtr != null)
-        bodyPtr.close();
-      if (metaPtr != null)
-        metaPtr.close();
-
-      val fullId = makeFileId().asHexString();
-      //0001000000000000000000000300e90001
-      //[nn][nn][mm][mm][__][__][ss][ss][ss][ss][ss][ss][ss][ss][oo][oo]
-      val fileId = fullId.substring(0, 4) +
-        "/" + fullId.substring(15, 18) +
-        "/" + fullId.substring(18, 21) +
-        "/" + fullId.substring(21, 24) +
-        "/" + fullId.substring(24, 28);
-
-      val body = new File(storeDir, fileId)
-      body.getParentFile.mkdirs();
-      if (!body.exists())
-        body.createNewFile();
-
-      bodyPtr = new FileOutputStream(body, true); //append only
-      metaPtr = new DataOutputStream(new FileOutputStream(new File(storeDir, fileId + ".meta"), true));
-    }
-  }
-
-  var output: Output = new Output();
-
-  private def makeFileId() = {
-    FileId.make(rangeId, 0, sequenceId, subId);
-  }
-
-  private def moveNext(length: Int) = {
-    subId += 1;
-    offset += length;
-
-    if (subId >= 1000) {
-      //close file first
-      sequenceId += 1;
-      subId = 0;
-      offset = 0;
-
-      //open new files
-      output.refresh();
-    }
-  }
-
-  def save(src: File, length: Int): FileId = {
-    //TODO: transaction assurance
-    val lengthWithPadding = output.write(src, length);
-
-    //TODO: to be optimized
-    FileWriteCursorIO.save(storeDir, this);
-    src.delete();
-    moveNext(lengthWithPadding);
-    makeFileId();
-  }
-
-  def computeCrc32(src: File): Long = {
-    //get crc32
-    val crc32 = new CRC32();
-    val cis = new CheckedInputStream(new FileInputStream(src), crc32);
-    while (cis.read() != -1) {
-    }
-    val crc32Value = crc32.getValue;
-    cis.close();
-    crc32Value
-  }
-}
-
-class FsRpcServer(storeDir: File, host: String, port: Int, cursors: Array[FileWriteCursor])
+class FsRpcServer(host: String, port: Int, regionManager: RegionManager)
   extends Logging {
+
+  val neighbourClients = mutable.Map[NodeAddress, FsNodeClient]();
   var rpcEnv: RpcEnv = null;
 
   def start() {
-    logger.debug(s"cursors: $cursors");
-    logger.debug(s"storeDir: ${storeDir.getCanonicalFile.getAbsolutePath}")
-    logger.debug(s"served on $host:$port");
-
     val config = RpcEnvServerConfig(new RpcConf(), "blobfs-server", host, port);
     rpcEnv = NettyRpcEnvFactory.create(config);
-    val endpoint: RpcEndpoint = new FileRpcEndpoint(rpcEnv, storeDir);
+    val endpoint: RpcEndpoint = new FileRpcEndpoint(rpcEnv);
     rpcEnv.setupEndpoint("blobfs-service", endpoint);
     rpcEnv.awaitTermination();
   }
@@ -256,31 +110,88 @@ class FsRpcServer(storeDir: File, host: String, port: Int, cursors: Array[FileWr
       rpcEnv.shutdown();
   }
 
-  class FileRpcEndpoint(override val rpcEnv: RpcEnv, storeDir: File)
+  def getNeighbourClient(nodeServerAddress: NodeAddress): FsNodeClient = {
+    neighbourClients.getOrElseUpdate(nodeServerAddress, {
+      FsNodeClient.connect(nodeServerAddress)
+    });
+  }
+
+  class FileRpcEndpoint(override val rpcEnv: RpcEnv)
     extends RpcEndpoint with Logging {
-    val queue = new FileTaskQueue(storeDir);
+    val queue = new FileTaskQueue();
 
     override def onStart(): Unit = {
-      println("start endpoint")
+      logger.info(s"endpoint started");
     }
 
     override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
-      case SendCompleteFileRequest(block: Array[Byte], totalLength: Long) => {
-        logger.debug(s"received: ${SendCompleteFileRequest(block, totalLength)}");
-        val opt = new queue.FileTask(totalLength).write(block, 0, totalLength.toInt, 0);
-        context.reply(SendCompleteFileResponse(opt.get));
-      }
-      case StartSendChunksRequest(totalLength: Long) => {
-        val transId = queue.create(totalLength);
-        context.reply(StartSendChunksResponse(transId));
-      }
-      case SendChunkRequest(transId: Int, block: Array[Byte], offset: Long, blockLength: Int, blockIndex: Int) => {
-        logger.debug(s"received: ${SendChunkRequest(transId: Int, block: Array[Byte], offset: Long, blockLength: Int, blockIndex: Int)}");
-        val opt = queue.get(transId).write(block, offset, blockLength, blockIndex);
-        opt.foreach(_ => queue.remove(transId))
-        context.reply(blockIndex -> opt);
+      case GetNodeStatRequest() => {
+        context.reply(GetNodeStatResponse(
+          NodeStat(
+            (regionManager.regions.values.map(_.regionId) ++ Array(0)).max,
+            regionManager.regions.size,
+            regionManager.regions.values.map(x =>
+              RegionStat(x.regionId, x.counterOffset.get)).toArray
+          )
+        )
+        );
       }
 
+      case CreateRegionRequest(regionId: Int) => {
+        regionManager.createNew(regionId);
+        context.reply(CreateRegionResponse(regionId));
+      }
+
+      case SendCompleteFileRequest(neighbours: Array[NodeAddress], regionId: Int, block: Array[Byte], totalLength: Long) => {
+        val opt = new queue.FileTask(regionManager.get(regionId), totalLength).
+          write(block, 0, totalLength.toInt, 0);
+
+        val localId = opt.get
+        //TODO: sync()
+        //ask neigbours
+        val futures = neighbours.map(addr =>
+          getNeighbourClient(addr).endPointRef.ask[SendCompleteFileResponse](
+            SendCompleteFileRequest(Array(), regionId, block, totalLength)))
+
+        //wait all neigbours' reply
+        futures.map(future =>
+          Await.result(future, Duration.apply("30s")))
+
+        context.reply(SendCompleteFileResponse(localId));
+      }
+
+      case StartSendChunksRequest(neighbours: Array[NodeAddress], regionId: Int, totalLength: Long) => {
+        val (transId, task) = queue.create(regionManager.get(regionId), totalLength);
+
+        //notify neighbours
+        val futures = neighbours.map(addr =>
+          addr -> getNeighbourClient(addr).endPointRef.ask[StartSendChunksResponse](
+            StartSendChunksRequest(Array(), regionId, totalLength)))
+
+        //wait all neigbours' reply
+        val transIds = futures.map(x =>
+          x._1 -> Await.result(x._2, Duration.apply("30s")))
+
+        //save these transIds from neighbour
+        transIds.foreach(x => task.addNeighbourTransactionId(x._1, x._2.transId));
+        context.reply(StartSendChunksResponse(transId));
+      }
+
+      case SendChunkRequest(transId: Int, block: Array[Byte], offset: Long, blockLength: Int, blockIndex: Int) => {
+        val task = queue.get(transId);
+        val opt = task.write(block, offset, blockLength, blockIndex);
+        opt.foreach(_ => queue.remove(transId))
+
+        //notify neighbours
+        val ids = task.getNeighbourTransactionIds();
+
+        val futures = ids.map(x => getNeighbourClient(x._1).endPointRef.ask[SendChunkResponse](
+          SendChunkRequest(x._2, block, offset, blockLength, blockIndex)));
+
+        //TODO: sync()?
+        futures.foreach(Await.result(_, Duration.apply("30s")))
+        context.reply(blockIndex -> opt);
+      }
     }
 
     override def onStop(): Unit = {
@@ -288,26 +199,32 @@ class FsRpcServer(storeDir: File, host: String, port: Int, cursors: Array[FileWr
     }
   }
 
-  class FileTaskQueue(storeDir: File) extends Logging {
+  class FileTaskQueue() extends Logging {
     val transactionalTasks = mutable.Map[Int, FileTask]();
     val transactionIdGen = new AtomicInteger();
     val rand = new Random();
 
-    def create(totalLength: Long): Int = {
-      val task = new FileTask(totalLength);
+    def create(region: Region, totalLength: Long): (Int, FileTask) = {
+      val task = new FileTask(region, totalLength);
       val transId = transactionIdGen.incrementAndGet();
       transactionalTasks += transId -> task;
-      transId;
+      (transId, task);
     }
 
     def remove(uuid: Int) = transactionalTasks.remove(uuid)
 
-    def get(transId: Int) = {
+    def get(transId: Int): FileTask = {
       transactionalTasks(transId);
     }
 
-    class FileTask(totalLength: Long) {
-      val cursor = cursors(rand.nextInt(cursors.size));
+    class FileTask(region: Region, totalLength: Long) {
+      val neighbourTransactionIds = mutable.Map[NodeAddress, Int]();
+
+      def addNeighbourTransactionId(address: NodeAddress, transId: Int): Unit = {
+        neighbourTransactionIds += address -> transId;
+      }
+
+      def getNeighbourTransactionIds() = neighbourTransactionIds.toMap
 
       case class Chunk(file: File, length: Int, index: Int) {
       }
@@ -335,7 +252,7 @@ class FsRpcServer(storeDir: File, host: String, port: Int, cursors: Array[FileWr
         }
       }
 
-      def write(block: Array[Byte], offset: Long, blockLength: Int, blockIndex: Int): Option[FileId] = {
+      def write(block: Array[Byte], offset: Long, blockLength: Int, blockIndex: Int): Option[Int] = {
         logger.debug(s"writing block: $blockIndex");
 
         val tmpFile = File.createTempFile("blobfs-", ".chunk");
@@ -348,7 +265,8 @@ class FsRpcServer(storeDir: File, host: String, port: Int, cursors: Array[FileWr
 
         //end of file?
         if (actualBytesWritten >= totalLength) {
-          Some(cursor.save(combine(chunks.toArray), actualBytesWritten))
+          val localId = region.save(() => new FileInputStream(combine(chunks.toArray)), actualBytesWritten, None);
+          Some(localId)
         }
         else {
           None

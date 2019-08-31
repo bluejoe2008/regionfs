@@ -10,9 +10,9 @@ import cn.graiph.blobfs.FsNodeServer
 object StartNodeServer {
   def main(args: Array[String]) {
     if (args.length != 1)
-      throw new RuntimeException("conf file is required!");
+      throw new RuntimeException("conf file is required!")
 
-    val server = FsNodeServer.build(new File(args(0)));
-    server.start();
+    val server = FsNodeServer.build(new File(args(0)))
+    server.start()
   }
 }

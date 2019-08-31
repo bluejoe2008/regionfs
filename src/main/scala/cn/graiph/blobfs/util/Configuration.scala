@@ -10,7 +10,7 @@
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * but WITHOUT ANY WARRANTY without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
@@ -26,7 +26,7 @@ import java.io.File
   * Created by bluejoe on 2019/7/23.
   */
 trait Configuration {
-  def getRaw(name: String): Option[String];
+  def getRaw(name: String): Option[String]
 }
 
 /**
@@ -34,46 +34,46 @@ trait Configuration {
   */
 class ConfigurationEx(conf: Configuration) extends Logging {
   def getRequiredValueAsString(key: String): String = {
-    getRequiredValue(key, (x) => x);
+    getRequiredValue(key, (x) => x)
   }
 
   def getRequiredValueAsInt(key: String): Int = {
-    getRequiredValue(key, (x) => x.toInt);
+    getRequiredValue(key, (x) => x.toInt)
   }
 
   def getRequiredValueAsBoolean(key: String): Boolean = {
-    getRequiredValue(key, (x) => x.toBoolean);
+    getRequiredValue(key, (x) => x.toBoolean)
   }
 
   def getRequiredValueAsFile(key: String, baseDir: File) = {
     getRequiredValue(key, { x =>
-      val file = new File(x);
+      val file = new File(x)
       if (file.isAbsolute)
-        file;
+        file
       else
-        new File(baseDir, x);
-    });
+        new File(baseDir, x)
+    })
   }
 
   private def getRequiredValue[T](key: String, convert: (String) => T)(implicit m: Manifest[T]): T = {
-    getValueWithDefault(key, () => throw new ArgumentRequiredException(key), convert);
+    getValueWithDefault(key, () => throw new ArgumentRequiredException(key), convert)
   }
 
   private def getValueWithDefault[T](key: String, defaultValue: () => T, convert: (String) => T)(implicit m: Manifest[T]): T = {
-    val opt = conf.getRaw(key);
+    val opt = conf.getRaw(key)
     if (opt.isEmpty) {
-      val value = defaultValue();
-      logger.debug(s"no value set for $key, using default: $value");
-      value;
+      val value = defaultValue()
+      logger.debug(s"no value set for $key, using default: $value")
+      value
     }
     else {
-      val value = opt.get;
+      val value = opt.get
       try {
-        convert(value);
+        convert(value)
       }
       catch {
         case e: java.lang.IllegalArgumentException =>
-          throw new WrongArgumentException(key, value, m.runtimeClass);
+          throw new WrongArgumentException(key, value, m.runtimeClass)
       }
     }
   }
@@ -92,12 +92,12 @@ class ConfigurationEx(conf: Configuration) extends Logging {
 
   def getValueAsFile(key: String, baseDir: File, defaultValue: File) = {
     getValueWithDefault(key, () => defaultValue, { x =>
-      val file = new File(x);
+      val file = new File(x)
       if (file.isAbsolute)
-        file;
+        file
       else
-        new File(baseDir, x);
-    });
+        new File(baseDir, x)
+    })
   }
 }
 
@@ -112,5 +112,5 @@ class WrongArgumentException(key: String, value: String, clazz: Class[_]) extend
 }
 
 object ConfigUtils {
-  implicit def config2Ex(conf: Configuration) = new ConfigurationEx(conf);
+  implicit def config2Ex(conf: Configuration) = new ConfigurationEx(conf)
 }

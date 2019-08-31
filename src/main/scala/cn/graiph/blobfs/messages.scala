@@ -13,18 +13,18 @@ case class GetNodeStatRequest() {
 
 }
 
-case class GetNodeStatResponse(nodeStat: NodeStat){
+case class GetNodeStatResponse(nodeStat: NodeStat) {
 
 }
 
-case class SendCompleteFileRequest(neighbours: Array[NodeAddress], regionId: Int, block: Array[Byte], totalLength: Long) {
+case class SendCompleteFileRequest(neighbours: Array[NodeAddress], regionId: Int, bytes: Array[Byte], totalLength: Long) {
 
 }
 
 case class SendCompleteFileResponse(localId: Int) {
 }
 
-case class DiscardChunksRequest(transId: Int) {
+case class DiscardChunksRequest(transId: Long) {
 
 }
 
@@ -32,14 +32,14 @@ case class StartSendChunksRequest(neighbours: Array[NodeAddress], regionId: Int,
 
 }
 
-case class StartSendChunksResponse(transId: Int) {
+case class StartSendChunksResponse(transId: Long) {
 
 }
 
-case class SendChunkRequest(transId: Int, block: Array[Byte], offset: Long, blockLength: Int, blockIndex: Int) {
+case class SendChunkRequest(transId: Long, chunkBytes: Array[Byte], offset: Long, chunkLength: Int, chunkIndex: Int) {
 
 }
 
-case class SendChunkResponse(localId: Int) {
+case class SendChunkResponse(localId: Option[Int], chunkLength: Int) {
 
 }

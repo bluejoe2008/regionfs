@@ -134,8 +134,10 @@ class RegionManager(storeDir: File) extends Logging {
   def createNew(regionId: Int) = {
     val regionDir = new File(storeDir, s"$regionId")
     regionDir.mkdir()
-    regions += (regionId -> new Region(regionDir, regionId))
-
+    val region = new Region(regionDir, regionId)
+    regions += (regionId -> region)
     logger.debug(s"created region #$regionId at: $regionDir")
+
+    region
   }
 }

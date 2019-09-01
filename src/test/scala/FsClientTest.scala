@@ -1,7 +1,7 @@
 import java.io.{ByteArrayInputStream, File, FileInputStream}
 
 import cn.graiph.blobfs.FsClient
-import org.junit.{Test}
+import org.junit.Test
 
 /**
   * Created by bluejoe on 2019/8/23.
@@ -12,21 +12,26 @@ class FsClientTest {
   @Test
   def test(): Unit = {
     for (i <- 0 to 10000) {
-      writeMsg()
-      writeFile(new File("/Users/bluejoe/Documents/neo4j-eclipse.xml"))
-      writeFile(new File("/Users/bluejoe/Documents/知识图谱的技术与应用.pdf"))
+      writeMsgs()
+      writeFiles(new File("/Users/bluejoe/Documents/neo4j-eclipse.xml"))
+      writeFiles(new File("/Users/bluejoe/Documents/知识图谱的技术与应用.pdf"))
     }
   }
 
-  def writeMsg(): Unit = {
+  def writeMsgs(): Unit = {
     val msg = "hello, world"
-    val fid = client.writeFile(
-      new ByteArrayInputStream(msg.getBytes), msg.getBytes.length)
-    println(fid.asHexString())
+    val fids = client.writeFiles((0 to 10).map { _ =>
+      new ByteArrayInputStream(msg.getBytes) -> msg.getBytes.length.asInstanceOf[Long]
+    })
+
+    println(fids.map(_.asHexString()))
   }
 
-  def writeFile(src: File): Unit = {
-    val fid = client.writeFile(new FileInputStream(src), src.length)
-    println(fid.asHexString())
+  def writeFiles(src: File): Unit = {
+    val fids = client.writeFiles((0 to 10).map { _ =>
+      new FileInputStream(src) -> src.length
+    })
+
+    println(fids.map(_.asHexString()))
   }
 }

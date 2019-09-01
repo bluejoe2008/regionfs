@@ -1,8 +1,8 @@
 package cn.graiph.blobfs
 
 import java.io.InputStream
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.{CountDownLatch, TimeUnit}
 
 import cn.graiph.blobfs.util.Logging
 import net.neoremind.kraps.RpcConf
@@ -11,12 +11,11 @@ import net.neoremind.kraps.rpc.{RpcAddress, RpcEnv, RpcEnvClientConfig}
 import org.apache.zookeeper.{WatchedEvent, Watcher, ZooKeeper}
 
 import scala.collection.JavaConversions._
-import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, Future}
-import scala.util.parsing.json.JSON
+import scala.util.Random
 
 class BlobFsClientException(msg: String, cause: Throwable = null)
   extends RuntimeException(msg, cause) {
@@ -36,20 +35,14 @@ class FsClient(zks: String) extends Logging {
 
   //get all nodes
   val clients = ArrayBuffer[FsNodeClient]()
+  //watching!
   clients ++= zk.getChildren("/blobfs/nodes", new Watcher() {
     override def process(event: WatchedEvent): Unit = {
       logger.debug("event:" + event)
     }
-  }).map(name => {
-    val data = zk.getData("/blobfs/nodes/" + name, new Watcher {
-      override def process(event: WatchedEvent): Unit = {
-        //new nodes add? deletion?
-      }
-    }, null)
-
-    val json = JSON.parseFull(new String(data)).get.asInstanceOf[Map[String, _]]
-    FsNodeClient.connect(json("rpcAddress").asInstanceOf[String])
-  })
+  }).map { name =>
+    FsNodeClient.connect(NodeAddress.fromUrl(name, "_"))
+  }
 
   //TODO: replica vs. node number?
   if (clients.isEmpty) {
@@ -58,61 +51,23 @@ class FsClient(zks: String) extends Logging {
 
   //get stats
   val MAX_REGION_SZIE = 1024 * 1024 * 128
-  val mutableNodeStats = mutable.Map[FsNodeClient, NodeStat]()
-  doStat()
 
-  //TODO: move to agent node?
-  def doStat() = {
-    val nodeStats = clients.map(client => {
-      val ns = client.getNodeStat()
-      client -> NodeStat(ns.maxRegionId, ns.regionCount, ns.sizeMap.filter(_.totalSize < MAX_REGION_SZIE))
-    })
-
-    mutableNodeStats.synchronized {
-      mutableNodeStats.clear()
-      mutableNodeStats ++= nodeStats
-    }
+  def writeFiles(inputs: Iterable[(InputStream, Long)]): Iterable[FileId] = {
+    inputs.map(x =>
+      writeFileAsync(x._1, x._2)).
+      map(Await.result(_, Duration.Inf))
   }
-
-  val thread = new Thread(new Runnable {
-    override def run(): Unit = {
-      while (true) {
-        Thread.sleep(1000)
-        doStat()
-      }
-    }
-  })
-
-  thread.start()
 
   def writeFile(is: InputStream, totalLength: Long): FileId = {
-    //[client1,NodeStat1][client2,NodeStat2]
-    val nodeStats = mutableNodeStats.synchronized(mutableNodeStats.toArray)
-    //exists available regions
-    val available = nodeStats.filter(!_._2.sizeMap.isEmpty)
-    if (!available.isEmpty) {
-      val region = available.
-        flatMap(x => x._2.sizeMap.map(x._1 -> _)). //[client1,(region11,size11)][client1,(region12,size12)][client2,(region21,size21)]
-        groupBy(_._2.regionId). //[region11,[[client1, (region11,size11)],[client2, (region11,size11)]]
-        map(x =>
-        x._1 -> (x._2.head._2.totalSize -> x._2) //[region11,(size11,[[...]])]
-      ).toArray.sortBy(_._2._1).head
-
-      writeFile(region._2._2.map(_._1), region._1, is, totalLength)
-    }
-    else {
-      val regionIdNew = (nodeStats.map(_._2.maxRegionId) ++ Array(0)).max + 1
-      val selected = nodeStats.sortBy(_._2.regionCount).take(2)
-      selected.foreach(_._1.createRegion(regionIdNew))
-      writeFile(selected.map(_._1), regionIdNew, is, totalLength)
-    }
+    Await.result(writeFileAsync(is: InputStream, totalLength: Long), Duration.Inf)
   }
 
-  private def writeFile(clients: Array[FsNodeClient], regionId: Int, is: InputStream, totalLength: Long): FileId = {
-    val res = clients.head.writeFile(regionId: Int, is: InputStream, totalLength,
-      clients.slice(1, clients.length).map(_.remoteAddress))
+  val rand = new Random();
 
-    FileId.make(regionId, 0, res)
+  def writeFileAsync(is: InputStream, totalLength: Long): Future[FileId] = {
+    //choose a client
+    clients(rand.nextInt(clients.length)).
+      writeFileAsync(is, totalLength)
   }
 }
 
@@ -127,11 +82,11 @@ object FsNodeClient {
   }
 }
 
-case class RegionStat(regionId: Int, totalSize: Long) {
-
-}
-
-case class NodeStat(maxRegionId: Int, regionCount: Int, sizeMap: Array[RegionStat]) {
+object NodeAddress {
+  def fromUrl(url: String, delimeter: String = ":") = {
+    val pair = url.split(delimeter)
+    NodeAddress(pair(0), pair(1).toInt)
+  }
 }
 
 case class NodeAddress(host: String, port: Int) {
@@ -150,30 +105,20 @@ class FsNodeClient(val remoteAddress: NodeAddress) extends Logging {
   //10K each chunk
   val CHUNK_SIZE: Int = 10240
 
-  def getNodeStat(): NodeStat = {
-    Await.result(endPointRef.ask[GetNodeStatResponse](GetNodeStatRequest()),
-      Duration.apply("30s")).nodeStat
-  }
-
-  def createRegion(regionId: Int) = {
-    Await.result(endPointRef.ask[CreateRegionResponse](CreateRegionRequest(regionId)),
-      Duration.apply("30s"))
-  }
-
-  def writeFile(regionId: Int, is: InputStream, totalLength: Long, neighbours: Array[NodeAddress]): Int = {
+  //region is not assigned
+  def writeFileAsync(is: InputStream, totalLength: Long): Future[FileId] = {
+    //choose a region
     //small file
     if (totalLength <= CHUNK_SIZE) {
       val bytes = new Array[Byte](CHUNK_SIZE)
-      val res = Await.result(endPointRef.ask[SendCompleteFileResponse](
-        SendCompleteFileRequest(neighbours, regionId, bytes, totalLength)),
-        Duration.apply("30s"))
-
-      res.localId
+      endPointRef.ask[SendCompleteFileResponse](
+        SendCompleteFileRequest(None, bytes, totalLength)).
+        map(_.fileId)
     }
     else {
       //split files
       val res = Await.result(endPointRef.ask[StartSendChunksResponse](
-        StartSendChunksRequest(neighbours, regionId, totalLength)),
+        StartSendChunksRequest(None, totalLength)),
         Duration.apply("30s"))
 
       val transId = res.transId
@@ -182,7 +127,7 @@ class FsNodeClient(val remoteAddress: NodeAddress) extends Logging {
       var n = 0
 
       val waitLatch = new CountDownLatch(1)
-      val results = new ArrayBuffer[Int]()
+      val results = new ArrayBuffer[FileId]()
       val waitByteCount = new AtomicLong(0)
 
       try {
@@ -198,9 +143,9 @@ class FsNodeClient(val remoteAddress: NodeAddress) extends Logging {
 
             future.onComplete {
               case scala.util.Success(value) => {
-                if (value.localId.isDefined) {
+                if (value.fileId.isDefined) {
                   results.synchronized {
-                    results += value.localId.get
+                    results += value.fileId.get
                   }
                 }
 
@@ -231,12 +176,10 @@ class FsNodeClient(val remoteAddress: NodeAddress) extends Logging {
           throw e
       }
 
-      //TODO: how if time out
-      if (!waitLatch.await(300, TimeUnit.SECONDS)) {
-        throw new WriteFileException(s"time out")
+      Future {
+        waitLatch.await()
+        results.head
       }
-
-      results.head
     }
   }
 }

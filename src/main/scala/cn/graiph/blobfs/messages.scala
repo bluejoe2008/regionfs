@@ -9,26 +9,18 @@ case class CreateRegionRequest(regionId: Int) {
 case class CreateRegionResponse(regionId: Int) {
 }
 
-case class GetNodeStatRequest() {
+case class SendCompleteFileRequest(regionId: Option[Int], bytes: Array[Byte], totalLength: Long) {
 
 }
 
-case class GetNodeStatResponse(nodeStat: NodeStat) {
-
-}
-
-case class SendCompleteFileRequest(neighbours: Array[NodeAddress], regionId: Int, bytes: Array[Byte], totalLength: Long) {
-
-}
-
-case class SendCompleteFileResponse(localId: Int) {
+case class SendCompleteFileResponse(fileId: FileId) {
 }
 
 case class DiscardChunksRequest(transId: Long) {
 
 }
 
-case class StartSendChunksRequest(neighbours: Array[NodeAddress], regionId: Int, totalLength: Long) {
+case class StartSendChunksRequest(regionId: Option[Int], totalLength: Long) {
 
 }
 
@@ -40,6 +32,6 @@ case class SendChunkRequest(transId: Long, chunkBytes: Array[Byte], offset: Long
 
 }
 
-case class SendChunkResponse(localId: Option[Int], chunkLength: Int) {
+case class SendChunkResponse(fileId: Option[FileId], chunkLength: Int) {
 
 }

@@ -9,7 +9,7 @@ import org.apache.commons.io.FileUtils
 
 object FsServerTest {
   def main(args: Array[String]) {
-    Array("./testdata/node1", "./testdata/node2", "./testdata/node3").
+    Array("./testdata/nodes/node1", "./testdata/nodes/node2", "./testdata/nodes/node3").
       foreach(x => FileUtils.cleanDirectory(new File(x)))
 
     val threads = Array("./node1.conf", "./node2.conf", "./node3.conf").map { x =>

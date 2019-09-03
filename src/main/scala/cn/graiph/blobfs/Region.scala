@@ -1,7 +1,7 @@
 package cn.graiph.blobfs
 
 import java.io._
-import java.util.concurrent.atomic.{AtomicInteger, AtomicLong}
+import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.{CRC32, CheckedInputStream}
 
 import cn.graiph.blobfs.util.Logging
@@ -11,7 +11,7 @@ import scala.collection.mutable
 /**
   * Created by bluejoe on 2019/8/30.
   */
-class Region(storeDir: File, val regionId: Int) extends Logging {
+class Region(storeDir: File, val regionId: Long) extends Logging {
   val MAX_REGION_LENGTH = 102400
   val WRITE_BUFFER_SIZE = 10240
 
@@ -33,16 +33,16 @@ class Region(storeDir: File, val regionId: Int) extends Logging {
       val dis = new DataInputStream(new FileInputStream(fileCursor))
       val id = dis.readInt()
       dis.close()
-      new AtomicInteger(id)
+      new AtomicLong(id)
     }
     else {
-      new AtomicInteger(0)
+      new AtomicLong(0)
     }
 
   val bodyPtr = new FileOutputStream(fileBody, true)
   val metaPtr = new DataOutputStream(new FileOutputStream(fileMeta, true))
 
-  def save(getInputStream: () => InputStream, length: Long, localId: Option[Int]): Int = {
+  def save(getInputStream: () => InputStream, length: Long, localId: Option[Long]): Long = {
     val lengthWithPadding = writeFileBody(getInputStream)
     val crc32 = computeCrc32(getInputStream)
 
@@ -68,10 +68,10 @@ class Region(storeDir: File, val regionId: Int) extends Logging {
     metaPtr.close()
   }
 
-  //TODO: write less
-  private def updateCursor(id: Int) {
+  //TODO: write less times
+  private def updateCursor(id: Long) {
     val dos = new DataOutputStream(new FileOutputStream(fileCursor))
-    dos.writeInt(id)
+    dos.writeLong(id)
     dos.close()
   }
 
@@ -93,14 +93,12 @@ class Region(storeDir: File, val regionId: Int) extends Logging {
     lengthWithPadding
   }
 
-  private def writeMeta(localId: Int, offset: Long, length: Long, crc32: Long): Unit = {
-    //each entry uses 30bytes
-    //[llll][oooo][oooo][llll][llll][cccc][cccc][__]
-    metaPtr.writeInt(localId)
+  private def writeMeta(localId: Long, offset: Long, length: Long, crc32: Long): Unit = {
+    //[llll][llll][oooo][oooo][llll][llll][cccc][cccc]
+    metaPtr.writeLong(localId)
     metaPtr.writeLong(offset)
     metaPtr.writeLong(length)
     metaPtr.writeLong(crc32)
-    metaPtr.write((0 to 1).map(_ => 0.toByte).toArray)
   }
 
   def computeCrc32(getInputStream: () => InputStream): Long = {
@@ -116,22 +114,22 @@ class Region(storeDir: File, val regionId: Int) extends Logging {
 }
 
 class RegionManager(storeDir: File) extends Logging {
-  val regions = mutable.Map[Int, Region]()
+  val regions = mutable.Map[Long, Region]()
 
-  def get(id: Int) = regions(id)
+  def get(id: Long) = regions(id)
 
   regions ++= storeDir.listFiles().
     filter { file =>
       !file.isHidden && file.isDirectory
     }.
     map { file =>
-      val id = file.getName.toInt
-      id -> new Region(file, file.getName.toInt)
+      val id = file.getName.toLong
+      id -> new Region(file, file.getName.toLong)
     }
 
-  logger.debug(s"loaded regions: ${regions.keySet}")
+  logger.debug(s"loaded local regions: ${regions.keySet}")
 
-  def createNew(regionId: Int) = {
+  def createNew(regionId: Long) = {
     val regionDir = new File(storeDir, s"$regionId")
     regionDir.mkdir()
     val region = new Region(regionDir, regionId)

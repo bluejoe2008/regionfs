@@ -38,10 +38,10 @@ class FsClient(zks: String) extends Logging {
   //watching!
   clients ++= zk.getChildren("/blobfs/nodes", new Watcher() {
     override def process(event: WatchedEvent): Unit = {
-      logger.debug("event:" + event)
+      println("event:" + event)
     }
   }).map { name =>
-    FsNodeClient.connect(NodeAddress.fromUrl(name, "_"))
+    FsNodeClient.connect(NodeAddress.fromString(name, "_"))
   }
 
   //TODO: replica vs. node number?
@@ -66,8 +66,9 @@ class FsClient(zks: String) extends Logging {
 
   def writeFileAsync(is: InputStream, totalLength: Long): Future[FileId] = {
     //choose a client
-    clients(rand.nextInt(clients.length)).
-      writeFileAsync(is, totalLength)
+    val client = clients(rand.nextInt(clients.length))
+    //logger.debug(s"chose client: $client")
+    client.writeFileAsync(is, totalLength)
   }
 }
 
@@ -83,7 +84,7 @@ object FsNodeClient {
 }
 
 object NodeAddress {
-  def fromUrl(url: String, delimeter: String = ":") = {
+  def fromString(url: String, delimeter: String = ":") = {
     val pair = url.split(delimeter)
     NodeAddress(pair(0), pair(1).toInt)
   }
@@ -93,7 +94,7 @@ case class NodeAddress(host: String, port: Int) {
 
 }
 
-class FsNodeClient(val remoteAddress: NodeAddress) extends Logging {
+case class FsNodeClient(val remoteAddress: NodeAddress) extends Logging {
   val endPointRef = {
     val rpcConf = new RpcConf()
     val config = RpcEnvClientConfig(rpcConf, "blobfs-client")

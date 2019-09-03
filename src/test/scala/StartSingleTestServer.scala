@@ -5,6 +5,7 @@ import cn.graiph.blobfs.shell.StartNodeServer
   */
 object StartSingleTestServer {
   def main(args: Array[String]) {
+    //example args: ./node1.conf
     StartNodeServer.main(args)
   }
 }

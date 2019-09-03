@@ -13,14 +13,14 @@ class FsClientTest {
   def makeFiles(): Unit = {
     makeFile(new File("./testdata/inputs/999"), 999)
     makeFile(new File("./testdata/inputs/9999"), 9999)
-    makeFile(new File("./testdata/inputs/99999"), 99999)
+    makeFile(new File("./testdata/inputs/99999"), 99999L)
   }
 
-  private def makeFile(dst: File, length: Int): Unit = {
+  private def makeFile(dst: File, length: Long): Unit = {
     val fos = new FileOutputStream(dst)
-    var n: Int = 0
+    var n: Long = 0
     while (n < length) {
-      val left = length - n
+      val left: Int = (length - n).toInt
       val bytes = new Array[Byte](if (left < 10240) {
         left
       } else {

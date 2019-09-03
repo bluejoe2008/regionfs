@@ -60,35 +60,50 @@ class FsClientTest {
   }
 
   def writeMsgs(): Unit = {
-    val msg = "hello, world"
-    val fids = client.writeFiles((0 to 10).map { _ =>
-      new ByteArrayInputStream(msg.getBytes) -> msg.getBytes.length.asInstanceOf[Long]
-    })
+    clock {
+      val msg = "hello, world"
+      val fids = client.writeFiles((0 to 10).map { _ =>
+        new ByteArrayInputStream(msg.getBytes) -> msg.getBytes.length.asInstanceOf[Long]
+      })
 
-    println(fids.map(_.asHexString()))
+      println(fids.map(_.asHexString()))
+    }
   }
 
   def writeFiles(src: File): Unit = {
-    val fids = client.writeFiles((0 to 10).map { _ =>
-      new FileInputStream(src) -> src.length
-    })
+    clock {
+      val fids = client.writeFiles((0 to 10).map { _ =>
+        new FileInputStream(src) -> src.length
+      })
 
-    println(fids.map(_.asHexString()))
+      println(fids.map(_.asHexString()))
+    }
   }
 
   def writeMsg(): Unit = {
     val msg = "hello, world"
-    val fid = client.writeFile(
-      new ByteArrayInputStream(msg.getBytes), msg.getBytes.length.asInstanceOf[Long]
-    )
+    clock {
+      val fid = client.writeFile(
+        new ByteArrayInputStream(msg.getBytes), msg.getBytes.length.asInstanceOf[Long]
+      )
 
-    println(fid)
+      println(fid)
+    }
   }
 
   def writeFile(src: File): Unit = {
-    val fid = client.writeFile(
-      new FileInputStream(src), src.length)
+    clock {
+      val fid = client.writeFile(
+        new FileInputStream(src), src.length)
+      println(fid)
+    }
+  }
 
-    println(fid)
+  def clock(runnable: => Unit) {
+    val t1 = System.currentTimeMillis()
+    runnable;
+    val t2 = System.currentTimeMillis()
+
+    println(s"time: ${t2 - t1}ms")
   }
 }

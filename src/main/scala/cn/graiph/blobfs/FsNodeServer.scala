@@ -1,24 +1,21 @@
 package cn.graiph.blobfs
 
 import java.io._
-import java.util.Properties
 import java.util.concurrent.atomic.AtomicLong
+import java.util.{Properties, Random}
 
 import cn.graiph.blobfs.util.{Configuration, ConfigurationEx, Logging}
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.NettyRpcEnvFactory
 import net.neoremind.kraps.rpc.{RpcCallContext, RpcEndpoint, RpcEnv, RpcEnvServerConfig}
 import org.apache.commons.io.IOUtils
-import org.apache.zookeeper.Watcher.Event.EventType
 import org.apache.zookeeper.ZooDefs.Ids
 import org.apache.zookeeper._
 
-import scala.collection.JavaConversions._
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
-import scala.util.Random
 
 class BlobFsServersException(msg: String, cause: Throwable = null) extends RuntimeException(msg, cause) {
 }
@@ -93,66 +90,23 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
   class FsRpcServer(zk: ZooKeeper, localRegionManager: RegionManager)
     extends Logging {
     val address = NodeAddress(host, port)
-    val cachedNeighbourClients = mutable.Map[NodeAddress, FsNodeClient]()
     var rpcEnv: RpcEnv = null
 
-    val bufferedNeighbours = ArrayBuffer[NodeAddress]()
-    val bufferedNeighbourRegions = ArrayBuffer[(NodeAddress, Long)]()
+    val nodes = new WatchingNodes(zk, !address.equals(_))
+    val regions = new WatchingRegions(zk, !address.equals(_))
 
-    private def zkUpdateRegions(): Unit = {
+    private def registerExsitingRegions(): Unit = {
       localRegionManager.regions.keys.foreach(regionId => {
-        zkAddRegion(regionId)
+        registerNewRegion(regionId)
       })
     }
 
-    private def zkAddRegion(regionId: Long) = {
+    private def registerNewRegion(regionId: Long) = {
       zk.create(s"/blobfs/regions/${addrString}_$regionId", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
     }
 
-    private def zkLoadNeighbours(): Unit = {
-      val children = zk.getChildren(s"/blobfs/nodes", new Watcher {
-        override def process(event: WatchedEvent): Unit = {
-          println(event);
-          if (event.getType == EventType.NodeChildrenChanged) {
-            zkLoadNeighbours();
-          }
-        }
-      })
-
-      val neighbours: Iterable[NodeAddress] = children.filterNot(addrString.equals(_)).map { name =>
-        NodeAddress.fromString(name, ":")
-      }
-
-      bufferedNeighbours.clear()
-      bufferedNeighbours ++= neighbours
-    }
-
-    private def zkLoadNeighbourRegions(): Unit = {
-      val children = zk.getChildren(s"/blobfs/regions", new Watcher {
-        override def process(event: WatchedEvent): Unit = {
-          println(event);
-          if (event.getType == EventType.NodeChildrenChanged) {
-            zkLoadNeighbourRegions();
-          }
-        }
-      })
-
-      val nodeRegions: Iterable[(NodeAddress, Long)] =
-        children.
-          filterNot(_.startsWith(addrString)).
-          map { name =>
-            val splits = name.split("_")
-            NodeAddress(splits(0), splits(1).toInt) -> splits(2).toLong
-          }
-
-      logger.debug(s"loaded neighbour regions: $nodeRegions")
-      bufferedNeighbourRegions.clear()
-      bufferedNeighbourRegions ++= nodeRegions
-    }
-
     def start() {
-      zkLoadNeighbourRegions()
-      zkUpdateRegions()
+      registerExsitingRegions()
 
       val config = RpcEnvServerConfig(new RpcConf(), "blobfs-server", host, port)
       rpcEnv = NettyRpcEnvFactory.create(config)
@@ -164,12 +118,6 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
     def shutdown(): Unit = {
       if (rpcEnv != null)
         rpcEnv.shutdown()
-    }
-
-    def getNeighbourClient(nodeServerAddress: NodeAddress): FsNodeClient = {
-      cachedNeighbourClients.getOrElseUpdate(nodeServerAddress, {
-        FsNodeClient.connect(nodeServerAddress)
-      })
     }
 
     class FileRpcEndpoint(override val rpcEnv: RpcEnv)
@@ -187,38 +135,41 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
           headOption.getOrElse(nodeId.toLong << 16)) + 1
         val region = localRegionManager.createNew(regionId)
 
-        //notify neighbour
+        //notify neighbours
         //TODO: replica number?
         //find thinnest neighbour which has least regions
-        val thinNeighbour = bufferedNeighbourRegions.
+        val thinNeighbourClient = regions.map.
           groupBy(_._1).
           map(x => x._1 -> x._2.size).
           toArray.
           sortBy(_._2).
           map(_._1).
           headOption.
+          map(nodes.clientOf(_)).
           getOrElse(
             //no node found, so throw a dice
-            bufferedNeighbours.get(rand.nextInt(bufferedNeighbours.size))
+            nodes.clients.toArray.apply(rand.nextInt(nodes.size))
           )
 
-        Await.result(getNeighbourClient(thinNeighbour).endPointRef.ask[CreateRegionResponse](CreateRegionRequest(regionId)),
+        Await.result(thinNeighbourClient.endPointRef.ask[CreateRegionResponse](CreateRegionRequest(regionId)),
           Duration.apply("30s"))
 
-        zkAddRegion(regionId)
+        registerNewRegion(regionId)
         region
       }
 
       private def chooseRegion(): Region = {
-        localRegionManager.regions.values.toArray.sortBy(_.counterOffset.get).headOption.
-          getOrElse({
-            //no enough region
-            createNewRegion()
-          })
+        localRegionManager.synchronized {
+          localRegionManager.regions.values.toArray.sortBy(_.counterOffset.get).headOption.
+            getOrElse({
+              //no enough region
+              createNewRegion()
+            })
+        }
       }
 
       private def getNeighboursHasRegion(regionId: Long): Array[NodeAddress] = {
-        bufferedNeighbourRegions.filter(_._2 == regionId).filter(_._1 != address).map(_._1).toArray
+        regions.map.filter(_._2 == regionId).filter(_._1 != address).map(_._1).toArray
       }
 
       override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
@@ -239,12 +190,12 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             val neighbours = getNeighboursHasRegion(region.regionId)
             //ask neigbours
             val futures = neighbours.map(addr =>
-              getNeighbourClient(addr).endPointRef.ask[SendCompleteFileResponse](
+              nodes.clientOf(addr).endPointRef.ask[SendCompleteFileResponse](
                 SendCompleteFileRequest(Some(region.regionId), block, totalLength)))
 
             //wait all neigbours' reply
             futures.map(future =>
-              Await.result(future, Duration.apply("30s")))
+              Await.result(future, Duration.Inf))
           }
 
           context.reply(SendCompleteFileResponse(FileId.make(region.regionId, localId)))
@@ -258,12 +209,12 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             //notify neighbours
             val neighbours = getNeighboursHasRegion(region.regionId)
             val futures = neighbours.map(addr =>
-              addr -> getNeighbourClient(addr).endPointRef.ask[StartSendChunksResponse](
+              addr -> nodes.clientOf(addr).endPointRef.ask[StartSendChunksResponse](
                 StartSendChunksRequest(Some(region.regionId), totalLength)))
 
             //wait all neigbours' reply
             val transIds = futures.map(x =>
-              x._1 -> Await.result(x._2, Duration.apply("30s")))
+              x._1 -> Await.result(x._2, Duration.Inf))
 
             //save these transIds from neighbour
             transIds.foreach(x => task.addNeighbourTransactionId(x._1, x._2.transId))
@@ -280,11 +231,11 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
           //notify neighbours
           val ids = task.getNeighbourTransactionIds()
 
-          val futures = ids.map(x => getNeighbourClient(x._1).endPointRef.ask[SendChunkResponse](
+          val futures = ids.map(x => nodes.clientOf(x._1).endPointRef.ask[SendChunkResponse](
             SendChunkRequest(x._2, chunkBytes, offset, chunkLength, chunkIndex)))
 
           //TODO: sync()?
-          futures.foreach(Await.result(_, Duration.apply("30s")))
+          futures.foreach(Await.result(_, Duration.Inf))
           context.reply(SendChunkResponse(opt.map(FileId.make(task.region.regionId, _)), chunkLength))
         }
       }

@@ -8,9 +8,11 @@ import cn.graiph.blobfs.util.Logging
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.NettyRpcEnvFactory
 import net.neoremind.kraps.rpc.{RpcAddress, RpcEnv, RpcEnvClientConfig}
+import org.apache.zookeeper.Watcher.Event.EventType
 import org.apache.zookeeper.{WatchedEvent, Watcher, ZooKeeper}
 
 import scala.collection.JavaConversions._
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration
@@ -34,18 +36,10 @@ class FsClient(zks: String) extends Logging {
   })
 
   //get all nodes
-  val clients = ArrayBuffer[FsNodeClient]()
-  //watching!
-  clients ++= zk.getChildren("/blobfs/nodes", new Watcher() {
-    override def process(event: WatchedEvent): Unit = {
-      println("event:" + event)
-    }
-  }).map { name =>
-    FsNodeClient.connect(NodeAddress.fromString(name, "_"))
-  }
+  val nodes = new WatchingNodes(zk, { _ => true })
 
   //TODO: replica vs. node number?
-  if (clients.isEmpty) {
+  if (nodes.isEmpty) {
     throw new BlobFsClientException("no serving data nodes")
   }
 
@@ -66,20 +60,31 @@ class FsClient(zks: String) extends Logging {
 
   def writeFileAsync(is: InputStream, totalLength: Long): Future[FileId] = {
     //choose a client
-    val client = clients(rand.nextInt(clients.length))
+    val clients = nodes.clients.toArray;
+    val client = clients(rand.nextInt(clients.size))
     //logger.debug(s"chose client: $client")
     client.writeFileAsync(is, totalLength)
   }
 }
 
 object FsNodeClient {
+  val rpcEnv: RpcEnv = {
+    val rpcConf = new RpcConf()
+    val config = RpcEnvClientConfig(rpcConf, "blobfs-client")
+    NettyRpcEnvFactory.create(config)
+  }
+
   def connect(remoteAddress: NodeAddress): FsNodeClient = {
-    new FsNodeClient(remoteAddress)
+    new FsNodeClient(rpcEnv, remoteAddress)
   }
 
   def connect(remoteAddress: String): FsNodeClient = {
     val pair = remoteAddress.split(":")
-    new FsNodeClient(NodeAddress(pair(0), pair(1).toInt))
+    new FsNodeClient(rpcEnv, NodeAddress(pair(0), pair(1).toInt))
+  }
+
+  override def finalize(): Unit = {
+    rpcEnv.shutdown()
   }
 }
 
@@ -94,13 +99,17 @@ case class NodeAddress(host: String, port: Int) {
 
 }
 
-case class FsNodeClient(val remoteAddress: NodeAddress) extends Logging {
+case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends Logging {
   val endPointRef = {
     val rpcConf = new RpcConf()
     val config = RpcEnvClientConfig(rpcConf, "blobfs-client")
     val rpcEnv: RpcEnv = NettyRpcEnvFactory.create(config)
 
     rpcEnv.setupEndpointRef(RpcAddress(remoteAddress.host, remoteAddress.port), "blobfs-service")
+  }
+
+  def close(): Unit = {
+    rpcEnv.stop(endPointRef)
   }
 
   //10K each chunk
@@ -120,7 +129,7 @@ case class FsNodeClient(val remoteAddress: NodeAddress) extends Logging {
       //split files
       val res = Await.result(endPointRef.ask[StartSendChunksResponse](
         StartSendChunksRequest(None, totalLength)),
-        Duration.apply("30s"))
+        Duration.Inf)
 
       val transId = res.transId
       var chunks = 0

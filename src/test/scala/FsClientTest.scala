@@ -1,4 +1,4 @@
-import java.io.{ByteArrayInputStream, File, FileInputStream, FileOutputStream}
+import java.io.{File, FileInputStream, FileOutputStream}
 
 import cn.graiph.blobfs.FsClient
 import org.junit.{Before, Test}
@@ -35,7 +35,6 @@ class FsClientTest {
 
   @Test
   def test1(): Unit = {
-    writeMsg()
     writeFile(new File("./testdata/inputs/999"))
     writeFile(new File("./testdata/inputs/9999"))
     writeFile(new File("./testdata/inputs/99999"))
@@ -43,51 +42,39 @@ class FsClientTest {
 
   @Test
   def test2(): Unit = {
-    writeMsgs()
-    writeFiles(new File("./testdata/inputs/999"))
-    writeFiles(new File("./testdata/inputs/9999"))
-    writeFiles(new File("./testdata/inputs/99999"))
+    writeFiles(new File("./testdata/inputs/999"), 2)
+    writeFiles(new File("./testdata/inputs/9999"), 2)
+    writeFiles(new File("./testdata/inputs/99999"), 2)
   }
 
   @Test
   def test3(): Unit = {
-    for (i <- 0 to 1000) {
-      writeMsgs()
-      writeFiles(new File("./testdata/inputs/999"))
-      writeFiles(new File("./testdata/inputs/9999"))
-      writeFiles(new File("./testdata/inputs/99999"))
-    }
+    writeFiles(new File("./testdata/inputs/999"), 3)
+    writeFiles(new File("./testdata/inputs/9999"), 3)
+    writeFiles(new File("./testdata/inputs/99999"), 3)
   }
 
-  def writeMsgs(): Unit = {
-    clock {
-      val msg = "hello, world"
-      val fids = client.writeFiles((0 to 10).map { _ =>
-        new ByteArrayInputStream(msg.getBytes) -> msg.getBytes.length.asInstanceOf[Long]
-      })
-
-      println(fids.map(_.asHexString()))
-    }
+  @Test
+  def test4(): Unit = {
+    writeFiles(new File("./testdata/inputs/999"), 4)
+    writeFiles(new File("./testdata/inputs/9999"), 4)
+    writeFiles(new File("./testdata/inputs/99999"), 4)
   }
 
-  def writeFiles(src: File): Unit = {
+  @Test
+  def test10(): Unit = {
+    writeFiles(new File("./testdata/inputs/999"), 10)
+    writeFiles(new File("./testdata/inputs/9999"), 10)
+    writeFiles(new File("./testdata/inputs/99999"), 10)
+  }
+
+  def writeFiles(src: File, times: Int): Unit = {
     clock {
-      val fids = client.writeFiles((0 to 10).map { _ =>
+      val fids = client.writeFiles((0 to times - 1).map { _ =>
         new FileInputStream(src) -> src.length
       })
 
       println(fids.map(_.asHexString()))
-    }
-  }
-
-  def writeMsg(): Unit = {
-    val msg = "hello, world"
-    clock {
-      val fid = client.writeFile(
-        new ByteArrayInputStream(msg.getBytes), msg.getBytes.length.asInstanceOf[Long]
-      )
-
-      println(fid)
     }
   }
 

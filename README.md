@@ -1,2 +1,2 @@
-# blobfs
+# regionfs
 dfs for blob

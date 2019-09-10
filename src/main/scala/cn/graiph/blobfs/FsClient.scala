@@ -139,6 +139,7 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
       val waitLatch = new CountDownLatch(1)
       val results = new ArrayBuffer[FileId]()
       val waitByteCount = new AtomicLong(0)
+      val futureList = ArrayBuffer[Future[SendChunkResponse]]()
 
       try {
         while (n >= 0) {
@@ -169,11 +170,12 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
                 logger.warn(s"failure: $e")
               }
             }
-
+            futureList += future
             chunks += 1
             offset += n
           }
         }
+        futureList.par.foreach(f => Await.result(f, Duration.apply("30s")))
       }
       catch {
         case e: Throwable =>

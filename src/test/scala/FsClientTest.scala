@@ -43,6 +43,8 @@ class FsClientTest {
     writeFile(new File("./testdata/inputs/999"))
     writeFile(new File("./testdata/inputs/9999"))
     writeFile(new File("./testdata/inputs/99999"))
+    writeFile(new File("./testdata/inputs/999999"))
+
   }
 
   @Test

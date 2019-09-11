@@ -43,7 +43,7 @@ class FsClient(zks: String) extends Logging {
     throw new BlobFsClientException("no serving data nodes")
   }
 
-  //get stats
+  //max region size: 128MB
   val MAX_REGION_SZIE = 1024 * 1024 * 128
 
   def writeFiles(inputs: Iterable[(InputStream, Long)]): Iterable[FileId] = {

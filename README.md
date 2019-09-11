@@ -7,7 +7,7 @@ NOTE: make sure zookeeper cluster is running, suppose it has connecting str: `lo
 
 ## start configserver
 
-1. make a text file
+1. prepare a text file
 ```
 #rfs.conf
 replicaNums=2
@@ -31,7 +31,7 @@ node.id=1
 
 NOTE: `node.id` should be unique in cluster
 
-2. make a text file in one server
+2. prepare a text file in one server
 ```
 #nodes
 node1

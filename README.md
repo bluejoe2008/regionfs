@@ -3,7 +3,7 @@ dfs for blob
 
 # how to use
 
-NOTE: make sure zookeeper cluster is running, suppose it has connecting str: localhost:2181,localhost:2182,localhost:2183
+NOTE: make sure zookeeper cluster is running, suppose it has connecting str: `localhost:2181,localhost:2182,localhost:2183`
 
 ## start configserver
 

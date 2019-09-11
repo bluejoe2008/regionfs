@@ -139,7 +139,7 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
       val waitLatch = new CountDownLatch(1)
       val results = new ArrayBuffer[FileId]()
       val waitByteCount = new AtomicLong(0)
-      val futureList = ArrayBuffer[Future[SendChunkResponse]]()
+      val futures = ArrayBuffer[Future[SendChunkResponse]]()
 
       try {
         while (n >= 0) {
@@ -152,6 +152,7 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
             val future: Future[SendChunkResponse] = endPointRef.ask[SendChunkResponse](
               SendChunkRequest(transId, bytes.slice(0, n), offset, n, chunks))
 
+            /*
             future.onComplete {
               case scala.util.Success(value) => {
                 if (value.fileId.isDefined) {
@@ -170,12 +171,14 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
                 logger.warn(s"failure: $e")
               }
             }
-            futureList += future
+            */
+
+            futures += future
             chunks += 1
             offset += n
           }
         }
-        futureList.par.foreach(f => Await.result(f, Duration.apply("30s")))
+        futures.par.foreach(f => Await.result(f, Duration.apply("30s")))
       }
       catch {
         case e: Throwable =>
@@ -189,8 +192,9 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
       }
 
       Future {
-        waitLatch.await()
-        results.head
+        //waitLatch.await()
+        //results.head
+        futures.map(Await.result(_, Duration.Inf)).find(_.fileId.isDefined).get.fileId.get
       }
     }
   }

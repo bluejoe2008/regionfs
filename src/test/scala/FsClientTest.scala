@@ -18,6 +18,7 @@ class FsClientTest {
     makeFile(new File("./testdata/inputs/999"), 999)
     makeFile(new File("./testdata/inputs/9999"), 9999)
     makeFile(new File("./testdata/inputs/99999"), 99999L)
+    makeFile(new File("./testdata/inputs/999999"), 999999L)
   }
 
   private def makeFile(dst: File, length: Long): Unit = {
@@ -49,6 +50,7 @@ class FsClientTest {
     writeFiles(new File("./testdata/inputs/999"), 2)
     writeFiles(new File("./testdata/inputs/9999"), 2)
     writeFiles(new File("./testdata/inputs/99999"), 2)
+    writeFiles(new File("./testdata/inputs/999999"), 2)
   }
 
   @Test
@@ -56,6 +58,7 @@ class FsClientTest {
     writeFiles(new File("./testdata/inputs/999"), 3)
     writeFiles(new File("./testdata/inputs/9999"), 3)
     writeFiles(new File("./testdata/inputs/99999"), 3)
+    writeFiles(new File("./testdata/inputs/999999"), 3)
   }
 
   @Test
@@ -63,6 +66,7 @@ class FsClientTest {
     writeFiles(new File("./testdata/inputs/999"), 4)
     writeFiles(new File("./testdata/inputs/9999"), 4)
     writeFiles(new File("./testdata/inputs/99999"), 4)
+    writeFiles(new File("./testdata/inputs/999999"), 4)
   }
 
   @Test
@@ -70,6 +74,7 @@ class FsClientTest {
     writeFiles(new File("./testdata/inputs/999"), 10)
     writeFiles(new File("./testdata/inputs/9999"), 10)
     writeFiles(new File("./testdata/inputs/99999"), 10)
+    writeFiles(new File("./testdata/inputs/999999"), 10)
   }
 
   def writeFiles(src: File, times: Int): Unit = {

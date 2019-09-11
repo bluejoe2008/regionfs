@@ -12,6 +12,7 @@ import scala.collection.mutable
   * Created by bluejoe on 2019/8/30.
   */
 class Region(storeDir: File, val regionId: Long) extends Logging {
+  //TODO: use ConfigServer
   val MAX_REGION_LENGTH = 102400
   val WRITE_BUFFER_SIZE = 10240
 

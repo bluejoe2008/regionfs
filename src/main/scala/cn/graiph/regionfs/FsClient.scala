@@ -108,6 +108,7 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
   }
 
   //10K each chunk
+  //TODO: use ConfigServer
   val CHUNK_SIZE: Int = 10240
 
   //region is not assigned

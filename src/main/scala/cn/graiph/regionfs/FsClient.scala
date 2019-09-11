@@ -1,8 +1,8 @@
-package cn.graiph.blobfs
+package cn.graiph.regionfs
 
 import java.io.InputStream
 
-import cn.graiph.blobfs.util.Logging
+import cn.graiph.regionfs.util.Logging
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.NettyRpcEnvFactory
 import net.neoremind.kraps.rpc.{RpcAddress, RpcEnv, RpcEnvClientConfig}
@@ -14,12 +14,12 @@ import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, Future}
 import scala.util.Random
 
-class BlobFsClientException(msg: String, cause: Throwable = null)
+class RegionFsClientException(msg: String, cause: Throwable = null)
   extends RuntimeException(msg, cause) {
 
 }
 
-class WriteFileException(msg: String, cause: Throwable = null) extends BlobFsClientException(msg: String, cause) {
+class WriteFileException(msg: String, cause: Throwable = null) extends RegionFsClientException(msg: String, cause) {
 
 }
 
@@ -35,11 +35,11 @@ class FsClient(zks: String) extends Logging {
 
   //TODO: replica vs. node number?
   if (nodes.isEmpty) {
-    throw new BlobFsClientException("no serving data nodes")
+    throw new RegionFsClientException("no serving data nodes")
   }
 
   //max region size: 128MB
-  val MAX_REGION_SZIE = 1024 * 1024 * 128
+  val MAX_REGION_SIZE = 1024 * 1024 * 128
 
   def writeFiles(inputs: Iterable[(InputStream, Long)]): Iterable[FileId] = {
     inputs.map(x =>
@@ -65,7 +65,7 @@ class FsClient(zks: String) extends Logging {
 object FsNodeClient {
   val rpcEnv: RpcEnv = {
     val rpcConf = new RpcConf()
-    val config = RpcEnvClientConfig(rpcConf, "blobfs-client")
+    val config = RpcEnvClientConfig(rpcConf, "regionfs-client")
     NettyRpcEnvFactory.create(config)
   }
 
@@ -84,8 +84,8 @@ object FsNodeClient {
 }
 
 object NodeAddress {
-  def fromString(url: String, delimeter: String = ":") = {
-    val pair = url.split(delimeter)
+  def fromString(url: String, separtor: String = ":") = {
+    val pair = url.split(separtor)
     NodeAddress(pair(0), pair(1).toInt)
   }
 }
@@ -97,10 +97,10 @@ case class NodeAddress(host: String, port: Int) {
 case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends Logging {
   val endPointRef = {
     val rpcConf = new RpcConf()
-    val config = RpcEnvClientConfig(rpcConf, "blobfs-client")
+    val config = RpcEnvClientConfig(rpcConf, "regionfs-client")
     val rpcEnv: RpcEnv = NettyRpcEnvFactory.create(config)
 
-    rpcEnv.setupEndpointRef(RpcAddress(remoteAddress.host, remoteAddress.port), "blobfs-service")
+    rpcEnv.setupEndpointRef(RpcAddress(remoteAddress.host, remoteAddress.port), "regionfs-service")
   }
 
   def close(): Unit = {

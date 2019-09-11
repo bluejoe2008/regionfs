@@ -1,4 +1,4 @@
-import cn.graiph.blobfs.shell.StartNodeServer
+import cn.graiph.regionfs.shell.StartNodeServer
 
 /**
   * Created by bluejoe on 2019/8/31.

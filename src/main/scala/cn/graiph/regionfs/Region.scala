@@ -1,10 +1,10 @@
-package cn.graiph.blobfs
+package cn.graiph.regionfs
 
 import java.io._
 import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.{CRC32, CheckedInputStream}
 
-import cn.graiph.blobfs.util.Logging
+import cn.graiph.regionfs.util.Logging
 
 import scala.collection.mutable
 

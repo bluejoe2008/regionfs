@@ -1,6 +1,6 @@
 import java.io.{File, FileInputStream, FileOutputStream}
 
-import cn.graiph.blobfs.FsClient
+import cn.graiph.regionfs.FsClient
 import org.junit.{Before, Test}
 
 /**

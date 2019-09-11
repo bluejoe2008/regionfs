@@ -1,6 +1,6 @@
 import java.io.File
 
-import cn.graiph.blobfs.shell.StartNodeServer
+import cn.graiph.regionfs.shell.StartNodeServer
 import org.apache.commons.io.FileUtils
 import org.junit.Test
 

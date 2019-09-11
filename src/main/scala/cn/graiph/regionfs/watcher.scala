@@ -1,6 +1,6 @@
-package cn.graiph.blobfs
+package cn.graiph.regionfs
 
-import cn.graiph.blobfs.util.Logging
+import cn.graiph.regionfs.util.Logging
 import org.apache.zookeeper.Watcher.Event.EventType
 import org.apache.zookeeper.{WatchedEvent, Watcher, ZooKeeper}
 
@@ -13,21 +13,21 @@ import scala.collection.mutable
 class WatchingNodes(zk: ZooKeeper, filter: (NodeAddress) => Boolean) extends Logging {
   val mapNodeClients = mutable.Map[NodeAddress, FsNodeClient]()
 
-  mapNodeClients ++= zk.getChildren(s"/blobfs/nodes", new Watcher {
+  mapNodeClients ++= zk.getChildren(s"/regionfs/nodes", new Watcher {
     private def keepWatching() = {
-      zk.getChildren(s"/blobfs/nodes", this.asInstanceOf[Watcher])
+      zk.getChildren(s"/regionfs/nodes", this.asInstanceOf[Watcher])
     }
 
     override def process(event: WatchedEvent): Unit = {
       event.getType match {
         case EventType.NodeCreated => {
-          val addr = NodeAddress.fromString(event.getPath.drop("/blobfs/nodes".length), "_");
+          val addr = NodeAddress.fromString(event.getPath.drop("/regionfs/nodes".length), "_");
           mapNodeClients += (addr -> FsNodeClient.connect(addr))
           keepWatching
         }
 
         case EventType.NodeDeleted => {
-          val addr = NodeAddress.fromString(event.getPath.drop("/blobfs/nodes".length), "_");
+          val addr = NodeAddress.fromString(event.getPath.drop("/regionfs/nodes".length), "_");
           mapNodeClients(addr).close
           mapNodeClients -= addr
           keepWatching
@@ -61,10 +61,10 @@ class WatchingRegions(zk: ZooKeeper, filter: (NodeAddress) => Boolean) extends L
   val mapNodeRegions = mutable.Map[NodeAddress, Long]()
 
   mapNodeRegions ++=
-    zk.getChildren(s"/blobfs/regions", new Watcher {
+    zk.getChildren(s"/regionfs/regions", new Watcher {
 
       private def keepWatching() = {
-        zk.getChildren(s"/blobfs/regions", this.asInstanceOf[Watcher])
+        zk.getChildren(s"/regionfs/regions", this.asInstanceOf[Watcher])
       }
 
       override def process(event: WatchedEvent): Unit = {

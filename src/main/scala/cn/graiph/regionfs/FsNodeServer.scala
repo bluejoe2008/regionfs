@@ -1,10 +1,10 @@
-package cn.graiph.blobfs
+package cn.graiph.regionfs
 
 import java.io._
 import java.util.concurrent.atomic.AtomicLong
 import java.util.{Properties, Random}
 
-import cn.graiph.blobfs.util.{Configuration, ConfigurationEx, Logging}
+import cn.graiph.regionfs.util.{Configuration, ConfigurationEx, Logging}
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.NettyRpcEnvFactory
 import net.neoremind.kraps.rpc.{RpcCallContext, RpcEndpoint, RpcEnv, RpcEnvServerConfig}
@@ -17,7 +17,7 @@ import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
 
-class BlobFsServersException(msg: String, cause: Throwable = null) extends RuntimeException(msg, cause) {
+class RegionFsServersException(msg: String, cause: Throwable = null) extends RuntimeException(msg, cause) {
 }
 
 /**
@@ -42,7 +42,7 @@ object FsNodeServer {
       getCanonicalFile.getAbsoluteFile
 
     if (!storeDir.exists())
-      throw new BlobFsServersException(s"store dir does not exist: ${storeDir.getPath}")
+      throw new RegionFsServersException(s"store dir does not exist: ${storeDir.getPath}")
 
     new FsNodeServer(
       conf.getRequiredValueAsString("zookeeper.address"),
@@ -66,16 +66,16 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       }
     })
 
-    if (zk.exists("/blobfs", false) == null)
-      zk.create("/blobfs", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
+    if (zk.exists("/regionfs", false) == null)
+      zk.create("/regionfs", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
 
-    if (zk.exists("/blobfs/nodes", false) == null)
-      zk.create("/blobfs/nodes", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
+    if (zk.exists("/regionfs/nodes", false) == null)
+      zk.create("/regionfs/nodes", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
 
-    zk.create(s"/blobfs/nodes/$addrString", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
+    zk.create(s"/regionfs/nodes/$addrString", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
 
-    if (zk.exists("/blobfs/regions", false) == null)
-      zk.create("/blobfs/regions", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
+    if (zk.exists("/regionfs/regions", false) == null)
+      zk.create("/regionfs/regions", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
 
     rpcServer = new FsRpcServer(zk, new RegionManager(storeDir))
     logger.info(s"starting fs-node on $host:$port")
@@ -102,16 +102,16 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
     }
 
     private def registerNewRegion(regionId: Long) = {
-      zk.create(s"/blobfs/regions/${addrString}_$regionId", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
+      zk.create(s"/regionfs/regions/${addrString}_$regionId", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
     }
 
     def start() {
       registerExsitingRegions()
 
-      val config = RpcEnvServerConfig(new RpcConf(), "blobfs-server", host, port)
+      val config = RpcEnvServerConfig(new RpcConf(), "regionfs-server", host, port)
       rpcEnv = NettyRpcEnvFactory.create(config)
       val endpoint: RpcEndpoint = new FileRpcEndpoint(rpcEnv)
-      rpcEnv.setupEndpoint("blobfs-service", endpoint)
+      rpcEnv.setupEndpoint("regionfs-service", endpoint)
       rpcEnv.awaitTermination()
     }
 
@@ -284,7 +284,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
           }
           else {
             //create combined file
-            val tmpFile = File.createTempFile(s"blobfs-$transId-", "")
+            val tmpFile = File.createTempFile(s"regionfs-$transId-", "")
             val fos: FileOutputStream = new FileOutputStream(tmpFile, true)
             chunks.sortBy(_.index).foreach { chunk =>
               val cis = new FileInputStream(chunk.file)
@@ -302,7 +302,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
           logger.debug(s"writing chunk: $transId-$chunkIndex, length=$chunkLength")
 
           val tmpFile = this.synchronized {
-            File.createTempFile(s"blobfs-$transId-", ".chunk")
+            File.createTempFile(s"regionfs-$transId-", ".chunk")
           }
 
           println(tmpFile.getName)

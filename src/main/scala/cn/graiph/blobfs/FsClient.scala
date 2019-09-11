@@ -1,18 +1,13 @@
 package cn.graiph.blobfs
 
 import java.io.InputStream
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.atomic.AtomicLong
 
 import cn.graiph.blobfs.util.Logging
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.NettyRpcEnvFactory
 import net.neoremind.kraps.rpc.{RpcAddress, RpcEnv, RpcEnvClientConfig}
-import org.apache.zookeeper.Watcher.Event.EventType
 import org.apache.zookeeper.{WatchedEvent, Watcher, ZooKeeper}
 
-import scala.collection.JavaConversions._
-import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration

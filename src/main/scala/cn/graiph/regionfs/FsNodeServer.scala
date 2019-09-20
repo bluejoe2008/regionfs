@@ -61,23 +61,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
   logger.debug(s"storeDir: ${storeDir.getCanonicalFile.getAbsolutePath}")
 
   def start() {
-    val zk = new ZooKeeper(zks, 2000, new Watcher {
-      override def process(event: WatchedEvent): Unit = {
-      }
-    })
-
-    if (zk.exists("/regionfs", false) == null)
-      zk.create("/regionfs", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
-
-    if (zk.exists("/regionfs/nodes", false) == null)
-      zk.create("/regionfs/nodes", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
-
-    zk.create(s"/regionfs/nodes/$addrString", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
-
-    if (zk.exists("/regionfs/regions", false) == null)
-      zk.create("/regionfs/regions", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
-
-    rpcServer = new FsRpcServer(zk, new RegionManager(storeDir))
+    rpcServer = new FsRpcServer()
     logger.info(s"starting fs-node on $host:$port")
     rpcServer.start()
   }
@@ -87,13 +71,27 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       rpcServer.shutdown()
   }
 
-  class FsRpcServer(zk: ZooKeeper, localRegionManager: RegionManager)
-    extends Logging {
+  class FsRpcServer() {
     val address = NodeAddress(host, port)
+    val localRegionManager = new RegionManager(storeDir)
     var rpcEnv: RpcEnv = null
+
+    val zk = new ZooKeeper(zks, 2000, new Watcher {
+      override def process(event: WatchedEvent): Unit = {
+      }
+    })
 
     val nodes = new WatchingNodes(zk, !address.equals(_))
     val regions = new WatchingRegions(zk, !address.equals(_))
+
+    if (zk.exists("/regionfs", false) == null)
+      zk.create("/regionfs", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
+
+    if (zk.exists("/regionfs/nodes", false) == null)
+      zk.create("/regionfs/nodes", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
+
+    if (zk.exists("/regionfs/regions", false) == null)
+      zk.create("/regionfs/regions", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
 
     private def registerExsitingRegions(): Unit = {
       localRegionManager.regions.keys.foreach(regionId => {
@@ -126,7 +124,8 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       val rand = new Random();
 
       override def onStart(): Unit = {
-        logger.info(s"endpoint started")
+        zk.create(s"/regionfs/nodes/$addrString", "".getBytes,
+          Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
       }
 
       private def createNewRegion(): Region = {

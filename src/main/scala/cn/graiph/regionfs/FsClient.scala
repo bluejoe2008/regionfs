@@ -150,7 +150,6 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
             offset += n
           }
         }
-        futures.par.foreach(f => Await.result(f, Duration.apply("30s")))
       }
       catch {
         case e: Throwable =>

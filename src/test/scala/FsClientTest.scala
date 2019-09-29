@@ -11,7 +11,7 @@ class FsClientTest {
   // StartSingleTestServer ./node1.conf
   // StartSingleTestServer ./node2.conf
   // StartSingleTestServer ./node3.conf
-  val client = new FsClient("localhost:2181,localhost:2182,localhost:2183")
+  val client = new FsClient("localhost:2181")
 
   @Before
   def makeFiles(): Unit = {

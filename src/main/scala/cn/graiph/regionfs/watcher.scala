@@ -10,7 +10,21 @@ import scala.collection.mutable
 /**
   * Created by bluejoe on 2019/9/3.
   */
+
+/**
+  * watches on nodes registered in zookeeper
+  * filters node list by parameter filter
+  * layout of zookeepper:
+  *  /regionfs/nodes
+  *    node1_1224
+  *    node1_1225
+  *    node2_1224
+  *    ...
+  */
 class WatchingNodes(zk: ZooKeeper, filter: (NodeAddress) => Boolean) extends Logging {
+
+  //node1_1224->client1, node1_1225->client2, ...
+  //client will be automatically created
   val mapNodeClients = mutable.Map[NodeAddress, FsNodeClient]()
 
   mapNodeClients ++= zk.getChildren(s"/regionfs/nodes", new Watcher {
@@ -21,22 +35,27 @@ class WatchingNodes(zk: ZooKeeper, filter: (NodeAddress) => Boolean) extends Log
     override def process(event: WatchedEvent): Unit = {
       event.getType match {
         case EventType.NodeCreated => {
+          //get `node1_1224`
           val addr = NodeAddress.fromString(event.getPath.drop("/regionfs/nodes".length), "_");
+          //new node created, now add it to mapNodeClients
           mapNodeClients += (addr -> FsNodeClient.connect(addr))
-          keepWatching
         }
 
         case EventType.NodeDeleted => {
           val addr = NodeAddress.fromString(event.getPath.drop("/regionfs/nodes".length), "_");
           mapNodeClients(addr).close
+          //remove deleted node (dead node)
           mapNodeClients -= addr
-          keepWatching
         }
 
         case _ => {
 
         }
       }
+
+      //keep watching
+      //this call renews the getChildren() Events
+      keepWatching
     }
   }).map(NodeAddress.fromString(_, "_")).
     filter(filter).
@@ -57,7 +76,19 @@ class WatchingNodes(zk: ZooKeeper, filter: (NodeAddress) => Boolean) extends Log
   def clients = mapNodeClients.values
 }
 
+/**
+  * watches on regions registered in zookeeper
+  * filters region list by parameter filter
+  * layout of zookeepper:
+  *  /regionfs/regions
+  *    node1_1224_1
+  *    node1_1225_2
+  *    node2_1224_1
+  *    ...
+  */
 class WatchingRegions(zk: ZooKeeper, filter: (NodeAddress) => Boolean) extends Logging {
+
+  //node1_1224->1, node1_1225->2, ...
   val mapNodeRegions = mutable.Map[NodeAddress, Long]()
 
   mapNodeRegions ++=
@@ -72,27 +103,25 @@ class WatchingRegions(zk: ZooKeeper, filter: (NodeAddress) => Boolean) extends L
           case EventType.NodeCreated => {
             val splits = event.getPath.split("_")
             mapNodeRegions += NodeAddress(splits(0), splits(1).toInt) -> splits(2).toLong
-            keepWatching
           }
 
           case EventType.NodeDeleted => {
             val splits = event.getPath.split("_")
             mapNodeRegions -= NodeAddress(splits(0), splits(1).toInt)
-            keepWatching
           }
 
           case _ => {
 
           }
         }
+
+        keepWatching
       }
     }).map { name =>
       val splits = name.split("_")
       NodeAddress(splits(0), splits(1).toInt) -> splits(2).toLong
     }.
       filter(x => filter(x._1))
-
-  logger.debug(s"loaded neighbour regions: $mapNodeRegions")
 
   def map = mapNodeRegions.toMap
 }

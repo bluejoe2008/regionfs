@@ -11,15 +11,23 @@ import scala.collection.mutable
 /**
   * Created by bluejoe on 2019/8/30.
   */
+/**
+  * a Region store files in storeDir
+  */
 class Region(storeDir: File, val regionId: Long) extends Logging {
   //TODO: use ConfigServer
   val MAX_REGION_LENGTH = 102400
   val WRITE_BUFFER_SIZE = 10240
 
+  //region file
   val fileBody = new File(storeDir, "body")
+  //metadata file
   val fileMeta = new File(storeDir, "meta")
+  //fileCursor stores last used localId
+  //FIXME: fileCursor is not necessary, use count of metadata entries?
   val fileCursor = new File(storeDir, "cursor")
 
+  //counterOffset = length of region
   val counterOffset =
     if (!fileBody.exists()) {
       fileBody.createNewFile()
@@ -29,6 +37,7 @@ class Region(storeDir: File, val regionId: Long) extends Logging {
       new AtomicLong(fileBody.length())
     }
 
+  //localId = index of each blob
   val counterLocalId =
     if (fileCursor.exists()) {
       val dis = new DataInputStream(new FileInputStream(fileCursor))
@@ -47,6 +56,7 @@ class Region(storeDir: File, val regionId: Long) extends Logging {
     val lengthWithPadding = writeFileBody(getInputStream)
     val crc32 = computeCrc32(getInputStream)
 
+    //get local id
     val id = {
       if (localId.isDefined) {
         localId.get
@@ -77,7 +87,7 @@ class Region(storeDir: File, val regionId: Long) extends Logging {
   }
 
   private def writeFileBody(getInputStream: () => InputStream): Long = {
-    //TOOD: optimize writing
+    //TODO: optimize writing
     val is = getInputStream()
     var n = 0
     var lengthWithPadding = 0L
@@ -96,6 +106,7 @@ class Region(storeDir: File, val regionId: Long) extends Logging {
 
   private def writeMeta(localId: Long, offset: Long, length: Long, crc32: Long): Unit = {
     //[llll][llll][oooo][oooo][llll][llll][cccc][cccc]
+    //TODO: add a byte: DELETED?
     metaPtr.writeLong(localId)
     metaPtr.writeLong(offset)
     metaPtr.writeLong(length)
@@ -114,11 +125,26 @@ class Region(storeDir: File, val regionId: Long) extends Logging {
   }
 }
 
+/**
+  * RegionManager manages local regions stored in storeDir
+  */
 class RegionManager(storeDir: File) extends Logging {
   val regions = mutable.Map[Long, Region]()
 
   def get(id: Long) = regions(id)
 
+  /*
+   layout of storeDir
+    ./1
+      body
+      cursor
+      meta
+    ./2
+      body
+      cursor
+      meta
+    ...
+  */
   regions ++= storeDir.listFiles().
     filter { file =>
       !file.isHidden && file.isDirectory

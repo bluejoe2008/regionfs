@@ -17,13 +17,19 @@ import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
 
+/**
+  * Created by bluejoe on 2019/8/22.
+  */
 class RegionFsServersException(msg: String, cause: Throwable = null) extends RuntimeException(msg, cause) {
 }
 
 /**
-  * Created by bluejoe on 2019/8/22.
+  * FsNodeServer factory
   */
 object FsNodeServer {
+  /**
+    * create a FsNodeServer with a configuration file, e.g. node1.conf
+    */
   def build(configFile: File): FsNodeServer = {
     val props = new Properties()
     val fis = new FileInputStream(configFile)
@@ -54,6 +60,9 @@ object FsNodeServer {
   }
 }
 
+/**
+  * a FsNodeServer serves blob save/read requests
+  */
 class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port: Int) extends Logging {
   var rpcServer: FsRpcServer = null
   val addrString = s"${host}_$port"
@@ -81,31 +90,14 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       }
     })
 
+    //get neighbour nodes
     val nodes = new WatchingNodes(zk, !address.equals(_))
+    //get regions in neighbour nodes
     val regions = new WatchingRegions(zk, !address.equals(_))
 
-    if (zk.exists("/regionfs", false) == null)
-      zk.create("/regionfs", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
-
-    if (zk.exists("/regionfs/nodes", false) == null)
-      zk.create("/regionfs/nodes", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
-
-    if (zk.exists("/regionfs/regions", false) == null)
-      zk.create("/regionfs/regions", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
-
-    private def registerExsitingRegions(): Unit = {
-      localRegionManager.regions.keys.foreach(regionId => {
-        registerNewRegion(regionId)
-      })
-    }
-
-    private def registerNewRegion(regionId: Long) = {
-      zk.create(s"/regionfs/regions/${addrString}_$regionId", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
-    }
+    prepareZkEntries
 
     def start() {
-      registerExsitingRegions()
-
       val config = RpcEnvServerConfig(new RpcConf(), "regionfs-server", host, port)
       rpcEnv = NettyRpcEnvFactory.create(config)
       val endpoint: RpcEndpoint = new FileRpcEndpoint(rpcEnv)
@@ -123,13 +115,17 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       val queue = new FileTaskQueue()
       val rand = new Random();
 
+      //NOTE: register only on started up
       override def onStart(): Unit = {
+        //register this node and regions
         zk.create(s"/regionfs/nodes/$addrString", "".getBytes,
           Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
+        registerExsitingRegions()
       }
 
       private def createNewRegion(): Region = {
         //get max region ids
+        //FIXME: use an AtomicLong? regionId = regionIdSerial.incrementAndGet
         val regionId: Long = (localRegionManager.regions.map(_._1).toArray.sortWith(_ > _).
           headOption.getOrElse(nodeId.toLong << 16)) + 1
         val region = localRegionManager.createNew(regionId)
@@ -150,24 +146,28 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             nodes.clients.toArray.apply(rand.nextInt(nodes.size))
           )
 
+        //hello, pls create a new region with id=regionId
         Await.result(thinNeighbourClient.endPointRef.ask[CreateRegionResponse](CreateRegionRequest(regionId)),
           Duration.apply("30s"))
 
+        //ok, now I register this region
         registerNewRegion(regionId)
         region
       }
 
       private def chooseRegion(): Region = {
         localRegionManager.synchronized {
+          //counterOffset=size of region
           localRegionManager.regions.values.toArray.sortBy(_.counterOffset.get).headOption.
             getOrElse({
-              //no enough region
+              //no enough regions
               createNewRegion()
             })
         }
       }
 
       private def getNeighboursHasRegion(regionId: Long): Array[NodeAddress] = {
+        //a region may be stored in multiple nodes
         regions.map.filter(_._2 == regionId).filter(_._1 != address).map(_._1).toArray
       }
 
@@ -192,7 +192,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
               nodes.clientOf(addr).endPointRef.ask[SendCompleteFileResponse](
                 SendCompleteFileRequest(Some(region.regionId), block, totalLength)))
 
-            //wait all neigbours' reply
+            //wait all neigbours' replies
             futures.map(future =>
               Await.result(future, Duration.Inf))
           }
@@ -244,6 +244,33 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       }
     }
 
+    private def prepareZkEntries(): Unit = {
+      if (zk.exists("/regionfs", false) == null)
+        zk.create("/regionfs", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
+
+      if (zk.exists("/regionfs/nodes", false) == null)
+        zk.create("/regionfs/nodes", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
+
+      if (zk.exists("/regionfs/regions", false) == null)
+        zk.create("/regionfs/regions", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
+    }
+
+    private def registerExsitingRegions(): Unit = {
+      localRegionManager.regions.keys.foreach(regionId => {
+        registerNewRegion(regionId)
+      })
+    }
+
+    private def registerNewRegion(regionId: Long) = {
+      zk.create(s"/regionfs/regions/${addrString}_$regionId", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
+    }
+
+    /**
+      * a FileTask stores chunks for a blob
+      * a FileTaskQueue manages all running FileTasks
+      * each FileTask has an unique id (transactionId)
+      * transactionIdGen generates transactionIds
+      */
     class FileTaskQueue() extends Logging {
       val transactionalTasks = mutable.Map[Long, FileTask]()
       val transactionIdGen = new AtomicLong(System.currentTimeMillis())
@@ -262,6 +289,8 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       }
 
       class FileTask(val region: Region, val totalLength: Long) {
+        //besides this node, neighbour nodes will store replica chunks on the same time
+        //neighbourTransactionIds is used to save these ids allocated for replica blob task
         val neighbourTransactionIds = mutable.Map[NodeAddress, Long]()
 
         def addNeighbourTransactionId(address: NodeAddress, transId: Long): Unit = {
@@ -277,12 +306,14 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         val chunks = ArrayBuffer[Chunk]()
         val actualBytesWritten = new AtomicLong(0)
 
+
+        //combine all chunks as a complete blob file
         private def combine(transId: Long): File = {
           if (chunks.length == 1) {
             chunks(0).file
           }
           else {
-            //create combined file
+            //create a combined file
             val tmpFile = File.createTempFile(s"regionfs-$transId-", "")
             val fos: FileOutputStream = new FileOutputStream(tmpFile, true)
             chunks.sortBy(_.index).foreach { chunk =>
@@ -297,14 +328,16 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
           }
         }
 
+
+        //save one chunk, if this is the last chunk, then write all chunks into region
         def write(transId: Long, chunkBytes: Array[Byte], offset: Long, chunkLength: Int, chunkIndex: Int): Option[Long] = {
           logger.debug(s"writing chunk: $transId-$chunkIndex, length=$chunkLength")
 
+          //save this chunk into a chunk file
           val tmpFile = this.synchronized {
             File.createTempFile(s"regionfs-$transId-", ".chunk")
           }
 
-          println(tmpFile.getName)
           val fos: FileOutputStream = new FileOutputStream(tmpFile)
           IOUtils.copy(new ByteArrayInputStream(chunkBytes.slice(0, chunkLength)), fos)
           fos.close()
@@ -315,9 +348,11 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
           val actualBytes = actualBytesWritten.addAndGet(chunkLength)
 
-          //end of file?
+          //end of file? all chunks are ready!
           if (actualBytes >= totalLength) {
+            //combine all chunks to a complete blob
             val combinedFile = combine(transId);
+            //save into region
             val localId = region.save(
               () => new FileInputStream(combinedFile),
               actualBytes,

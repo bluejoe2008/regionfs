@@ -23,6 +23,9 @@ class WriteFileException(msg: String, cause: Throwable = null) extends RegionFsC
 
 }
 
+/**
+  * a client to regionfs servers
+  */
 class FsClient(zks: String) extends Logging {
   val zk = new ZooKeeper(zks, 2000, new Watcher {
     override def process(event: WatchedEvent): Unit = {
@@ -39,6 +42,7 @@ class FsClient(zks: String) extends Logging {
   }
 
   //max region size: 128MB
+  //TODO: configurable?
   val MAX_REGION_SIZE = 1024 * 1024 * 128
 
   def writeFiles(inputs: Iterable[(InputStream, Long)]): Iterable[FileId] = {
@@ -62,6 +66,9 @@ class FsClient(zks: String) extends Logging {
   }
 }
 
+/**
+  * FsNodeClient factory
+  */
 object FsNodeClient {
   val rpcEnv: RpcEnv = {
     val rpcConf = new RpcConf()
@@ -90,10 +97,17 @@ object NodeAddress {
   }
 }
 
+/**
+  * address of a node
+  */
 case class NodeAddress(host: String, port: Int) {
 
 }
 
+/**
+  * an FsNodeClient is an underline client used by FsClient
+  * it sends raw messages (e.g. SendCompleteFileRequest) to NodeServer and handles responses
+  */
 case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends Logging {
   val endPointRef = {
     val rpcConf = new RpcConf()
@@ -111,9 +125,7 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
   //TODO: use ConfigServer
   val CHUNK_SIZE: Int = 10240
 
-  //region is not assigned
   def writeFileAsync(is: InputStream, totalLength: Long): Future[FileId] = {
-    //choose a region
     //small file
     if (totalLength <= CHUNK_SIZE) {
       val bytes = new Array[Byte](CHUNK_SIZE)
@@ -122,12 +134,13 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
         map(_.fileId)
     }
     else {
-      //split files
+      //split large files into chunks
       val res = Await.result(endPointRef.ask[StartSendChunksResponse](
         StartSendChunksRequest(None, totalLength)),
         Duration.Inf)
 
       val transId = res.transId
+      //TODO: too many vars
       var chunks = 0
       var offset = 0
       var n = 0
@@ -163,6 +176,8 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
       }
 
       Future {
+        //awaits all chunks are received
+        //one response should contain a Some(FieldId), while others returns None
         futures.map(Await.result(_, Duration.Inf)).find(_.fileId.isDefined).get.fileId.get
       }
     }

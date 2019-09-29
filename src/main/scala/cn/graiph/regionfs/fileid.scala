@@ -12,10 +12,18 @@ object FileId {
   }
 }
 
-//16 bytes
+/**
+  * a FileId represents a 16 bytes id assigned to a blob
+  * layout:
+  * [rr][rr][rr][rr][rr][rr][rr][rr][ll][ll][ll][ll][ll][ll][ll][ll]
+  * rr=regionId, ll=localId
+  * localId is an unique id in a region, often be an integer index
+  */
 case class FileId(regionId: Long, localId: Long) extends Serializable {
-  //[rr][rr][rr][rr][rr][rr][rr][rr][ll][ll][ll][ll][ll][ll][ll][ll]
 
+  /**
+    * print this FileId as a string
+    */
   def asHexString(): String = {
     val baos = new ByteArrayOutputStream()
     val dos = new DataOutputStream(baos)

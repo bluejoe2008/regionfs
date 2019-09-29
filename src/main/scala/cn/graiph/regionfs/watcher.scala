@@ -125,3 +125,46 @@ class WatchingRegions(zk: ZooKeeper, filter: (NodeAddress) => Boolean) extends L
 
   def map = mapNodeRegions.toMap
 }
+
+
+class WatchingRegionNodes(zk: ZooKeeper) extends Logging {
+  private val mapRegionNodes = mutable.Map[Long, NodeAddress]() // map: Region -> host_port
+
+  mapRegionNodes ++=
+    zk.getChildren(s"/regionfs/regions", new Watcher {
+
+      private def keepWatching() = {
+        zk.getChildren(s"/regionfs/regions", this.asInstanceOf[Watcher])
+      }
+
+      override def process(event: WatchedEvent): Unit = {
+        event.getType match {
+          case EventType.NodeCreated => {
+            val splits = event.getPath.split("_")
+            mapRegionNodes += splits(2).toLong -> NodeAddress(splits(0), splits(1).toInt)
+
+            keepWatching
+          }
+
+          case EventType.NodeDeleted => {
+            val splits = event.getPath.split("_")
+            mapRegionNodes -= splits(2).toLong
+
+            keepWatching
+          }
+
+          case _ => {
+
+          }
+        }
+      }
+    }).map { name =>
+      val splits = name.split("_")
+      splits(2).toLong -> NodeAddress(splits(0), splits(1).toInt)
+    }
+
+  logger.debug(s"loaded neighbour regions: $mapRegionNodes")
+
+
+  def map = mapRegionNodes.toMap
+}

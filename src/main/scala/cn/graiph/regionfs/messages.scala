@@ -35,3 +35,11 @@ case class SendChunkRequest(transId: Long, chunkBytes: Array[Byte], offset: Long
 case class SendChunkResponse(fileId: Option[FileId], chunkLength: Long) {
 
 }
+
+case class ReadCompleteFileRequest(regionId: Long, localId: Long) {
+
+}
+
+case class ReadCompleteFileResponse(content:  Array[Byte]) {
+
+}

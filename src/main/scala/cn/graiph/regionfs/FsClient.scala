@@ -12,6 +12,7 @@ import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, Future}
+import scala.reflect.io.Streamable.Bytes
 import scala.util.Random
 
 class RegionFsClientException(msg: String, cause: Throwable = null)
@@ -64,6 +65,18 @@ class FsClient(zks: String) extends Logging {
     //logger.debug(s"chose client: $client")
     client.writeFileAsync(is, totalLength)
   }
+
+  def readFile(fileId: FileId): Array[Byte] = {
+    Await.result(readFileAsync(fileId: FileId), Duration.Inf)
+  }
+
+  def readFileAsync(fileId: FileId): Future[Array[Byte]] = {
+    val watchRegionNodes = new WatchingRegionNodes(zk)
+    val nodeAddress = watchRegionNodes.map(fileId.regionId)
+    val client = nodes.map(nodeAddress)
+    client.readFileAsync(fileId)
+  }
+
 }
 
 /**
@@ -181,5 +194,10 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
         futures.map(Await.result(_, Duration.Inf)).find(_.fileId.isDefined).get.fileId.get
       }
     }
+  }
+
+  def readFileAsync(fileId: FileId): Future[Array[Byte]] = {
+    endPointRef.ask[ReadCompleteFileResponse](
+      ReadCompleteFileRequest(fileId.regionId,fileId.localId)).map(_.content)
   }
 }

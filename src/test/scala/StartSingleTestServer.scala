@@ -6,6 +6,6 @@ import cn.graiph.regionfs.shell.StartNodeServer
 object StartSingleTestServer {
   def main(args: Array[String]) {
     //example args: ./node1.conf
-    StartNodeServer.main(args)
+    StartNodeServer.main(Array[String]("node1.conf"))
   }
 }

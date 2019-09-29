@@ -4,9 +4,11 @@ import java.io._
 import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.{CRC32, CheckedInputStream}
 
+import scala.collection.mutable
+import scala.util.control._
+
 import cn.graiph.regionfs.util.Logging
 
-import scala.collection.mutable
 
 /**
   * Created by bluejoe on 2019/8/30.
@@ -79,6 +81,16 @@ class Region(storeDir: File, val regionId: Long) extends Logging {
     metaPtr.close()
   }
 
+  def read(localId: Long, length: Long = -1): Array[Byte] ={
+    val fMeta = getMetaByLocalId(localId)
+    if (length < 0){
+      readFileBody(fMeta("offset").toInt, fMeta("length").toInt)
+    }
+    else{
+      readFileBody(fMeta("offset").toInt, length.toInt)
+    }
+  }
+
   //TODO: write less times
   private def updateCursor(id: Long) {
     val dos = new DataOutputStream(new FileOutputStream(fileCursor))
@@ -104,6 +116,13 @@ class Region(storeDir: File, val regionId: Long) extends Logging {
     lengthWithPadding
   }
 
+  private def readFileBody( offset: Int, length: Int): Array[Byte] = {
+    val is = new FileInputStream(fileBody)
+    val content: Array[Byte] = new Array[Byte](length)
+    is.read(content,offset.toInt,length.toInt)
+    content
+  }
+
   private def writeMeta(localId: Long, offset: Long, length: Long, crc32: Long): Unit = {
     //[llll][llll][oooo][oooo][llll][llll][cccc][cccc]
     //TODO: add a byte: DELETED?
@@ -111,6 +130,30 @@ class Region(storeDir: File, val regionId: Long) extends Logging {
     metaPtr.writeLong(offset)
     metaPtr.writeLong(length)
     metaPtr.writeLong(crc32)
+  }
+
+  private def getMetaByLocalId(localId: Long): Map[String,Long] = {
+    val is =  new DataInputStream(new FileInputStream(fileMeta))
+    val info = mutable.Map[String,Long]()
+    val loop = new Breaks
+    loop.breakable{
+      while(is.available()>0) {
+        val f_id = is.readLong()
+        println(f_id)
+        val offset = is.readLong()
+        val length = is.readLong()
+        val crc32 = is.readLong()
+        if(f_id == localId){
+          info("localId") = f_id
+          info("offset") = offset
+          info("length") = length
+          info("crc32") = crc32
+          loop.break()
+        }
+      }
+    }
+    is.close()
+    info.toMap
   }
 
   def computeCrc32(getInputStream: () => InputStream): Long = {

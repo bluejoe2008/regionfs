@@ -237,6 +237,14 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
           futures.foreach(Await.result(_, Duration.Inf))
           context.reply(SendChunkResponse(opt.map(FileId.make(task.region.regionId, _)), chunkLength))
         }
+
+        case ReadCompleteFileRequest(regionId: Long, localId: Long) => {
+          // get region
+          val region = localRegionManager.get(regionId)
+          val content: Array[Byte] = region.read(localId)
+
+          context.reply(ReadCompleteFileResponse(content))
+        }
       }
 
       override def onStop(): Unit = {

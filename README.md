@@ -39,10 +39,10 @@ node2
 node3
 ```
 
-3. starts
+3. start/stop
 ```
-bin/start-all-nodes.sh nodes
+sbin/regionfs node [-l host1,host2,...] <start|stop>
 ```
 
-actually, this script will execute `bin/start-node.sh conf/node.conf` on each node
+actually, this script will execute `sbin/<start|stop>-node conf/node.conf` on each node host.
 

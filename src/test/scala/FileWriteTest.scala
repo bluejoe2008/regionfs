@@ -6,12 +6,7 @@ import org.junit.{Before, Test}
 /**
   * Created by bluejoe on 2019/8/23.
   */
-class FsClientTest {
-  //run 3 processes first:
-  // StartSingleTestServer ./node1.conf
-  // StartSingleTestServer ./node2.conf
-  // StartSingleTestServer ./node3.conf
-  val client = new FsClient("localhost:2181")
+class FileWriteTest extends FileTestBase {
 
   @Before
   def makeFiles(): Unit = {
@@ -44,7 +39,12 @@ class FsClientTest {
     writeFile(new File("./testdata/inputs/9999"))
     writeFile(new File("./testdata/inputs/99999"))
     writeFile(new File("./testdata/inputs/999999"))
+  }
 
+  @Test
+  def test0(): Unit = {
+    writeFile("this is a test")
+    writeFile("hello, world")
   }
 
   @Test
@@ -77,31 +77,5 @@ class FsClientTest {
     writeFiles(new File("./testdata/inputs/9999"), 10)
     writeFiles(new File("./testdata/inputs/99999"), 10)
     writeFiles(new File("./testdata/inputs/999999"), 10)
-  }
-
-  def writeFiles(src: File, times: Int): Unit = {
-    clock {
-      val fids = client.writeFiles((0 to times - 1).map { _ =>
-        new FileInputStream(src) -> src.length
-      })
-
-      println(fids.map(_.asHexString()))
-    }
-  }
-
-  def writeFile(src: File): Unit = {
-    clock {
-      val fid = client.writeFile(
-        new FileInputStream(src), src.length)
-      println(fid)
-    }
-  }
-
-  def clock(runnable: => Unit) {
-    val t1 = System.currentTimeMillis()
-    runnable;
-    val t2 = System.currentTimeMillis()
-
-    println(s"time: ${t2 - t1}ms")
   }
 }

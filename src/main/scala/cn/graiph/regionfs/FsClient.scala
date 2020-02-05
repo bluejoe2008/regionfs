@@ -12,8 +12,6 @@ import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, Future}
-import scala.reflect.io.Streamable.Bytes
-import scala.util.Random
 
 class RegionFsClientException(msg: String, cause: Throwable = null)
   extends RuntimeException(msg, cause) {
@@ -56,16 +54,16 @@ class FsClient(zks: String) extends Logging {
     Await.result(writeFileAsync(is: InputStream, totalLength: Long), Duration.Inf)
   }
 
-  val rand = new Random();
+  val selector = new RoundRobinSelector(nodes.clients.toList);
 
   def writeFileAsync(is: InputStream, totalLength: Long): Future[FileId] = {
     //choose a client
-    val clients = nodes.clients.toArray;
-    val client = clients(rand.nextInt(clients.size))
+    val client = selector.select()
     //logger.debug(s"chose client: $client")
     client.writeFileAsync(is, totalLength)
   }
 
+  //FIXME: large files?
   def readFile(fileId: FileId): Array[Byte] = {
     Await.result(readFileAsync(fileId: FileId), Duration.Inf)
   }
@@ -198,6 +196,24 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
 
   def readFileAsync(fileId: FileId): Future[Array[Byte]] = {
     endPointRef.ask[ReadCompleteFileResponse](
-      ReadCompleteFileRequest(fileId.regionId,fileId.localId)).map(_.content)
+      ReadCompleteFileRequest(fileId.regionId, fileId.localId)).map(_.content)
+  }
+}
+
+trait FsNodeSelector {
+  def select(): FsNodeClient;
+}
+
+class RoundRobinSelector(nodes: List[FsNodeClient]) extends FsNodeSelector {
+  var index = -1;
+
+  def select(): FsNodeClient = {
+    this.synchronized {
+      index += 1
+      if (index >= nodes.length) {
+        index = 0;
+      }
+      nodes.apply(index)
+    }
   }
 }

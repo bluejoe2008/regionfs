@@ -165,6 +165,5 @@ class WatchingRegionNodes(zk: ZooKeeper) extends Logging {
 
   logger.debug(s"loaded neighbour regions: $mapRegionNodes")
 
-
   def map = mapRegionNodes.toMap
 }

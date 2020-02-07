@@ -1,7 +1,7 @@
-import java.io.{File, FileInputStream}
+import java.io.{File, FileInputStream, InputStream}
 
 import org.apache.commons.io.IOUtils
-import org.junit.{Before, Assert, Test}
+import org.junit.{Assert, Before, Test}
 
 /**
   * Created by bluejoe on 2020/1/8.
@@ -14,24 +14,56 @@ class FileReadTest extends FileTestBase {
     makeFile(new File("./testdata/inputs/99999"), 99999L)
     makeFile(new File("./testdata/inputs/999999"), 999999L)
     makeFile(new File("./testdata/inputs/9999999"), 9999999L)
+    makeFile(new File("./testdata/inputs/99999999"), 99999999L)
   }
 
   @Test
-  def test(): Unit = {
-    val src: File = new File("./testdata/inputs/9999999")
+  def test999(): Unit = {
+    test("./testdata/inputs/999");
+  }
+
+  @Test
+  def test9999(): Unit = {
+    test("./testdata/inputs/9999");
+  }
+
+  @Test
+  def test99999(): Unit = {
+    test("./testdata/inputs/99999");
+  }
+
+  @Test
+  def test999999(): Unit = {
+    test("./testdata/inputs/999999");
+  }
+
+  @Test
+  def test9999999(): Unit = {
+    test("./testdata/inputs/9999999");
+  }
+
+  private def test(path: String): Unit = {
+    val src: File = new File(path)
     val id = super.writeFile(src);
-    clock {
-      val bytes = client.readFile(id);
-      Assert.assertArrayEquals(bytes, IOUtils.toByteArray(new FileInputStream(src)));
+    val bytes =
+      clock {
+        client.readFile(id, (is: InputStream) => {
+          IOUtils.toByteArray(is)
+        });
+      }
+
+    Assert.assertArrayEquals(bytes, IOUtils.toByteArray(new FileInputStream(src)));
+
+    for(i <- 0 to 1) {
+      clock {
+        println("read an remote file...")
+        val bytes = client.readFile(id, (is: InputStream) => {
+          IOUtils.toByteArray(is)
+        });
+        println(s"size: ${bytes.size}");
+      }
     }
-    clock {
-      val bytes = client.readFile(id);
-    }
-    clock {
-      println("read an remote file...")
-      val bytes = client.readFile(id);
-      println(s"size: ${bytes.size}");
-    }
+
     clock {
       println("read a local file...")
       val bytes = IOUtils.toByteArray(new FileInputStream(src));

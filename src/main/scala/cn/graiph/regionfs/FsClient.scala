@@ -1,8 +1,8 @@
 package cn.graiph.regionfs
 
-import java.io.InputStream
+import java.io.{ByteArrayInputStream, InputStream}
 
-import cn.graiph.regionfs.util.Logging
+import cn.graiph.regionfs.util.{Logging, StreamUtils}
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.NettyRpcEnvFactory
 import net.neoremind.kraps.rpc.{RpcAddress, RpcEnv, RpcEnvClientConfig}
@@ -19,7 +19,8 @@ class RegionFsClientException(msg: String, cause: Throwable = null)
 
 }
 
-class WriteFileException(msg: String, cause: Throwable = null) extends RegionFsClientException(msg: String, cause) {
+class WriteFileException(msg: String, cause: Throwable = null)
+  extends RegionFsClientException(msg: String, cause) {
 
 }
 
@@ -41,10 +42,6 @@ class FsClient(zks: String) extends Logging {
     throw new RegionFsClientException("no serving data nodes")
   }
 
-  //max region size: 128MB
-  //TODO: configurable?
-  val MAX_REGION_SIZE = 1024 * 1024 * 128
-
   def writeFiles(inputs: Iterable[(InputStream, Long)]): Iterable[FileId] = {
     inputs.map(x =>
       writeFileAsync(x._1, x._2)).
@@ -64,16 +61,11 @@ class FsClient(zks: String) extends Logging {
     client.writeFileAsync(is, totalLength)
   }
 
-  //FIXME: large files?
-  def readFile(fileId: FileId): Array[Byte] = {
-    Await.result(readFileAsync(fileId: FileId), Duration.Inf)
-  }
-
-  def readFileAsync(fileId: FileId): Future[Array[Byte]] = {
+  def readFile[T](fileId: FileId, consume: (InputStream) => T): T = {
     val watchRegionNodes = new WatchingRegionNodes(zk)
     val nodeAddress = watchRegionNodes.map(fileId.regionId)
     val client = nodes.map(nodeAddress)
-    client.readFileAsync(fileId)
+    client.readFile(fileId, consume)
   }
 
 }
@@ -133,13 +125,9 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
     rpcEnv.stop(endPointRef)
   }
 
-  //10K each chunk
-  val WRITE_CHUNK_SIZE: Int = 10240
-  val READ_CHUNK_SIZE: Int = 10240
-
   def writeFileAsync(is: InputStream, totalLength: Long): Future[FileId] = {
     //small file
-    if (totalLength <= WRITE_CHUNK_SIZE) {
+    if (totalLength <= Constants.WRITE_CHUNK_SIZE) {
       val bytes = IOUtils.toByteArray(is)
       endPointRef.ask[SendCompleteFileResponse](
         SendCompleteFileRequest(None, bytes, totalLength)).
@@ -162,7 +150,7 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
       try {
         while (n >= 0) {
           //10k
-          val bytes = new Array[Byte](WRITE_CHUNK_SIZE)
+          val bytes = new Array[Byte](Constants.WRITE_CHUNK_SIZE)
           n = is.read(bytes)
 
           if (n > 0) {
@@ -195,9 +183,24 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
     }
   }
 
-  def readFileAsync(fileId: FileId): Future[Array[Byte]] = {
-    endPointRef.ask[ReadCompleteFileResponse](
-      ReadCompleteFileRequest(fileId.regionId, fileId.localId)).map(_.content)
+  def readFile[T](fileId: FileId, consume: (InputStream) => T): T = {
+    var offset: Long = 0;
+    val is = StreamUtils.concatStreams {
+      if (offset == -1) {
+        None
+      }
+      else {
+        val res = Await.result(endPointRef.ask[ReadChunkResponse](
+          ReadChunkRequest(fileId.regionId, fileId.localId, offset, Constants.READ_CHUNK_SIZE)), Duration.Inf)
+
+        offset = res.nextOffset
+        Some(new ByteArrayInputStream(res.content))
+      }
+    }
+
+    val t = consume(is)
+    is.close()
+    t
   }
 }
 

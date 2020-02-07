@@ -101,9 +101,7 @@ class FileTask(val region: Region, val totalLength: Long) extends Logging {
       //combine all chunks to a complete blob
       val combinedFile = combine(transId);
       //save into region
-      val localId = region.write(
-        () => new FileInputStream(combinedFile),
-        None)
+      val localId = region.write(() => new FileInputStream(combinedFile))
 
       combinedFile.delete()
       Some(localId)

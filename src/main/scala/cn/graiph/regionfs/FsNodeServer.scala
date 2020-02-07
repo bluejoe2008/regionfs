@@ -236,14 +236,20 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
           context.reply(SendChunkResponse(opt.map(FileId.make(task.region.regionId, _)), chunkLength))
         }
 
-        case ReadCompleteFileRequest(regionId: Long, localId: Long) => {
+        case ReadChunkRequest(regionId: Long, localId: Long, offset: Long, chunkLength: Long) => {
           // get region
           val region = localRegionManager.get(regionId)
-          val content: Array[Byte] = region.read(localId, (is: InputStream) => {
+          val content: Array[Byte] = region.read(localId, offset, chunkLength, (is: InputStream) => {
             IOUtils.toByteArray(is)
           })
 
-          context.reply(ReadCompleteFileResponse(content))
+          context.reply(ReadChunkResponse(content,
+            if (content.length < chunkLength) {
+              -1
+            }
+            else {
+              offset + content.length
+            }))
         }
       }
 

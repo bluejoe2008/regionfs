@@ -1,12 +1,13 @@
 package cn.graiph.regionfs
 
 import java.io._
-import java.util.{Properties, Random}
+import java.util.Random
 
-import cn.graiph.regionfs.util.{Configuration, ConfigurationEx, Logging}
+import cn.graiph.regionfs.util.{ConfigurationEx, Logging}
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.NettyRpcEnvFactory
 import net.neoremind.kraps.rpc.{RpcCallContext, RpcEndpoint, RpcEnv, RpcEnvServerConfig}
+import org.apache.commons.io.IOUtils
 import org.apache.zookeeper.ZooDefs.Ids
 import org.apache.zookeeper._
 
@@ -27,20 +28,8 @@ object FsNodeServer {
     * create a FsNodeServer with a configuration file, e.g. node1.conf
     */
   def build(configFile: File): FsNodeServer = {
-    val props = new Properties()
-    val fis = new FileInputStream(configFile)
-    props.load(fis)
-    fis.close()
-
-    val conf = new ConfigurationEx(new Configuration {
-      override def getRaw(name: String): Option[String] =
-        if (props.containsKey(name))
-          Some(props.getProperty(name))
-        else
-          None
-    })
-
-    val storeDir = conf.getRequiredValueAsFile("data.storeDir", configFile.getParentFile).
+    val conf = new ConfigurationEx(configFile)
+    val storeDir = conf.get("data.storeDir").asFile(configFile.getParentFile).
       getCanonicalFile.getAbsoluteFile
 
     if (!storeDir.exists())
@@ -48,11 +37,11 @@ object FsNodeServer {
 
     //TODO: use a leader node: manages all regions
     new FsNodeServer(
-      conf.getRequiredValueAsString("zookeeper.address"),
-      conf.getRequiredValueAsInt("node.id"),
+      conf.get("zookeeper.address").asString,
+      conf.get("node.id").asInt,
       storeDir,
-      conf.getValueAsString("server.host", "localhost"),
-      conf.getValueAsInt("server.port", 1224)
+      conf.get("server.host").withDefault("localhost").asString,
+      conf.get("server.port").withDefault(1224).asInt
     )
   }
 }
@@ -63,6 +52,7 @@ object FsNodeServer {
 class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port: Int) extends Logging {
   var rpcServer: FsRpcServer = null
   val addrString = s"${host}_$port"
+
   logger.debug(s"nodeId: ${nodeId}")
   logger.debug(s"storeDir: ${storeDir.getCanonicalFile.getAbsolutePath}")
 
@@ -79,13 +69,13 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
   class FsRpcServer() {
     val address = NodeAddress(host, port)
-    val localRegionManager = new RegionManager(nodeId, storeDir)
-    var rpcEnv: RpcEnv = null
-
     val zk = new ZooKeeper(zks, 2000, new Watcher {
       override def process(event: WatchedEvent): Unit = {
       }
     })
+    val globalConfig = GlobalConfig.load(zk)
+    val localRegionManager = new RegionManager(nodeId, storeDir, globalConfig)
+    var rpcEnv: RpcEnv = null
 
     //get neighbour nodes
     val neighbourNodes = new WatchingNodes(zk, !address.equals(_))
@@ -117,7 +107,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         //register this node and regions
         zk.create(s"/regionfs/nodes/$addrString", "".getBytes,
           Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
-        registerExsitingRegions()
+        syncExsitingRegions()
       }
 
       private def createNewRegion(): Region = {
@@ -125,9 +115,11 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         val regionId = region.regionId
 
         //notify neighbours
-        //TODO: replica number?
         //find thinnest neighbour which has least regions
-        if (!neighbourRegions.map.isEmpty) {
+        if (globalConfig.replicaNum > 1) {
+          if (neighbourRegions.map.size < globalConfig.replicaNum - 1)
+            throw new InsufficientNodeServerException(globalConfig.replicaNum);
+
           val thinNeighbourClient = neighbourRegions.map.
             groupBy(_._1).
             map(x => x._1 -> x._2.size).
@@ -147,7 +139,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         }
 
         //ok, now I register this region
-        registerNewRegion(regionId)
+        syncZkRegion(regionId)
         region
       }
 
@@ -171,6 +163,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
         case CreateRegionRequest(regionId: Long) => {
           localRegionManager.createNewReplica(regionId)
+          syncZkRegion(regionId)
           context.reply(CreateRegionResponse(regionId))
         }
 
@@ -246,7 +239,9 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         case ReadCompleteFileRequest(regionId: Long, localId: Long) => {
           // get region
           val region = localRegionManager.get(regionId)
-          val content: Array[Byte] = region.read(localId)
+          val content: Array[Byte] = region.read(localId, (is: InputStream) => {
+            IOUtils.toByteArray(is)
+          })
 
           context.reply(ReadCompleteFileResponse(content))
         }
@@ -268,17 +263,21 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         zk.create("/regionfs/regions", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
     }
 
-    private def registerExsitingRegions(): Unit = {
+    private def syncExsitingRegions(): Unit = {
       localRegionManager.regions.keys.foreach(regionId => {
-        registerNewRegion(regionId)
+        syncZkRegion(regionId)
       })
     }
 
-    private def registerNewRegion(regionId: Long) = {
+    private def syncZkRegion(regionId: Long) = {
       zk.create(s"/regionfs/regions/${addrString}_$regionId", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
     }
-
   }
+
+}
+
+class InsufficientNodeServerException(num: Int) extends
+  RegionFsServersException(s"insufficient node server for replica: num>=$num") {
 
 }
 

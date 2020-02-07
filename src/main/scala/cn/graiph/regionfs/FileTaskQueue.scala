@@ -103,7 +103,6 @@ class FileTask(val region: Region, val totalLength: Long) extends Logging {
       //save into region
       val localId = region.write(
         () => new FileInputStream(combinedFile),
-        actualBytes,
         None)
 
       combinedFile.delete()

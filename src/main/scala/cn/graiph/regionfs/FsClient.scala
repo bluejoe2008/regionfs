@@ -6,6 +6,7 @@ import cn.graiph.regionfs.util.Logging
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.NettyRpcEnvFactory
 import net.neoremind.kraps.rpc.{RpcAddress, RpcEnv, RpcEnvClientConfig}
+import org.apache.commons.io.IOUtils
 import org.apache.zookeeper.{WatchedEvent, Watcher, ZooKeeper}
 
 import scala.collection.mutable.ArrayBuffer
@@ -133,13 +134,13 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
   }
 
   //10K each chunk
-  //TODO: use ConfigServer
-  val CHUNK_SIZE: Int = 10240
+  val WRITE_CHUNK_SIZE: Int = 10240
+  val READ_CHUNK_SIZE: Int = 10240
 
   def writeFileAsync(is: InputStream, totalLength: Long): Future[FileId] = {
     //small file
-    if (totalLength <= CHUNK_SIZE) {
-      val bytes = new Array[Byte](CHUNK_SIZE)
+    if (totalLength <= WRITE_CHUNK_SIZE) {
+      val bytes = IOUtils.toByteArray(is)
       endPointRef.ask[SendCompleteFileResponse](
         SendCompleteFileRequest(None, bytes, totalLength)).
         map(_.fileId)
@@ -161,7 +162,7 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
       try {
         while (n >= 0) {
           //10k
-          val bytes = new Array[Byte](CHUNK_SIZE)
+          val bytes = new Array[Byte](WRITE_CHUNK_SIZE)
           n = is.read(bytes)
 
           if (n > 0) {

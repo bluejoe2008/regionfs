@@ -21,6 +21,11 @@
             <version>3.4.14</version>
         </dependency>
         <dependency>
+            <groupId>com.esotericsoftware</groupId>
+            <artifactId>kryo-shaded</artifactId>
+            <version>3.0.3</version>
+        </dependency>
+        <dependency>
             <groupId>net.neoremind</groupId>
             <artifactId>kraps-rpc_2.11</artifactId>
             <version>1.0.0</version>
@@ -88,7 +93,7 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>cn.graiph.regionfs.shell.StartNodeServer</mainClass>
+                            <mainClass>cn.graiph.regionfs.shell.NodeServerStarter</mainClass>
                         </manifest>
                     </archive>
                     <descriptorRefs>

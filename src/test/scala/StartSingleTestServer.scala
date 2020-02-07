@@ -1,4 +1,4 @@
-import cn.graiph.regionfs.shell.StartNodeServer
+import cn.graiph.regionfs.shell.{ShellNodeServerStarter}
 
 /**
   * Created by bluejoe on 2019/8/31.
@@ -6,6 +6,6 @@ import cn.graiph.regionfs.shell.StartNodeServer
 object StartSingleTestServer {
   def main(args: Array[String]) {
     //example args: ./node1.conf
-    StartNodeServer.main(args)
+    ShellNodeServerStarter.main(args)
   }
 }

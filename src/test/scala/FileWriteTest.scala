@@ -1,6 +1,5 @@
-import java.io.{File, FileInputStream, FileOutputStream}
+import java.io.{File, FileOutputStream}
 
-import cn.graiph.regionfs.FsClient
 import org.junit.{Before, Test}
 
 /**
@@ -14,23 +13,6 @@ class FileWriteTest extends FileTestBase {
     makeFile(new File("./testdata/inputs/9999"), 9999)
     makeFile(new File("./testdata/inputs/99999"), 99999L)
     makeFile(new File("./testdata/inputs/999999"), 999999L)
-  }
-
-  private def makeFile(dst: File, length: Long): Unit = {
-    val fos = new FileOutputStream(dst)
-    var n: Long = 0
-    while (n < length) {
-      val left: Int = (length - n).toInt
-      val bytes = new Array[Byte](if (left < 10240) {
-        left
-      } else {
-        10240
-      })
-      fos.write(bytes)
-      n += bytes.length
-    }
-
-    fos.close()
   }
 
   @Test

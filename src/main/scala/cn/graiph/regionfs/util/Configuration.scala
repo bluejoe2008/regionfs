@@ -20,7 +20,8 @@
 
 package cn.graiph.regionfs.util
 
-import java.io.File
+import java.io.{File, FileInputStream}
+import java.util.Properties
 
 /**
   * Created by bluejoe on 2019/7/23.
@@ -33,41 +34,33 @@ trait Configuration {
   * Created by bluejoe on 2018/11/3.
   */
 class ConfigurationEx(conf: Configuration) extends Logging {
-  def getRequiredValueAsString(key: String): String = {
-    getRequiredValue(key, (x) => x)
-  }
 
-  def getRequiredValueAsInt(key: String): Int = {
-    getRequiredValue(key, (x) => x.toInt)
-  }
+  trait AnyValue {
+    protected def safeConvert[T](convert: (String) => T)(implicit m: Manifest[T]): T;
 
-  def getRequiredValueAsBoolean(key: String): Boolean = {
-    getRequiredValue(key, (x) => x.toBoolean)
-  }
+    def asInt: Int = safeConvert(_.toInt);
 
-  def getRequiredValueAsFile(key: String, baseDir: File) = {
-    getRequiredValue(key, { x =>
+    def asLong: Long = safeConvert(_.toLong);
+
+    def asString: String = safeConvert(_.toString);
+
+    def asBoolean: Boolean = safeConvert(_.toBoolean);
+
+    def asFile(baseDir: File): File = safeConvert { x =>
       val file = new File(x)
       if (file.isAbsolute)
         file
       else
         new File(baseDir, x)
-    })
-  }
-
-  private def getRequiredValue[T](key: String, convert: (String) => T)(implicit m: Manifest[T]): T = {
-    getValueWithDefault(key, () => throw new ArgumentRequiredException(key), convert)
-  }
-
-  private def getValueWithDefault[T](key: String, defaultValue: () => T, convert: (String) => T)(implicit m: Manifest[T]): T = {
-    val opt = conf.getRaw(key)
-    if (opt.isEmpty) {
-      val value = defaultValue()
-      logger.debug(s"no value set for $key, using default: $value")
-      value
     }
-    else {
-      val value = opt.get
+  }
+
+  class ConfigValue(key: String, maybeValue: Option[String]) extends AnyValue {
+    def safeConvert[T](convert: (String) => T)(implicit m: Manifest[T]): T = {
+      if (!maybeValue.isDefined)
+        throw new ArgumentRequiredException(key)
+
+      val value = maybeValue.get;
       try {
         convert(value)
       }
@@ -76,28 +69,42 @@ class ConfigurationEx(conf: Configuration) extends Logging {
           throw new WrongArgumentException(key, value, m.runtimeClass)
       }
     }
+
+    def withDefault(defaultValue: Any): AnyValue = new ConfigValue(key, maybeValue) {
+      override def safeConvert[T](convert: (String) => T)(implicit m: Manifest[T]): T = {
+        if (maybeValue.isEmpty) {
+          logger.debug(s"no value set for $key, using default: $defaultValue")
+          defaultValue.asInstanceOf[T]
+        }
+        else {
+          super.safeConvert(convert)
+        }
+      }
+    }
   }
 
-  def getValueAsString(key: String, defaultValue: String) =
-    getValueWithDefault(key, () => defaultValue, (x: String) => x)
+  def this(props: Properties) = {
+    this(new Configuration {
+      override def getRaw(name: String): Option[String] =
+        if (props.containsKey(name))
+          Some(props.getProperty(name))
+        else
+          None
+    });
+  }
 
-  def getValueAsClass(key: String, defaultValue: Class[_]) =
-    getValueWithDefault(key, () => defaultValue, (x: String) => Class.forName(x))
+  def this(propsFile: File) = {
+    this({
+      val props = new Properties()
+      val fis = new FileInputStream(propsFile)
+      props.load(fis)
+      fis.close()
+      props
+    });
+  }
 
-  def getValueAsInt(key: String, defaultValue: Int) =
-    getValueWithDefault[Int](key, () => defaultValue, (x: String) => x.toInt)
-
-  def getValueAsBoolean(key: String, defaultValue: Boolean) =
-    getValueWithDefault[Boolean](key, () => defaultValue, (x: String) => x.toBoolean)
-
-  def getValueAsFile(key: String, baseDir: File, defaultValue: File) = {
-    getValueWithDefault(key, () => defaultValue, { x =>
-      val file = new File(x)
-      if (file.isAbsolute)
-        file
-      else
-        new File(baseDir, x)
-    })
+  def get(key: String): ConfigValue = {
+    new ConfigValue(key, conf.getRaw(key))
   }
 }
 

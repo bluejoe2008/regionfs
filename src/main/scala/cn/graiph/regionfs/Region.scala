@@ -192,11 +192,14 @@ class RegionBodyFile(conf: RegionConfig) {
   * a Region store files in storeDir
   */
 class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) extends Logging {
-
   //metadata file
   val fbody = new RegionBodyFile(conf)
   val fmeta = new RegionMetaFile(conf)
   val idgen = new LocalIdGenerator(conf, fmeta)
+
+  def statFileCount(): Long = {
+    fmeta.count - idgen.freeId.freeIds.size
+  }
 
   def write(source: () => InputStream): Long = {
     val info = fbody.write(source)
@@ -210,7 +213,8 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
     //get local id
     idgen.consumeNextId((id: Long) => {
       fmeta.write(id, info.offset, info.length, crc32)
-      logger.debug(s"[region-$regionId] written:localId=$id, length=${info.length}, actual=${info.actualWritten}")
+      if (logger.isDebugEnabled)
+        logger.debug(s"[region-$regionId] written:localId=$id, length=${info.length}, actual=${info.actualWritten}")
     })
   }
 
@@ -259,12 +263,15 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
     crc32Value
   }
 
-  def length = fbody.fileBodyLength.get()
+  def statTotalSize() = fbody.fileBodyLength.get()
+
+  def listFiles(): Iterator[(FileId, Long)] = Iterator.empty
 }
 
 /**
   * RegionManager manages local regions stored in storeDir
   */
+//TODO: few live regions + most dead regions
 class RegionManager(nodeId: Long, storeDir: File, globalConfig: GlobalConfig) extends Logging {
   val regions = mutable.Map[Long, Region]()
   val regionIdSerial = new AtomicLong(0)

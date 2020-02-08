@@ -11,6 +11,14 @@ case class CreateRegionResponse(regionId: Long) {
 
 }
 
+case class ListFileRequest(){
+
+}
+
+case class ListFileResponse(list: Array[(FileId, Long)]){
+
+}
+
 case class SendCompleteFileRequest(regionId: Option[Long], bytes: Array[Byte], totalLength: Long) {
 
 }
@@ -44,5 +52,13 @@ case class ReadChunkRequest(regionId: Long, localId: Long, offset: Long, chunkLe
 }
 
 case class ReadChunkResponse(content: Array[Byte], nextOffset: Long) {
+
+}
+
+case class GetNodeStatRequest() {
+
+}
+
+case class GetNodeStatResponse(stat: NodeStat) {
 
 }

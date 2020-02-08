@@ -78,9 +78,9 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
     var rpcEnv: RpcEnv = null
 
     //get neighbour nodes
-    val neighbourNodes = new WatchingNodes(zk, !address.equals(_))
+    val neighbourNodes = new NodeWatcher(zk, !address.equals(_))
     //get regions in neighbour nodes
-    val neighbourRegions = new WatchingRegions(zk, !address.equals(_))
+    val neighbourRegions = new RegionWatcher(zk, !address.equals(_))
 
     prepareZkEntries
 
@@ -99,7 +99,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
     class FileRpcEndpoint(override val rpcEnv: RpcEnv)
       extends RpcEndpoint with Logging {
-      val queue = new FileTaskQueue()
+      val queue = new TxQueue()
       val rand = new Random();
 
       //NOTE: register only on started up
@@ -134,7 +134,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             )
 
           //hello, pls create a new region with id=regionId
-          Await.result(thinNeighbourClient.endPointRef.ask[CreateRegionResponse](CreateRegionRequest(regionId)),
+          thinNeighbourClient.ask[CreateRegionResponse](CreateRegionRequest(regionId),
             Duration.apply("30s"))
         }
 
@@ -147,7 +147,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         localRegionManager.synchronized {
           //counterOffset=size of region
           //TODO: sort on idle
-          localRegionManager.regions.values.toArray.sortBy(_.length).headOption.
+          localRegionManager.regions.values.toArray.sortBy(_.statTotalSize).headOption.
             getOrElse({
               //no enough regions
               createNewRegion()
@@ -161,6 +161,19 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       }
 
       override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
+        case ListFileRequest() => {
+          context.reply(ListFileResponse(localRegionManager.regions.values.flatMap(_.listFiles).toArray))
+        }
+
+        case GetNodeStatRequest() => {
+          val nodeStat = NodeStat(nodeId, address,
+            localRegionManager.regions.map { kv =>
+              RegionStat(kv._1, kv._2.statFileCount(), kv._2.statTotalSize())
+            }.toList)
+
+          context.reply(GetNodeStatResponse(nodeStat))
+        }
+
         case CreateRegionRequest(regionId: Long) => {
           localRegionManager.createNewReplica(regionId)
           syncZkRegion(regionId)
@@ -172,12 +185,12 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             //primary node
             if (!optRegionId.isDefined) {
               val region = chooseRegion()
-              val maybeLocalId = new FileTask(region, totalLength).
+              val maybeLocalId = new TransTx(-1, region, totalLength).
                 writeChunk(0, block, 0, totalLength.toInt, 0)
               val neighbours = getNeighboursWhoHasRegion(region.regionId)
               //ask neigbours
               val futures = neighbours.map(addr =>
-                neighbourNodes.clientOf(addr).endPointRef.ask[SendCompleteFileResponse](
+                neighbourNodes.clientOf(addr).askAsync[SendCompleteFileResponse](
                   SendCompleteFileRequest(Some(region.regionId), block, totalLength)))
 
               //wait all neigbours' replies
@@ -188,7 +201,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             }
             else {
               val region = localRegionManager.get(optRegionId.get)
-              val maybeLocalId = new FileTask(region, totalLength).
+              val maybeLocalId = new TransTx(-1, region, totalLength).
                 writeChunk(0, block, 0, totalLength.toInt, 0)
 
               region.regionId -> maybeLocalId.get
@@ -200,13 +213,13 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
         case StartSendChunksRequest(optRegionId: Option[Long], totalLength: Long) => {
           val region = optRegionId.map(localRegionManager.get(_)).getOrElse(chooseRegion())
-          val (transId, task) = queue.create(localRegionManager.get(region.regionId), totalLength)
+          val tx = queue.create(localRegionManager.get(region.regionId), totalLength)
 
           if (!optRegionId.isDefined) {
             //notify neighbours
             val neighbours = getNeighboursWhoHasRegion(region.regionId)
             val futures = neighbours.map(addr =>
-              addr -> neighbourNodes.clientOf(addr).endPointRef.ask[StartSendChunksResponse](
+              addr -> neighbourNodes.clientOf(addr).askAsync[StartSendChunksResponse](
                 StartSendChunksRequest(Some(region.regionId), totalLength)))
 
             //wait all neigbours' reply
@@ -214,10 +227,10 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
               x._1 -> Await.result(x._2, Duration.Inf))
 
             //save these transIds from neighbour
-            transIds.foreach(x => task.addNeighbourTransactionId(x._1, x._2.transId))
+            transIds.foreach(x => tx.addNeighbourTransactionId(x._1, x._2.transId))
           }
 
-          context.reply(StartSendChunksResponse(transId))
+          context.reply(StartSendChunksResponse(tx.txId))
         }
 
         case SendChunkRequest(transId: Long, chunkBytes: Array[Byte], offset: Long, chunkLength: Int, chunkIndex: Int) => {
@@ -228,7 +241,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
           //notify neighbours
           val ids = task.getNeighbourTransactionIds()
 
-          val futures = ids.map(x => neighbourNodes.clientOf(x._1).endPointRef.ask[SendChunkResponse](
+          val futures = ids.map(x => neighbourNodes.clientOf(x._1).askAsync[SendChunkResponse](
             SendChunkRequest(x._2, chunkBytes, offset, chunkLength, chunkIndex)))
 
           //TODO: sync()?
@@ -254,7 +267,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       }
 
       override def onStop(): Unit = {
-        println("stop endpoint")
+        logger.info("stop endpoint")
       }
     }
 

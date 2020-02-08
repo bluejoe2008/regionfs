@@ -2,7 +2,7 @@ package cn.graiph.regionfs
 
 import java.io.{ByteArrayInputStream, InputStream}
 
-import cn.graiph.regionfs.util.{Logging, StreamUtils}
+import cn.graiph.regionfs.util.{IteratorUtils, Logging, StreamUtils}
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.NettyRpcEnvFactory
 import net.neoremind.kraps.rpc.{RpcAddress, RpcEnv, RpcEnvClientConfig}
@@ -13,6 +13,7 @@ import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, Future}
+import scala.reflect.ClassTag
 
 class RegionFsClientException(msg: String, cause: Throwable = null)
   extends RuntimeException(msg, cause) {
@@ -30,12 +31,15 @@ class WriteFileException(msg: String, cause: Throwable = null)
 class FsClient(zks: String) extends Logging {
   val zk = new ZooKeeper(zks, 2000, new Watcher {
     override def process(event: WatchedEvent): Unit = {
-      logger.debug("event:" + event)
+      if (logger.isDebugEnabled)
+        logger.debug("event:" + event)
     }
   })
 
   //get all nodes
-  val nodes = new WatchingNodes(zk, { _ => true })
+  val nodes = new NodeWatcher(zk, { _ => true })
+  val regionNodes = new RegionNodesWatcher(zk)
+  val selector = new RoundRobinSelector(nodes.clients.toList);
 
   //TODO: replica vs. node number?
   if (nodes.isEmpty) {
@@ -52,8 +56,6 @@ class FsClient(zks: String) extends Logging {
     Await.result(writeFileAsync(is: InputStream, totalLength: Long), Duration.Inf)
   }
 
-  val selector = new RoundRobinSelector(nodes.clients.toList);
-
   def writeFileAsync(is: InputStream, totalLength: Long): Future[FileId] = {
     //choose a client
     val client = selector.select()
@@ -62,12 +64,10 @@ class FsClient(zks: String) extends Logging {
   }
 
   def readFile[T](fileId: FileId, consume: (InputStream) => T): T = {
-    val watchRegionNodes = new WatchingRegionNodes(zk)
-    val nodeAddress = watchRegionNodes.map(fileId.regionId)
+    val nodeAddress = regionNodes.map(fileId.regionId)
     val client = nodes.map(nodeAddress)
     client.readFile(fileId, consume)
   }
-
 }
 
 /**
@@ -113,7 +113,7 @@ case class NodeAddress(host: String, port: Int) {
   * it sends raw messages (e.g. SendCompleteFileRequest) to NodeServer and handles responses
   */
 case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends Logging {
-  val endPointRef = {
+  private val endPointRef = {
     val rpcConf = new RpcConf()
     val config = RpcEnvClientConfig(rpcConf, "regionfs-client")
     val rpcEnv: RpcEnv = NettyRpcEnvFactory.create(config)
@@ -181,6 +181,14 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
         futures.map(Await.result(_, Duration.Inf)).find(_.fileId.isDefined).get.fileId.get
       }
     }
+  }
+
+  def ask[T: ClassTag](request: AnyRef, timeOut: Duration = Duration.Inf): T = {
+    Await.result(endPointRef.ask[T](request), timeOut)
+  }
+
+  def askAsync[T: ClassTag](request: AnyRef): Future[T] = {
+    endPointRef.ask[T](request)
   }
 
   def readFile[T](fileId: FileId, consume: (InputStream) => T): T = {

@@ -13,30 +13,30 @@ import scala.collection.mutable.ArrayBuffer
   * Created by bluejoe on 2020/2/5.
   */
 /**
-  * a FileTask stores chunks for a blob
-  * a FileTaskQueue manages all running FileTasks
-  * each FileTask has an unique id (transactionId)
-  * transactionIdGen generates transactionIds
+  * a TransTx stores chunks for a blob
+  * a TxQueue manages all running FileTasks
+  * each TransTx has an unique id (transactionId)
   */
-class FileTaskQueue() extends Logging {
-  val transactionalTasks = mutable.Map[Long, FileTask]()
-  val transactionIdGen = new AtomicLong(System.currentTimeMillis())
+class TxQueue() extends Logging {
+  val transactionalTasks = mutable.Map[Long, TransTx]()
+  val idgen = new AtomicLong(System.currentTimeMillis())
 
-  def create(region: Region, totalLength: Long): (Long, FileTask) = {
-    val task = new FileTask(region, totalLength)
-    val transId = transactionIdGen.incrementAndGet()
-    transactionalTasks += transId -> task
-    (transId, task)
+  def create(region: Region, totalLength: Long): TransTx = {
+    val transId = idgen.incrementAndGet()
+    val tx = new TransTx(transId, region, totalLength)
+
+    transactionalTasks += transId -> tx
+    tx
   }
 
   def remove(transId: Long) = transactionalTasks.remove(transId)
 
-  def get(transId: Long): FileTask = {
+  def get(transId: Long): TransTx = {
     transactionalTasks(transId)
   }
 }
 
-class FileTask(val region: Region, val totalLength: Long) extends Logging {
+class TransTx(val txId: Long, val region: Region, val totalLength: Long) extends Logging {
   //besides this node, neighbour nodes will store replica chunks on the same time
   //neighbourTransactionIds is used to save these ids allocated for replica blob task
   val neighbourTransactionIds = mutable.Map[NodeAddress, Long]()
@@ -53,7 +53,6 @@ class FileTask(val region: Region, val totalLength: Long) extends Logging {
   //create a new file
   val chunks = ArrayBuffer[Chunk]()
   val actualBytesWritten = new AtomicLong(0)
-
 
   //combine all chunks as a complete blob file
   private def combine(transId: Long): File = {
@@ -76,10 +75,10 @@ class FileTask(val region: Region, val totalLength: Long) extends Logging {
     }
   }
 
-
   //save one chunk, if this is the last chunk, then write all chunks into region
   def writeChunk(transId: Long, chunkBytes: Array[Byte], offset: Long, chunkLength: Int, chunkIndex: Int): Option[Long] = {
-    logger.debug(s"writing chunk: $transId-$chunkIndex, length=$chunkLength")
+    if (logger.isDebugEnabled)
+      logger.debug(s"writing chunk: $transId-$chunkIndex, length=$chunkLength")
 
     //save this chunk into a chunk file
     val tmpFile = this.synchronized {

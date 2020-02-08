@@ -5,5 +5,7 @@ package cn.graiph.regionfs
   */
 //an enhanced FsClient
 class FsAdmin(zks: String) extends FsClient(zks: String) {
-
+  def getFileCount(): Int = {
+    0
+  }
 }

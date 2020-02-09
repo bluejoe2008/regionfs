@@ -29,6 +29,10 @@ class RegionMetaFile(conf: RegionConfig) {
   val writer = new RandomAccessFile(fileMetaFile, "rw");
   val reader = new RandomAccessFile(fileMetaFile, "r");
 
+  def iterator(): Iterator[MetaData] = {
+    (0 to count.toInt - 1).iterator.map(read(_))
+  }
+
   //local id as offset
   def read(localId: Long): MetaData = {
     reader.seek(Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * localId)
@@ -265,7 +269,9 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
 
   def statTotalSize() = fbody.fileBodyLength.get()
 
-  def listFiles(): Iterator[(FileId, Long)] = Iterator.empty
+  def listFiles(): Iterator[(FileId, Long)] = {
+    fmeta.iterator.map(meta => FileId.make(regionId, meta.localId) -> meta.length)
+  }
 }
 
 /**

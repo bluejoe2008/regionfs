@@ -100,6 +100,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
     class FileRpcEndpoint(override val rpcEnv: RpcEnv)
       extends RpcEndpoint with Logging {
       val queue = new TxQueue()
+      val transactions = new Transactions();
       val rand = new Random();
 
       //NOTE: register only on started up
@@ -264,10 +265,37 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
               offset + content.length
             }))
         }
+
+        case StartStreamRequest(request: AnyRef, pageSize: Int) => {
+          val tx = transactions.create(createProducer(request), pageSize)
+          val (results, hasMorePage) = tx.nextPage
+          context.reply(StreamResponse(tx.txId, results.toArray, hasMorePage))
+        }
+
+        case GetNextPageRequest(txId: Long) => {
+          val tx = transactions.get(txId);
+          val (results, hasMorePage) = tx.nextPage
+          context.reply(StreamResponse(txId, results.toArray, hasMorePage))
+        }
       }
 
       override def onStop(): Unit = {
         logger.info("stop endpoint")
+      }
+
+      private def createProducer(request: AnyRef): (Output) => Unit = {
+        request match {
+          case ListFileRequest() => {
+            (out: Output) => {
+              localRegionManager.regions.values.foreach { x =>
+                val it = x.listFiles()
+                it.foreach(out.push(_))
+              }
+
+              out.markEOF();
+            }
+          }
+        }
       }
     }
 

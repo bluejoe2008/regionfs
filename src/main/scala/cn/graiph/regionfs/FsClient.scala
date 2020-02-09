@@ -113,7 +113,9 @@ case class NodeAddress(host: String, port: Int) {
   * it sends raw messages (e.g. SendCompleteFileRequest) to NodeServer and handles responses
   */
 case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends Logging {
-  private val endPointRef = {
+  private val endPointRef = createEndPointRef
+
+  private def createEndPointRef() = {
     val rpcConf = new RpcConf()
     val config = RpcEnvClientConfig(rpcConf, "regionfs-client")
     val rpcEnv: RpcEnv = NettyRpcEnvFactory.create(config)
@@ -189,6 +191,32 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
 
   def askAsync[T: ClassTag](request: AnyRef): Future[T] = {
     endPointRef.ask[T](request)
+  }
+
+  def askStream[T](request: AnyRef, pageSize: Int): Iterator[T] = {
+    var txId: Long = -1;
+    var hasMore = true
+    IteratorUtils.concatIterators { (index: Int) =>
+      if (!hasMore) {
+        None
+      }
+      else {
+        val res = {
+          if (index == 0) {
+            ask[StreamResponse](StartStreamRequest(request, pageSize))
+          }
+          else {
+            ask[StreamResponse](GetNextPageRequest(txId))
+          }
+        }
+
+        if (txId < 0)
+          txId = res.txId;
+
+        hasMore = res.hasMore
+        Some(res.page.iterator.map(_.asInstanceOf[T]))
+      }
+    }
   }
 
   def readFile[T](fileId: FileId, consume: (InputStream) => T): T = {

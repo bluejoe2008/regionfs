@@ -1,5 +1,7 @@
 package cn.graiph.regionfs
 
+import cn.graiph.regionfs.util.IteratorUtils
+
 /**
   * Created by bluejoe on 2019/8/31.
   */
@@ -14,8 +16,16 @@ class FsAdmin(zks: String) extends FsClient(zks: String) {
   }
 
   def listFiles(): Iterator[(FileId, Long)] = {
-    nodes.mapNodeClients.values.flatMap(
-      _.ask[ListFileResponse](ListFileRequest()).list).iterator
+    val iter = nodes.mapNodeClients.values.iterator
+    IteratorUtils.concatIterators { (index) =>
+      if (iter.hasNext) {
+        //get 10 files each page
+        Some(iter.next().askStream(ListFileRequest(), 10))
+      }
+      else {
+        None
+      }
+    }
   }
 }
 

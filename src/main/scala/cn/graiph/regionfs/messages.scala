@@ -11,11 +11,11 @@ case class CreateRegionResponse(regionId: Long) {
 
 }
 
-case class ListFileRequest(){
+case class ListFileRequest() {
 
 }
 
-case class ListFileResponse(list: Array[(FileId, Long)]){
+case class ListFileResponse(list: Array[(FileId, Long)]) {
 
 }
 
@@ -62,3 +62,18 @@ case class GetNodeStatRequest() {
 case class GetNodeStatResponse(stat: NodeStat) {
 
 }
+
+//-------------streaming-------------
+case class StartStreamRequest(request: AnyRef, pageSize: Int) {
+
+}
+
+case class StreamResponse(txId: Long, page: Array[_], hasMore: Boolean) {
+
+}
+
+case class GetNextPageRequest(txId: Long) {
+
+}
+
+//-------------streaming-------------

@@ -2,16 +2,84 @@ package cn.graiph.regionfs
 
 import java.io.{ByteArrayInputStream, File, FileInputStream, FileOutputStream}
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.{ArrayBlockingQueue, ExecutorService, Executors}
 
 import cn.graiph.regionfs.util.Logging
 import org.apache.commons.io.IOUtils
 
-import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
+import scala.collection.{JavaConversions, mutable}
 
 /**
   * Created by bluejoe on 2020/2/5.
   */
+class Transactions() extends Logging {
+  val transactions = mutable.Map[Long, Transaction]()
+  val idgen = new AtomicLong(System.currentTimeMillis())
+  val threadPool = Executors.newFixedThreadPool(5);
+
+  def create(produce: (Output) => Unit, pageSize: Int): Transaction = {
+    val txId = idgen.incrementAndGet()
+    val tx = new Transaction(txId, pageSize, produce, threadPool)
+    transactions += txId -> tx
+    tx
+  }
+
+  def remove(transId: Long) = transactions.remove(transId)
+
+  def get(transId: Long): Transaction = {
+    transactions(transId)
+  }
+}
+
+class Transaction(val txId: Long, pageSize: Int, produce: (Output) => Unit, threadPool: ExecutorService) {
+  val resultBuffer = new OutputBuffer(pageSize);
+  val future = threadPool.submit(new Runnable {
+    override def run(): Unit = {
+      produce(resultBuffer)
+    }
+  })
+
+  def nextPage(): (Iterator[_], Boolean) = {
+    resultBuffer.nextPage
+  }
+
+  def close(): Unit = {
+    future.cancel(true)
+  }
+}
+
+trait Output {
+  def push(result: AnyRef): Unit
+
+  def markEOF(): Unit
+}
+
+class OutputBuffer(pageSize: Int) extends Output {
+  val buffer = new ArrayBlockingQueue[AnyRef](pageSize * 2);
+  var reachEOF = false;
+
+  def push(result: AnyRef): Unit = {
+    if (reachEOF) {
+      throw new RegionFsServersException(s"EOF reached");
+    }
+
+    buffer.put(result)
+  }
+
+  def markEOF(): Unit = {
+    this.synchronized {
+      reachEOF = true;
+    }
+  }
+
+  def nextPage(): (Iterator[_], Boolean) = {
+    val page = new java.util.ArrayList[AnyRef]();
+    buffer.drainTo(page, pageSize)
+    JavaConversions.asScalaIterator(page.iterator) -> !reachEOF
+  }
+}
+
 /**
   * a TransTx stores chunks for a blob
   * a TxQueue manages all running FileTasks

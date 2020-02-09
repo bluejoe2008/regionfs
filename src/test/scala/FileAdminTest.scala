@@ -10,5 +10,6 @@ class FileAdminTest {
   @Test
   def test1(): Unit = {
     println(admin.stat());
+    println(admin.listFiles().take(100).toList)
   }
 }

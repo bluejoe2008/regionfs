@@ -69,6 +69,18 @@ class FsClient(zks: String) extends Logging {
     val client = nodes.map(nodeAddress)
     client.readFile(fileId)
   }
+  def readFile1[T](fileId: FileId): InputStream = {
+    //FIXME: if the region is created just now, the delay of zkwatch will cause failure of regionNodes.map(fileId.regionId)
+    val nodeAddress = regionNodes.map(fileId.regionId)
+    val client = nodes.map(nodeAddress)
+    client.readFile1(fileId)
+  }
+  def readFile2[T](fileId: FileId): InputStream = {
+    //FIXME: if the region is created just now, the delay of zkwatch will cause failure of regionNodes.map(fileId.regionId)
+    val nodeAddress = regionNodes.map(fileId.regionId)
+    val client = nodes.map(nodeAddress)
+    client.readFile2(fileId)
+  }
 }
 
 /**

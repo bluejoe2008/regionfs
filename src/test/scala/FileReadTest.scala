@@ -49,11 +49,20 @@ class FileReadTest extends FileTestBase {
 
     Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(src)), bytes);
 
-    println("read an remote file...")
-    val bytes1 = clock {
+    println("read an remote file via readFile()...")
+    clock {
       IOUtils.toByteArray(client.readFile(id))
     }
-    println(s"size: ${bytes1.size}");
+
+    println("read an remote file via readFile1()...")
+    clock {
+      IOUtils.toByteArray(client.readFile1(id))
+    }
+
+    println("read an remote file via readFile2()...")
+    clock {
+      IOUtils.toByteArray(client.readFile2(id))
+    }
 
     println("read a local file...")
     val bytes2 = clock {

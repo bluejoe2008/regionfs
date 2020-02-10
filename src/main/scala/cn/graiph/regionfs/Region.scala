@@ -228,7 +228,7 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
     idgen.close()
   }
 
-  def read[T](localId: Long): (Long, InputStream) = {
+  def read1[T](localId: Long): (Long, InputStream) = {
     val meta = fmeta.read(localId)
     val end = meta.tail
     var ptr = meta.offset
@@ -251,6 +251,60 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
           Some(new ByteArrayInputStream(bytes))
         }
       }
+  }
+
+  def read[T](localId: Long): (Long, InputStream) = {
+    val meta = fmeta.read(localId)
+    meta.length -> new InputStream() {
+      val READ_BUFFER_SIZE = 1024;
+
+      class ReadBuffer(bytes: Array[Byte]) {
+        val is = new ByteArrayInputStream(bytes);
+
+        def read(): Int = {
+          is.read();
+        }
+      }
+
+      var ptr = 0;
+      var current: ReadBuffer = loadBuffer();
+
+      override def read(): Int = {
+        if (current == null)
+          -1
+        else {
+          val n = current.read();
+          if (n < 0) {
+            current = loadBuffer();
+            if (current == null)
+              -1
+            else
+              current.read();
+          }
+          else {
+            n
+          }
+        }
+      }
+
+      def loadBuffer(): ReadBuffer = {
+        if (ptr >= meta.length) {
+          null
+        }
+        else {
+          val bytes = fbody.read(meta.offset + ptr,
+            if (ptr + READ_BUFFER_SIZE >= meta.length) {
+              (meta.length - ptr).toInt
+            }
+            else {
+              READ_BUFFER_SIZE
+            });
+
+          ptr += bytes.length
+          new ReadBuffer(bytes)
+        }
+      }
+    }
   }
 
   def read[T](localId: Long, innerOffSet: Long, num: Long): (Long, InputStream) = {

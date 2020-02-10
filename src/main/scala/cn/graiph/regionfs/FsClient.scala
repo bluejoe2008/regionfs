@@ -63,10 +63,11 @@ class FsClient(zks: String) extends Logging {
     client.writeFileAsync(is, totalLength)
   }
 
-  def readFile[T](fileId: FileId, consume: (InputStream) => T): T = {
+  def readFile[T](fileId: FileId): InputStream = {
+    //FIXME: if the region is created just now, the delay of zkwatch will cause failure of regionNodes.map(fileId.regionId)
     val nodeAddress = regionNodes.map(fileId.regionId)
     val client = nodes.map(nodeAddress)
-    client.readFile(fileId, consume)
+    client.readFile(fileId)
   }
 }
 
@@ -193,7 +194,7 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
     endPointRef.ask[T](request)
   }
 
-  def askStream[T](request: AnyRef, pageSize: Int): Iterator[T] = {
+  def askStream[T <: StreamingResult](request: AnyRef, pageSize: Int): Iterator[T] = {
     var txId: Long = -1;
     var hasMore = true
     IteratorUtils.concatIterators { (index: Int) =>
@@ -219,9 +220,15 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
     }
   }
 
-  def readFile[T](fileId: FileId, consume: (InputStream) => T): T = {
+  def readFile2[T](fileId: FileId): InputStream = {
+    StreamUtils.
+      of(askStream[ReadFileResponseDetail](ReadFileRequest(fileId.regionId, fileId.localId), 1).
+        flatMap(_.content.iterator))
+  }
+
+  def readFile1[T](fileId: FileId): InputStream = {
     var offset: Long = 0;
-    val is = StreamUtils.concatStreams {
+    StreamUtils.concatStreams {
       if (offset == -1) {
         None
       }
@@ -233,10 +240,11 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
         Some(new ByteArrayInputStream(res.content))
       }
     }
+  }
 
-    val t = consume(is)
-    is.close()
-    t
+  def readFile(fileId: FileId): InputStream = {
+    new ByteArrayInputStream(Await.result(endPointRef.ask[ReadCompleteFileResponse](
+      ReadCompleteFileRequest(fileId.regionId, fileId.localId)), Duration.Inf).content)
   }
 }
 

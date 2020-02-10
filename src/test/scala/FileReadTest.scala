@@ -1,4 +1,4 @@
-import java.io.{File, FileInputStream, InputStream}
+import java.io.{File, FileInputStream}
 
 import org.apache.commons.io.IOUtils
 import org.junit.{Assert, Before, Test}
@@ -45,29 +45,20 @@ class FileReadTest extends FileTestBase {
   private def test(path: String): Unit = {
     val src: File = new File(path)
     val id = super.writeFile(src);
-    val bytes =
-      clock {
-        client.readFile(id, (is: InputStream) => {
-          IOUtils.toByteArray(is)
-        });
-      }
+    val bytes = IOUtils.toByteArray(client.readFile(id))
 
-    Assert.assertArrayEquals(bytes, IOUtils.toByteArray(new FileInputStream(src)));
+    Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(src)), bytes);
 
-    for (i <- 0 to 1) {
-      clock {
-        println("read an remote file...")
-        val bytes = client.readFile(id, (is: InputStream) => {
-          IOUtils.toByteArray(is)
-        });
-        println(s"size: ${bytes.size}");
-      }
+    println("read an remote file...")
+    val bytes1 = clock {
+      IOUtils.toByteArray(client.readFile(id))
     }
+    println(s"size: ${bytes1.size}");
 
-    clock {
-      println("read a local file...")
-      val bytes = IOUtils.toByteArray(new FileInputStream(src));
-      println(s"size: ${bytes.size}");
+    println("read a local file...")
+    val bytes2 = clock {
+      IOUtils.toByteArray(new FileInputStream(src));
     }
+    println(s"size: ${bytes2.size}");
   }
 }

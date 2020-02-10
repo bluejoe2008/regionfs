@@ -162,10 +162,6 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       }
 
       override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
-        case ListFileRequest() => {
-          context.reply(ListFileResponse(localRegionManager.regions.values.flatMap(_.listFiles).toArray))
-        }
-
         case GetNodeStatRequest() => {
           val nodeStat = NodeStat(nodeId, address,
             localRegionManager.regions.map { kv =>
@@ -253,9 +249,9 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         case ReadChunkRequest(regionId: Long, localId: Long, offset: Long, chunkLength: Long) => {
           // get region
           val region = localRegionManager.get(regionId)
-          val content: Array[Byte] = region.read(localId, offset, chunkLength, (is: InputStream) => {
-            IOUtils.toByteArray(is)
-          })
+          val (nread, is) = region.read(localId, offset, chunkLength)
+          val content = IOUtils.toByteArray(is)
+          is.close()
 
           context.reply(ReadChunkResponse(content,
             if (content.length < chunkLength) {
@@ -266,8 +262,18 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             }))
         }
 
+        case ReadCompleteFileRequest(regionId: Long, localId: Long) => {
+          // get region
+          val region = localRegionManager.get(regionId)
+          val (length, is) = region.read(localId)
+          val content: Array[Byte] = IOUtils.toByteArray(is)
+          is.close()
+          context.reply(ReadCompleteFileResponse(content))
+        }
+
+        //-----------
         case StartStreamRequest(request: AnyRef, pageSize: Int) => {
-          val tx = transactions.create(createProducer(request), pageSize)
+          val tx = transactions.create(streamingResultsProducer(request), pageSize)
           val (results, hasMorePage) = tx.nextPage
           context.reply(StreamResponse(tx.txId, results.toArray, hasMorePage))
         }
@@ -277,22 +283,42 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
           val (results, hasMorePage) = tx.nextPage
           context.reply(StreamResponse(txId, results.toArray, hasMorePage))
         }
+        //-----------
       }
 
       override def onStop(): Unit = {
         logger.info("stop endpoint")
       }
 
-      private def createProducer(request: AnyRef): (Output) => Unit = {
+      private def streamingResultsProducer(request: AnyRef): (Output) => Unit = {
         request match {
           case ListFileRequest() => {
             (out: Output) => {
               localRegionManager.regions.values.foreach { x =>
                 val it = x.listFiles()
-                it.foreach(out.push(_))
+                it.foreach(x => out.push(ListFileResponseDetail(x)))
               }
 
               out.markEOF();
+            }
+          }
+
+          case ReadFileRequest(regionId: Long, localId: Long) => {
+            (out: Output) => {
+              // get region
+              val region = localRegionManager.get(regionId)
+              val (length, is) = region.read(localId)
+
+              var read = 0;
+              while (read < length) {
+                val bytes = new Array[Byte](Constants.READ_CHUNK_SIZE)
+                val n = is.read(bytes)
+                out.push(ReadFileResponseDetail(bytes.slice(0, n)));
+                read += n
+              }
+
+              out.markEOF();
+              is.close();
             }
           }
         }

@@ -4,20 +4,22 @@ package cn.graiph.regionfs.util
   * Created by bluejoe on 2020/2/7.
   */
 object IteratorUtils {
-  def concatIterators[T](makeSubIterator: (Int) => Option[Iterator[T]]): Iterator[T] = new Iterator[T] {
+  def concatIterators[T](produceSubIterator: (Int) => Option[Iterator[T]]): Iterator[T] = new Iterator[T] {
     var index = 0;
-    var current = makeSubIterator(index);
+    var current = produceSubIterator(index);
 
     override def hasNext: Boolean = {
+      //None
       if (current.isEmpty)
         false
       else {
+        //Non-None
         if (current.get.hasNext) {
           true
         }
         else {
           index += 1
-          current = makeSubIterator(index)
+          current = produceSubIterator(index)
           hasNext
         }
       }

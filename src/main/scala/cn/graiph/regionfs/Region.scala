@@ -228,15 +228,13 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
     idgen.close()
   }
 
-  def read[T](localId: Long, innerOffset: Long, length: Long, consume: (InputStream) => T): T = {
+  def read[T](localId: Long): (Long, InputStream) = {
     val meta = fmeta.read(localId)
     val end = meta.tail
-    var ptr = meta.offset + innerOffset
-    if (ptr >= end) {
-      consume(new ByteArrayInputStream(new Array[Byte](0)))
-    }
-    else {
-      consume(StreamUtils.concatStreams {
+    var ptr = meta.offset
+
+    meta.length ->
+      StreamUtils.concatStreams {
         if (ptr >= end) {
           None
         }
@@ -252,8 +250,32 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
           ptr += bytes.length
           Some(new ByteArrayInputStream(bytes))
         }
-      })
-    }
+      }
+  }
+
+  def read[T](localId: Long, innerOffSet: Long, num: Long): (Long, InputStream) = {
+    val meta = fmeta.read(localId)
+    var ptr = meta.offset + innerOffSet
+    val end = Math.min(meta.tail, ptr + num)
+
+    (end - meta.offset) ->
+      StreamUtils.concatStreams {
+        if (ptr >= end) {
+          None
+        }
+        else {
+          val bytes = fbody.read(ptr,
+            if (ptr + Constants.SERVER_SIDE_READ_BUFFER_SIZE >= end) {
+              (end - ptr).toInt
+            }
+            else {
+              Constants.SERVER_SIDE_READ_BUFFER_SIZE
+            });
+
+          ptr += bytes.length
+          Some(new ByteArrayInputStream(bytes))
+        }
+      }
   }
 
   def computeCrc32(getInputStream: () => InputStream): Long = {

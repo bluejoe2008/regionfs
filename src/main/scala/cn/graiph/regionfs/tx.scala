@@ -50,16 +50,16 @@ class Transaction(val txId: Long, pageSize: Int, produce: (Output) => Unit, thre
 }
 
 trait Output {
-  def push(result: AnyRef): Unit
+  def push(result: StreamingResult): Unit
 
   def markEOF(): Unit
 }
 
 class OutputBuffer(pageSize: Int) extends Output {
-  val buffer = new ArrayBlockingQueue[AnyRef](pageSize * 2);
+  val buffer = new ArrayBlockingQueue[StreamingResult](pageSize * 2);
   var reachEOF = false;
 
-  def push(result: AnyRef): Unit = {
+  def push(result: StreamingResult): Unit = {
     if (reachEOF) {
       throw new RegionFsServersException(s"EOF reached");
     }
@@ -73,10 +73,10 @@ class OutputBuffer(pageSize: Int) extends Output {
     }
   }
 
-  def nextPage(): (Iterator[_], Boolean) = {
-    val page = new java.util.ArrayList[AnyRef]();
+  def nextPage(): (Iterator[StreamingResult], Boolean) = {
+    val page = new java.util.ArrayList[StreamingResult]();
     buffer.drainTo(page, pageSize)
-    JavaConversions.asScalaIterator(page.iterator) -> !reachEOF
+    JavaConversions.asScalaIterator(page.iterator) -> !(reachEOF && buffer.isEmpty)
   }
 }
 

@@ -20,7 +20,7 @@ class FsAdmin(zks: String) extends FsClient(zks: String) {
     IteratorUtils.concatIterators { (index) =>
       if (iter.hasNext) {
         //get 10 files each page
-        Some(iter.next().askStream(ListFileRequest(), 10))
+        Some(iter.next().askStream[ListFileResponseDetail](ListFileRequest(), 10).map(_.result))
       }
       else {
         None

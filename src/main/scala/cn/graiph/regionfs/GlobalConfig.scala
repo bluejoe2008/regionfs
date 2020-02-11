@@ -32,6 +32,9 @@ object GlobalConfig {
   }
 
   def save(zk: ZooKeeper, bytes: Array[Byte]): Unit = {
+    if (zk.exists("/regionfs", false) == null)
+      zk.create("/regionfs", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
+
     if (zk.exists("/regionfs/config", null) == null) {
       zk.create("/regionfs/config", bytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
     }

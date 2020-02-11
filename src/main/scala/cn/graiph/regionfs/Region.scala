@@ -4,7 +4,8 @@ import java.io._
 import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.{CRC32, CheckedInputStream}
 
-import cn.graiph.regionfs.util.{Logging, StreamUtils}
+import cn.graiph.regionfs.util.Logging
+import cn.graiph.regionfs.util.Profiler._
 
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
@@ -21,27 +22,24 @@ case class RegionConfig(regionDir: File, globalConfig: GlobalConfig) {
   * metadata of a region
   */
 case class MetaData(localId: Long, offset: Long, length: Long, crc32: Long) {
-  def tail = offset + length
+
 }
 
 class RegionMetaFile(conf: RegionConfig) {
+  val METADATA_ENTRY_LENGTH_WITH_PADDING = 40
   val fileMetaFile = new File(conf.regionDir, "meta")
   val writer = new RandomAccessFile(fileMetaFile, "rw");
   val reader = new RandomAccessFile(fileMetaFile, "r");
 
-  def iterator(): Iterator[MetaData] = {
-    (0 to count.toInt - 1).iterator.map(read(_))
-  }
-
   //local id as offset
+  val block = new Array[Byte](METADATA_ENTRY_LENGTH_WITH_PADDING);
+
   def read(localId: Long): MetaData = {
-    reader.seek(Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * localId)
-    val block = new Array[Byte](Constants.METADATA_ENTRY_LENGTH_WITH_PADDING);
+    reader.seek(METADATA_ENTRY_LENGTH_WITH_PADDING * localId)
     reader.readFully(block)
 
     val dis = new DataInputStream(new ByteArrayInputStream(block))
     val info = MetaData(dis.readLong(), dis.readLong(), dis.readLong(), dis.readLong())
-
     dis.close()
     info
   }
@@ -56,12 +54,12 @@ class RegionMetaFile(conf: RegionConfig) {
     dos.writeLong(crc32.getOrElse(0))
     dos.writeLong(crc32.map(_ => 1L).getOrElse(0L)) //reserved
 
-    writer.seek(Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * localId)
+    writer.seek(METADATA_ENTRY_LENGTH_WITH_PADDING * localId)
     writer.write(block.toByteArray)
     dos.close()
   }
 
-  def count = fileMetaFile.length() / Constants.METADATA_ENTRY_LENGTH_WITH_PADDING;
+  def count = fileMetaFile.length() / METADATA_ENTRY_LENGTH_WITH_PADDING;
 
   def close(): Unit = {
     reader.close()
@@ -149,6 +147,7 @@ case class WriteInfo(offset: Long, length: Long, actualWritten: Long) {
 
 class RegionBodyFile(conf: RegionConfig) {
   val WRITE_BUFFER_SIZE = 10240
+  val BODY_EOF: Array[Byte] = "\r\n----\r\n".getBytes
   //region file, one file for each region by far
   val fileBody = new File(conf.regionDir, "body")
   val fileBodyLength = new AtomicLong(fileBody.length())
@@ -170,9 +169,9 @@ class RegionBodyFile(conf: RegionConfig) {
       }
     }
 
-    appender.write(Constants.REGION_FILE_BODY_EOF)
+    appender.write(BODY_EOF)
     val length = written
-    written += Constants.REGION_FILE_BODY_EOF.length
+    written += BODY_EOF.length
 
     appender.flush()
     WriteInfo(fileBodyLength.getAndAdd(written), length, written)
@@ -183,11 +182,12 @@ class RegionBodyFile(conf: RegionConfig) {
     reader.close()
   }
 
+  val READ_BUFFER_SIZE = 4096;
+  val content: Array[Byte] = new Array[Byte](READ_BUFFER_SIZE);
+
   def read(offset: Long, length: Int): Array[Byte] = {
-    //TODO: too many seek()
     reader.seek(offset)
-    val content: Array[Byte] = new Array[Byte](length)
-    reader.readFully(content)
+    reader.readFully(content, 0, length)
     content
   }
 }
@@ -196,16 +196,15 @@ class RegionBodyFile(conf: RegionConfig) {
   * a Region store files in storeDir
   */
 class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) extends Logging {
+  //TODO: use ConfigServer
+  val MAX_REGION_LENGTH = 1024000
+
   //metadata file
   val fbody = new RegionBodyFile(conf)
   val fmeta = new RegionMetaFile(conf)
   val idgen = new LocalIdGenerator(conf, fmeta)
 
-  def statFileCount(): Long = {
-    fmeta.count - idgen.freeId.freeIds.size
-  }
-
-  def write(source: () => InputStream): Long = {
+  def write(source: () => InputStream, localId: Option[Long]): Long = {
     val info = fbody.write(source)
     val crc32 = if (conf.globalConfig.enableCrc) {
       Some(computeCrc32(source))
@@ -217,8 +216,7 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
     //get local id
     idgen.consumeNextId((id: Long) => {
       fmeta.write(id, info.offset, info.length, crc32)
-      if (logger.isDebugEnabled)
-        logger.debug(s"[region-$regionId] written:localId=$id, length=${info.length}, actual=${info.actualWritten}")
+      logger.debug(s"[region-$regionId] written:localId=$id, length=${info.length}, actual=${info.actualWritten}")
     })
   }
 
@@ -228,108 +226,9 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
     idgen.close()
   }
 
-  def read1[T](localId: Long): (Long, InputStream) = {
-    val meta = fmeta.read(localId)
-    val end = meta.tail
-    var ptr = meta.offset
-
-    meta.length ->
-      StreamUtils.concatStreams {
-        if (ptr >= end) {
-          None
-        }
-        else {
-          val bytes = fbody.read(ptr,
-            if (ptr + Constants.SERVER_SIDE_READ_BUFFER_SIZE >= end) {
-              (end - ptr).toInt
-            }
-            else {
-              Constants.SERVER_SIDE_READ_BUFFER_SIZE
-            });
-
-          ptr += bytes.length
-          Some(new ByteArrayInputStream(bytes))
-        }
-      }
-  }
-
-  def read[T](localId: Long): (Long, InputStream) = {
-    val meta = fmeta.read(localId)
-    meta.length -> new InputStream() {
-      val READ_BUFFER_SIZE = 1024;
-
-      class ReadBuffer(bytes: Array[Byte]) {
-        val is = new ByteArrayInputStream(bytes);
-
-        def read(): Int = {
-          is.read();
-        }
-      }
-
-      var ptr = 0;
-      var current: ReadBuffer = loadBuffer();
-
-      override def read(): Int = {
-        if (current == null)
-          -1
-        else {
-          val n = current.read();
-          if (n < 0) {
-            current = loadBuffer();
-            if (current == null)
-              -1
-            else
-              current.read();
-          }
-          else {
-            n
-          }
-        }
-      }
-
-      def loadBuffer(): ReadBuffer = {
-        if (ptr >= meta.length) {
-          null
-        }
-        else {
-          val bytes = fbody.read(meta.offset + ptr,
-            if (ptr + READ_BUFFER_SIZE >= meta.length) {
-              (meta.length - ptr).toInt
-            }
-            else {
-              READ_BUFFER_SIZE
-            });
-
-          ptr += bytes.length
-          new ReadBuffer(bytes)
-        }
-      }
-    }
-  }
-
-  def read[T](localId: Long, innerOffSet: Long, num: Long): (Long, InputStream) = {
-    val meta = fmeta.read(localId)
-    var ptr = meta.offset + innerOffSet
-    val end = Math.min(meta.tail, ptr + num)
-
-    (end - meta.offset) ->
-      StreamUtils.concatStreams {
-        if (ptr >= end) {
-          None
-        }
-        else {
-          val bytes = fbody.read(ptr,
-            if (ptr + Constants.SERVER_SIDE_READ_BUFFER_SIZE >= end) {
-              (end - ptr).toInt
-            }
-            else {
-              Constants.SERVER_SIDE_READ_BUFFER_SIZE
-            });
-
-          ptr += bytes.length
-          Some(new ByteArrayInputStream(bytes))
-        }
-      }
+  def read[T](localId: Long, consume: (InputStream) => T): T = {
+    val meta = timing(false)(fmeta.read(localId))
+    consume(new MyInputStream(meta))
   }
 
   def computeCrc32(getInputStream: () => InputStream): Long = {
@@ -343,17 +242,65 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
     crc32Value
   }
 
-  def statTotalSize() = fbody.fileBodyLength.get()
+  def length = fbody.fileBodyLength.get()
 
-  def listFiles(): Iterator[(FileId, Long)] = {
-    fmeta.iterator.map(meta => FileId.make(regionId, meta.localId) -> meta.length)
+  class MyInputStream(meta: MetaData) extends InputStream {
+
+    class ReadBuffer(bytes: Array[Byte], length: Int) {
+      val is = new ByteArrayInputStream(bytes, 0, length);
+
+      def read(): Int = {
+        is.read();
+      }
+    }
+
+    var ptr = 0;
+    var current: ReadBuffer = loadBuffer();
+
+    override def read(): Int = {
+      if (current == null)
+        -1
+      else {
+        val n = current.read();
+        if (n < 0) {
+          current = loadBuffer();
+          if (current == null)
+            -1
+          else
+            current.read();
+        }
+        else {
+          n
+        }
+      }
+    }
+
+    def loadBuffer(): ReadBuffer = {
+      if (ptr >= meta.length) {
+        null
+      }
+      else {
+        timing(false) {
+          val length = if (ptr + fbody.READ_BUFFER_SIZE >= meta.length) {
+            (meta.length - ptr).toInt
+          }
+          else {
+            fbody.READ_BUFFER_SIZE
+          }
+
+          val bytes = fbody.read(meta.offset + ptr, length);
+          ptr += length
+          new ReadBuffer(bytes, length)
+        }
+      }
+    }
   }
+
 }
 
 /**
   * RegionManager manages local regions stored in storeDir
   */
-//TODO: few live regions + most dead regions
 class RegionManager(nodeId: Long, storeDir: File, globalConfig: GlobalConfig) extends Logging {
   val regions = mutable.Map[Long, Region]()
   val regionIdSerial = new AtomicLong(0)

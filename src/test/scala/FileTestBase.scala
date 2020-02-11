@@ -1,4 +1,4 @@
-import java.io.{ByteArrayInputStream, File, FileInputStream, FileOutputStream}
+import java.io.{FileOutputStream, ByteArrayInputStream, File, FileInputStream}
 
 import cn.graiph.regionfs.{FileId, FsClient}
 
@@ -13,35 +13,31 @@ class FileTestBase {
   val client = new FsClient("localhost:2181")
 
   def writeFiles(src: File, times: Int): Unit = {
-    val fids = client.writeFiles((0 to times - 1).map { _ =>
-      new FileInputStream(src) -> src.length
-    })
+    clock {
+      val fids = client.writeFiles((0 to times - 1).map { _ =>
+        new FileInputStream(src) -> src.length
+      })
 
-    println(fids.map(_.asHexString()))
+      println(fids.map(_.asHexString()))
+    }
   }
 
-  def writeFileClock(src: File): FileId = clock(writeFile(src))
-
-  def writeFilesClock(src: File, times: Int): Unit = clock(writeFiles(src: File, times: Int))
-
-  def writeFileClock(text: String): FileId = clock(writeFile(text))
-
-  def writeFileClock(bytes: Array[Byte]): FileId = clock(writeFile(bytes))
-
   def writeFile(src: File): FileId = {
-    val fid = client.writeFile(
-      new FileInputStream(src), src.length)
-    fid
+    clock {
+      val fid = client.writeFile(
+        new FileInputStream(src), src.length)
+      println(fid)
+      fid
+    }
   }
 
   def writeFile(text: String): FileId = {
-    writeFile(text.getBytes)
-  }
-
-  def writeFile(bytes: Array[Byte]): FileId = {
-    val fid = client.writeFile(
-      new ByteArrayInputStream(bytes), bytes.length)
-    fid
+    clock {
+      val fid = client.writeFile(
+        new ByteArrayInputStream(text.getBytes), text.getBytes.length)
+      println(fid)
+      fid
+    }
   }
 
   def clock[T](runnable: => T): T = {

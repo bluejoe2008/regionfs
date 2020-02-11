@@ -21,7 +21,7 @@ import scala.collection.mutable
   *    node2_1224
   *    ...
   */
-class NodeWatcher(zk: ZooKeeper, filter: (NodeAddress) => Boolean) extends Logging {
+class WatchingNodes(zk: ZooKeeper, filter: (NodeAddress) => Boolean) extends Logging {
 
   //node1_1224->client1, node1_1225->client2, ...
   //client will be automatically created
@@ -86,7 +86,7 @@ class NodeWatcher(zk: ZooKeeper, filter: (NodeAddress) => Boolean) extends Loggi
   *    node2_1224_1
   *    ...
   */
-class RegionWatcher(zk: ZooKeeper, filter: (NodeAddress) => Boolean) extends Logging {
+class WatchingRegions(zk: ZooKeeper, filter: (NodeAddress) => Boolean) extends Logging {
 
   //node1_1224->1, node1_1225->2, ...
   val mapNodeRegions = mutable.Map[NodeAddress, Long]()
@@ -127,7 +127,7 @@ class RegionWatcher(zk: ZooKeeper, filter: (NodeAddress) => Boolean) extends Log
 }
 
 
-class RegionNodesWatcher(zk: ZooKeeper) extends Logging {
+class WatchingRegionNodes(zk: ZooKeeper) extends Logging {
   private val mapRegionNodes = mutable.Map[Long, NodeAddress]() // map: Region -> host_port
 
   mapRegionNodes ++=

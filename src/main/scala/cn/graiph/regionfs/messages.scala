@@ -4,19 +4,9 @@ package cn.graiph.regionfs
   * Created by bluejoe on 2019/8/23.
   */
 case class CreateRegionRequest(regionId: Long) {
-
 }
 
 case class CreateRegionResponse(regionId: Long) {
-
-}
-
-case class ListFileRequest() {
-
-}
-
-case class ListFileResponseDetail(result: (FileId, Long)) extends StreamingResult {
-
 }
 
 case class SendCompleteFileRequest(regionId: Option[Long], bytes: Array[Byte], totalLength: Long) {
@@ -24,10 +14,9 @@ case class SendCompleteFileRequest(regionId: Option[Long], bytes: Array[Byte], t
 }
 
 case class SendCompleteFileResponse(fileId: FileId) {
-
 }
 
-case class DiscardSendChunksRequest(transId: Long) {
+case class DiscardChunksRequest(transId: Long) {
 
 }
 
@@ -47,53 +36,10 @@ case class SendChunkResponse(fileId: Option[FileId], chunkLength: Long) {
 
 }
 
-case class ReadChunkRequest(regionId: Long, localId: Long, offset: Long, chunkLength: Long) {
-
-}
-
-case class ReadChunkResponse(content: Array[Byte], nextOffset: Long) {
-
-}
-
-case class ReadFileRequest(regionId: Long, localId: Long) {
-
-}
-
-case class ReadFileResponseDetail(content: Array[Byte]) extends StreamingResult {
-
-}
-
-case class GetNodeStatRequest() {
-
-}
-
-case class GetNodeStatResponse(stat: NodeStat) {
-
-}
-
 case class ReadCompleteFileRequest(regionId: Long, localId: Long) {
 
 }
 
-case class ReadCompleteFileResponse(content: Array[Byte]) {
+case class ReadCompleteFileResponse(content:  Array[Byte]) {
 
 }
-
-//-------------streaming-------------
-case class StartStreamRequest(request: AnyRef, pageSize: Int) {
-
-}
-
-case class StreamResponse(txId: Long, page: Array[_], hasMore: Boolean) {
-
-}
-
-case class GetNextPageRequest(txId: Long) {
-
-}
-
-trait StreamingResult {
-
-}
-
-//-------------streaming-------------

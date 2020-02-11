@@ -1,4 +1,4 @@
-import java.io.{FileOutputStream, ByteArrayInputStream, File, FileInputStream}
+import java.io.{ByteArrayInputStream, File, FileInputStream, FileOutputStream}
 
 import cn.graiph.regionfs.{FileId, FsClient}
 
@@ -52,21 +52,10 @@ class FileTestBase {
   def makeFile(dst: File, length: Long): Unit = {
     val fos = new FileOutputStream(dst)
     var n: Long = 0
-    var i: Byte = 'a'
     while (n < length) {
-      val left: Int = (length - n).toInt
-      val bytes = new Array[Byte](if (left < 10240) {
-        left
-      } else {
-        10240
-      })
-
-      fos.write(bytes.map(_ => i.toByte))
-      n += bytes.length
-      i = (i + 1).toByte
-      if (i > 'z') {
-        i = 'a'
-      }
+      val left: Int = Math.min((length - n).toInt, 10240)
+      fos.write((0 to left - 1).map(x => ('a' + x % 26).toByte).toArray)
+      n += left
     }
 
     fos.close()

@@ -11,6 +11,7 @@ import org.junit.{Assert, Before, Test}
 class LocalRegionFileIOTest extends FileTestBase {
   @Before
   def makeFiles(): Unit = {
+    makeFile(new File("./testdata/inputs/999"), 999L)
     makeFile(new File("./testdata/inputs/9999999"), 9999999L)
   }
 

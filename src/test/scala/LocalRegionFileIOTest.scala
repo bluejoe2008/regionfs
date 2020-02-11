@@ -3,12 +3,17 @@ import java.io._
 import cn.graiph.regionfs.util.Profiler._
 import cn.graiph.regionfs.{GlobalConfig, Region, RegionConfig}
 import org.apache.commons.io.IOUtils
-import org.junit.{Assert, Test}
+import org.junit.{Assert, Before, Test}
 
 /**
   * Created by bluejoe on 2020/2/11.
   */
-class FileIOTest {
+class LocalRegionFileIOTest extends FileTestBase {
+  @Before
+  def makeFiles(): Unit = {
+    makeFile(new File("./testdata/inputs/9999999"), 9999999L)
+  }
+
   @Test
   def test(): Unit = {
     val file = timing(true) {
@@ -60,7 +65,7 @@ class FileIOTest {
 
     Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/9999999"))), bytes);
 
-    for(i <- 0 to 5) {
+    for (i <- 0 to 5) {
       timing(true) {
         region.read(id, (is: InputStream) => {
           IOUtils.toByteArray(is)

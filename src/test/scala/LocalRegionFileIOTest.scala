@@ -57,20 +57,16 @@ class LocalRegionFileIOTest extends FileTestBase {
     val id = timing(true) {
       region.write(() => {
         new FileInputStream(new File("./testdata/inputs/9999999"))
-      }, None)
+      })
     }
 
-    val bytes = region.read(id, (is: InputStream) => {
-      IOUtils.toByteArray(is)
-    })
+    val bytes = IOUtils.toByteArray(region.read(id)._2)
 
     Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/9999999"))), bytes);
 
     for (i <- 0 to 5) {
       timing(true) {
-        region.read(id, (is: InputStream) => {
-          IOUtils.toByteArray(is)
-        })
+        IOUtils.toByteArray(region.read(id)._2)
       }
     }
   }

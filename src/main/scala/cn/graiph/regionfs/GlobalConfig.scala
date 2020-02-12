@@ -27,14 +27,11 @@ object GlobalConfig {
     val conf = new ConfigurationEx(props)
 
     new GlobalConfig(conf.get("replica.num").withDefault(3).asInt,
-      conf.get("region.size.limit").withDefault(1024L * 1024 * 1024).asLong,
+      conf.get("region.size.limit").withDefault(Constants.DEFAULT_REGION_SIZE_LIMIT).asLong,
       conf.get("blob.crc.enabled").withDefault(true).asBoolean)
   }
 
   def save(zk: ZooKeeper, bytes: Array[Byte]): Unit = {
-    if (zk.exists("/regionfs", false) == null)
-      zk.create("/regionfs", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
-
     if (zk.exists("/regionfs/config", null) == null) {
       zk.create("/regionfs/config", bytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
     }

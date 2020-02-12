@@ -73,7 +73,8 @@ class ConfigurationEx(conf: Configuration) extends Logging {
     def withDefault(defaultValue: Any): AnyValue = new ConfigValue(key, maybeValue) {
       override def safeConvert[T](convert: (String) => T)(implicit m: Manifest[T]): T = {
         if (maybeValue.isEmpty) {
-          logger.debug(s"no value set for $key, using default: $defaultValue")
+          if (logger.isDebugEnabled)
+            logger.debug(s"no value set for $key, using default: $defaultValue")
           defaultValue.asInstanceOf[T]
         }
         else {

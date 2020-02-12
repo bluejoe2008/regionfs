@@ -1,4 +1,4 @@
-import java.io.{File, FileOutputStream}
+import java.io.File
 
 import org.junit.{Before, Test}
 
@@ -17,47 +17,47 @@ class FileWriteTest extends FileTestBase {
 
   @Test
   def test1(): Unit = {
-    writeFile(new File("./testdata/inputs/999"))
-    writeFile(new File("./testdata/inputs/9999"))
-    writeFile(new File("./testdata/inputs/99999"))
-    writeFile(new File("./testdata/inputs/999999"))
+    writeFileClock(new File("./testdata/inputs/999"))
+    writeFileClock(new File("./testdata/inputs/9999"))
+    writeFileClock(new File("./testdata/inputs/99999"))
+    writeFileClock(new File("./testdata/inputs/999999"))
   }
 
   @Test
   def test0(): Unit = {
-    writeFile("this is a test")
-    writeFile("hello, world")
+    writeFileClock("this is a test")
+    writeFileClock("hello, world")
   }
 
   @Test
   def test2(): Unit = {
-    writeFiles(new File("./testdata/inputs/999"), 2)
-    writeFiles(new File("./testdata/inputs/9999"), 2)
-    writeFiles(new File("./testdata/inputs/99999"), 2)
-    writeFiles(new File("./testdata/inputs/999999"), 2)
+    writeFilesClock(new File("./testdata/inputs/999"), 2)
+    writeFilesClock(new File("./testdata/inputs/9999"), 2)
+    writeFilesClock(new File("./testdata/inputs/99999"), 2)
+    writeFilesClock(new File("./testdata/inputs/999999"), 2)
   }
 
   @Test
   def test3(): Unit = {
-    writeFiles(new File("./testdata/inputs/999"), 3)
-    writeFiles(new File("./testdata/inputs/9999"), 3)
-    writeFiles(new File("./testdata/inputs/99999"), 3)
-    writeFiles(new File("./testdata/inputs/999999"), 3)
+    writeFilesClock(new File("./testdata/inputs/999"), 3)
+    writeFilesClock(new File("./testdata/inputs/9999"), 3)
+    writeFilesClock(new File("./testdata/inputs/99999"), 3)
+    writeFilesClock(new File("./testdata/inputs/999999"), 3)
   }
 
   @Test
   def test4(): Unit = {
-    writeFiles(new File("./testdata/inputs/999"), 4)
-    writeFiles(new File("./testdata/inputs/9999"), 4)
-    writeFiles(new File("./testdata/inputs/99999"), 4)
-    writeFiles(new File("./testdata/inputs/999999"), 4)
+    writeFilesClock(new File("./testdata/inputs/999"), 4)
+    writeFilesClock(new File("./testdata/inputs/9999"), 4)
+    writeFilesClock(new File("./testdata/inputs/99999"), 4)
+    writeFilesClock(new File("./testdata/inputs/999999"), 4)
   }
 
   @Test
   def test10(): Unit = {
-    writeFiles(new File("./testdata/inputs/999"), 10)
-    writeFiles(new File("./testdata/inputs/9999"), 10)
-    writeFiles(new File("./testdata/inputs/99999"), 10)
-    writeFiles(new File("./testdata/inputs/999999"), 10)
+    writeFilesClock(new File("./testdata/inputs/999"), 10)
+    writeFilesClock(new File("./testdata/inputs/9999"), 10)
+    writeFilesClock(new File("./testdata/inputs/99999"), 10)
+    writeFilesClock(new File("./testdata/inputs/999999"), 10)
   }
 }

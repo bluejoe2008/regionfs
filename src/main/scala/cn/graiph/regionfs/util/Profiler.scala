@@ -4,7 +4,7 @@ package cn.graiph.regionfs.util
   * Created by bluejoe on 2020/2/11.
   */
 object Profiler extends Logging {
-  var enableTiming = true;
+  var enableTiming = false;
 
   def timing[T](enabled: Boolean = true)(runnable: => T): T = if (enableTiming & enabled) {
     val t1 = System.nanoTime()

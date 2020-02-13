@@ -247,99 +247,22 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
     idgen.close()
   }
 
-  def read1[T](localId: Long): (Long, InputStream) = {
+  //maybe a perfect read()
+  def read(localId: Long, out: BytePageOutput): Long = {
     val meta = fmeta.read(localId)
+    var ptr = meta.offset;
     val end = meta.tail
-    var ptr = meta.offset
 
-    meta.length ->
-      StreamUtils.concatStreams {
-        if (ptr >= end) {
-          None
-        }
-        else {
-          val length = Math.min((end - ptr).toInt, Constants.SERVER_SIDE_READ_BUFFER_SIZE)
-          val bytes = fbody.read(ptr, length);
+    while (ptr < end) {
+      val length = Math.min((end - ptr).toInt, Constants.SERVER_SIDE_READ_BUFFER_SIZE)
+      val bytes = fbody.read(ptr, length);
+      ptr += length
 
-          ptr += length
-          Some(new ByteArrayInputStream(bytes, 0, length))
-        }
-      }
-  }
-
-  def read[T](localId: Long): (Long, InputStream) = {
-    val meta = fmeta.read(localId)
-    meta.length -> new InputStream() {
-      class ReadBuffer(bytes: Array[Byte], length: Int) {
-        val is = new ByteArrayInputStream(bytes, 0, length);
-
-        def read(): Int = {
-          is.read();
-        }
-      }
-
-      var ptr = meta.offset;
-      val end = meta.tail
-
-      var current: ReadBuffer = loadBuffer();
-
-      override def read(): Int = {
-        if (current == null)
-          -1
-        else {
-          val n = current.read();
-          if (n < 0) {
-            current = loadBuffer();
-            if (current == null)
-              -1
-            else
-              current.read();
-          }
-          else {
-            n
-          }
-        }
-      }
-
-      def loadBuffer(): ReadBuffer = {
-        if (ptr >= end) {
-          null
-        }
-        else {
-          timing(false) {
-            val length = Math.min((end - ptr).toInt, Constants.SERVER_SIDE_READ_BUFFER_SIZE)
-            val bytes = fbody.read(ptr, length);
-            ptr += length
-            new ReadBuffer(bytes, length)
-          }
-        }
-      }
+      out.write(bytes, 0, length)
     }
-  }
 
-  def read[T](localId: Long, innerOffSet: Long, num: Long): (Long, InputStream) = {
-    val meta = fmeta.read(localId)
-    var ptr = meta.offset + innerOffSet
-    val end = Math.min(meta.tail, ptr + num)
-
-    (end - meta.offset) ->
-      StreamUtils.concatStreams {
-        if (ptr >= end) {
-          None
-        }
-        else {
-          val bytes = fbody.read(ptr,
-            if (ptr + Constants.SERVER_SIDE_READ_BUFFER_SIZE >= end) {
-              (end - ptr).toInt
-            }
-            else {
-              Constants.SERVER_SIDE_READ_BUFFER_SIZE
-            });
-
-          ptr += bytes.length
-          Some(new ByteArrayInputStream(bytes))
-        }
-      }
+    out.writeEOF()
+    meta.length
   }
 }
 
@@ -407,4 +330,10 @@ class RegionManager(nodeId: Long, storeDir: File, globalConfig: GlobalConfig) ex
     regions += (regionId -> region)
     region
   }
+}
+
+trait BytePageOutput {
+  def write(bytes: Array[Byte], offset: Int, length: Int): Unit
+
+  def writeEOF(): Unit
 }

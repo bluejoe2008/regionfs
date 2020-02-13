@@ -1,11 +1,11 @@
 package cn.graiph.regionfs
 
-import java.io.{ByteArrayInputStream, InputStream}
+import java.io.InputStream
 
 import cn.graiph.regionfs.util.{IteratorUtils, Logging, StreamUtils}
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.NettyRpcEnvFactory
-import net.neoremind.kraps.rpc.{RpcAddress, RpcEnv, RpcEnvClientConfig}
+import net.neoremind.kraps.rpc.{RpcAddress, RpcEndpointRef, RpcEnv, RpcEnvClientConfig}
 import org.apache.commons.io.IOUtils
 import org.apache.zookeeper.{WatchedEvent, Watcher, ZooKeeper}
 
@@ -69,20 +69,6 @@ class FsClient(zks: String) extends Logging {
     val client = nodes.map(nodeAddress)
     client.readFile(fileId)
   }
-
-  def readFile1[T](fileId: FileId): InputStream = {
-    //FIXME: if the region is created just now, the delay of zkwatch will cause failure of regionNodes.map(fileId.regionId)
-    val nodeAddress = regionNodes.map(fileId.regionId)
-    val client = nodes.map(nodeAddress)
-    client.readFile1(fileId)
-  }
-
-  def readFile2[T](fileId: FileId): InputStream = {
-    //FIXME: if the region is created just now, the delay of zkwatch will cause failure of regionNodes.map(fileId.regionId)
-    val nodeAddress = regionNodes.map(fileId.regionId)
-    val client = nodes.map(nodeAddress)
-    client.readFile2(fileId)
-  }
 }
 
 /**
@@ -123,36 +109,64 @@ case class NodeAddress(host: String, port: Int) {
 
 }
 
+class ClientEx(rpcEnv: RpcEnv, endPointRef: RpcEndpointRef) {
+  def close(): Unit = {
+    rpcEnv.stop(endPointRef)
+  }
+
+  def askSync[T: ClassTag](request: AnyRef, timeOut: Duration = Duration.Inf): T = {
+    Await.result(endPointRef.ask[T](request), timeOut)
+  }
+
+  def ask[T: ClassTag](request: AnyRef): Future[T] = {
+    endPointRef.ask[T](request)
+  }
+
+  def askStream[T <: StreamingResult](request: AnyRef, pageSize: Int): Iterator[T] = {
+    var txId: Long = -1;
+    var hasMore = true
+    IteratorUtils.concatIterators { (index: Int) =>
+      if (!hasMore) {
+        None
+      }
+      else {
+        val res = {
+          if (index == 0) {
+            askSync[StreamResponse](StartStreamRequest(request, pageSize))
+          }
+          else {
+            askSync[StreamResponse](GetNextPageRequest(txId))
+          }
+        }
+
+        if (txId < 0)
+          txId = res.txId;
+
+        hasMore = res.hasMore
+        Some(res.page.iterator.map(_.asInstanceOf[T]))
+      }
+    }
+  }
+}
+
 /**
   * an FsNodeClient is an underline client used by FsClient
   * it sends raw messages (e.g. SendCompleteFileRequest) to NodeServer and handles responses
   */
-case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends Logging {
-  private val endPointRef = createEndPointRef
-
-  private def createEndPointRef() = {
-    val rpcConf = new RpcConf()
-    val config = RpcEnvClientConfig(rpcConf, "regionfs-client")
-    val rpcEnv: RpcEnv = NettyRpcEnvFactory.create(config)
-
-    rpcEnv.setupEndpointRef(RpcAddress(remoteAddress.host, remoteAddress.port), "regionfs-service")
-  }
-
-  def close(): Unit = {
-    rpcEnv.stop(endPointRef)
-  }
+case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends
+  ClientEx(rpcEnv, rpcEnv.setupEndpointRef(RpcAddress(remoteAddress.host, remoteAddress.port), "regionfs-service")) with Logging {
 
   def writeFileAsync(is: InputStream, totalLength: Long): Future[FileId] = {
     //small file
     if (totalLength <= Constants.WRITE_CHUNK_SIZE) {
       val bytes = IOUtils.toByteArray(is)
-      endPointRef.ask[SendCompleteFileResponse](
+      ask[SendCompleteFileResponse](
         SendCompleteFileRequest(None, bytes, totalLength)).
         map(_.fileId)
     }
     else {
       //split large files into chunks
-      val res = Await.result(endPointRef.ask[StartSendChunksResponse](
+      val res = Await.result(ask[StartSendChunksResponse](
         StartSendChunksRequest(None, totalLength)),
         Duration.Inf)
 
@@ -172,7 +186,7 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
 
           if (n > 0) {
             //send this chunk
-            val future: Future[SendChunkResponse] = endPointRef.ask[SendChunkResponse](
+            val future: Future[SendChunkResponse] = ask[SendChunkResponse](
               SendChunkRequest(transId, bytes.slice(0, n), offset, n, chunks))
 
             futures += future
@@ -200,65 +214,10 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends 
     }
   }
 
-  def ask[T: ClassTag](request: AnyRef, timeOut: Duration = Duration.Inf): T = {
-    Await.result(endPointRef.ask[T](request), timeOut)
-  }
-
-  def askAsync[T: ClassTag](request: AnyRef): Future[T] = {
-    endPointRef.ask[T](request)
-  }
-
-  def askStream[T <: StreamingResult](request: AnyRef, pageSize: Int): Iterator[T] = {
-    var txId: Long = -1;
-    var hasMore = true
-    IteratorUtils.concatIterators { (index: Int) =>
-      if (!hasMore) {
-        None
-      }
-      else {
-        val res = {
-          if (index == 0) {
-            ask[StreamResponse](StartStreamRequest(request, pageSize))
-          }
-          else {
-            ask[StreamResponse](GetNextPageRequest(txId))
-          }
-        }
-
-        if (txId < 0)
-          txId = res.txId;
-
-        hasMore = res.hasMore
-        Some(res.page.iterator.map(_.asInstanceOf[T]))
-      }
-    }
-  }
-
-  def readFile2[T](fileId: FileId): InputStream = {
+  def readFile[T](fileId: FileId): InputStream = {
     StreamUtils.
       of(askStream[ReadFileResponseDetail](ReadFileRequest(fileId.regionId, fileId.localId), 1).
         flatMap(_.content.iterator))
-  }
-
-  def readFile1[T](fileId: FileId): InputStream = {
-    var offset: Long = 0;
-    StreamUtils.concatStreams {
-      if (offset == -1) {
-        None
-      }
-      else {
-        val res = Await.result(endPointRef.ask[ReadChunkResponse](
-          ReadChunkRequest(fileId.regionId, fileId.localId, offset, Constants.READ_CHUNK_SIZE)), Duration.Inf)
-
-        offset = res.nextOffset
-        Some(new ByteArrayInputStream(res.content))
-      }
-    }
-  }
-
-  def readFile(fileId: FileId): InputStream = {
-    new ByteArrayInputStream(Await.result(endPointRef.ask[ReadCompleteFileResponse](
-      ReadCompleteFileRequest(fileId.regionId, fileId.localId)), Duration.Inf).content)
   }
 }
 

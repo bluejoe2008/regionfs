@@ -10,7 +10,7 @@ class FsAdmin(zks: String) extends FsClient(zks: String) {
   def stat(): Stat = {
     Stat(
       nodes.mapNodeClients.values.map(
-        _.ask[GetNodeStatResponse](GetNodeStatRequest()).stat
+        _.askSync[GetNodeStatResponse](GetNodeStatRequest()).stat
       ).toList
     )
   }

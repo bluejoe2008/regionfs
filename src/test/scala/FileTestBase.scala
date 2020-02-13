@@ -1,11 +1,14 @@
 import java.io.{ByteArrayInputStream, File, FileInputStream, FileOutputStream}
 
+import cn.graiph.regionfs.util.Profiler
 import cn.graiph.regionfs.{FileId, FsClient}
 
 /**
   * Created by bluejoe on 2019/8/23.
   */
 class FileTestBase {
+  Profiler.enableTiming = true
+
   //run 3 processes first:
   // StartSingleTestServer ./node1.conf
   // StartSingleTestServer ./node2.conf

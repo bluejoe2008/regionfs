@@ -7,7 +7,6 @@ import cn.graiph.regionfs.util.{ConfigurationEx, Logging}
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.NettyRpcEnvFactory
 import net.neoremind.kraps.rpc.{RpcCallContext, RpcEndpoint, RpcEnv, RpcEnvServerConfig}
-import org.apache.commons.io.IOUtils
 import org.apache.zookeeper.ZooDefs.Ids
 import org.apache.zookeeper._
 
@@ -135,7 +134,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             )
 
           //hello, pls create a new region with id=regionId
-          thinNeighbourClient.ask[CreateRegionResponse](CreateRegionRequest(regionId),
+          thinNeighbourClient.askSync[CreateRegionResponse](CreateRegionRequest(regionId),
             Duration.apply("30s"))
         }
 
@@ -187,7 +186,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
               val neighbours = getNeighboursWhoHasRegion(region.regionId)
               //ask neigbours
               val futures = neighbours.map(addr =>
-                neighbourNodes.clientOf(addr).askAsync[SendCompleteFileResponse](
+                neighbourNodes.clientOf(addr).ask[SendCompleteFileResponse](
                   SendCompleteFileRequest(Some(region.regionId), block, totalLength)))
 
               //wait all neigbours' replies
@@ -216,7 +215,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             //notify neighbours
             val neighbours = getNeighboursWhoHasRegion(region.regionId)
             val futures = neighbours.map(addr =>
-              addr -> neighbourNodes.clientOf(addr).askAsync[StartSendChunksResponse](
+              addr -> neighbourNodes.clientOf(addr).ask[StartSendChunksResponse](
                 StartSendChunksRequest(Some(region.regionId), totalLength)))
 
             //wait all neigbours' reply
@@ -238,37 +237,12 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
           //notify neighbours
           val ids = task.getNeighbourTransactionIds()
 
-          val futures = ids.map(x => neighbourNodes.clientOf(x._1).askAsync[SendChunkResponse](
+          val futures = ids.map(x => neighbourNodes.clientOf(x._1).ask[SendChunkResponse](
             SendChunkRequest(x._2, chunkBytes, offset, chunkLength, chunkIndex)))
 
           //TODO: sync()?
           futures.foreach(Await.result(_, Duration.Inf))
           context.reply(SendChunkResponse(opt.map(FileId.make(task.region.regionId, _)), chunkLength))
-        }
-
-        case ReadChunkRequest(regionId: Long, localId: Long, offset: Long, chunkLength: Long) => {
-          // get region
-          val region = localRegionManager.get(regionId)
-          val (nread, is) = region.read(localId, offset, chunkLength)
-          val content = IOUtils.toByteArray(is)
-          is.close()
-
-          context.reply(ReadChunkResponse(content,
-            if (content.length < chunkLength) {
-              -1
-            }
-            else {
-              offset + content.length
-            }))
-        }
-
-        case ReadCompleteFileRequest(regionId: Long, localId: Long) => {
-          // get region
-          val region = localRegionManager.get(regionId)
-          val (length, is) = region.read(localId)
-          val content: Array[Byte] = IOUtils.toByteArray(is)
-          is.close()
-          context.reply(ReadCompleteFileResponse(content))
         }
 
         //-----------
@@ -299,7 +273,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
                 it.foreach(x => out.push(ListFileResponseDetail(x)))
               }
 
-              out.markEOF();
+              out.pushEOF();
             }
           }
 
@@ -307,18 +281,27 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             (out: Output) => {
               // get region
               val region = localRegionManager.get(regionId)
-              val (length, is) = region.read(localId)
 
-              var read = 0;
-              while (read < length) {
-                val bytes = new Array[Byte](Constants.READ_CHUNK_SIZE)
-                val n = is.read(bytes)
-                out.push(ReadFileResponseDetail(bytes.slice(0, n)));
-                read += n
-              }
+              region.read(localId, new BytePageOutput {
+                var baos = new ByteArrayOutputStream();
 
-              out.markEOF();
-              is.close();
+                override def write(bytes: Array[Byte], offset: Int, length: Int): Unit = {
+                  //FIXME: copy??? direct write??
+                  baos.write(bytes, offset, length)
+                  //is full
+                  if (baos.size() >= Constants.READ_CHUNK_SIZE) {
+                    out.push(ReadFileResponseDetail(baos.toByteArray));
+                    baos.reset()
+                  }
+                }
+
+                override def writeEOF(): Unit = {
+                  if (baos.size() > 0)
+                    out.push(ReadFileResponseDetail(baos.toByteArray));
+
+                  out.pushEOF();
+                }
+              });
             }
           }
         }

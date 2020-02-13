@@ -41,7 +41,7 @@ class Transaction(val txId: Long, pageSize: Int, produce: (Output) => Unit, thre
   })
 
   def nextPage(): (Iterator[_], Boolean) = {
-    resultBuffer.nextPage
+    resultBuffer.readNextPage
   }
 
   def close(): Unit = {
@@ -52,7 +52,7 @@ class Transaction(val txId: Long, pageSize: Int, produce: (Output) => Unit, thre
 trait Output {
   def push(result: StreamingResult): Unit
 
-  def markEOF(): Unit
+  def pushEOF(): Unit
 }
 
 class OutputBuffer(pageSize: Int) extends Output {
@@ -61,20 +61,23 @@ class OutputBuffer(pageSize: Int) extends Output {
 
   def push(result: StreamingResult): Unit = {
     if (reachEOF) {
-      throw new RegionFsServersException(s"EOF reached");
+      throw new RegionFsServersException(s"EOF is committed");
     }
 
     buffer.put(result)
   }
 
-  def markEOF(): Unit = {
+  def pushEOF(): Unit = {
     this.synchronized {
       reachEOF = true;
     }
   }
 
-  def nextPage(): (Iterator[StreamingResult], Boolean) = {
+  def readNextPage(): (Iterator[StreamingResult], Boolean) = {
     val page = new java.util.ArrayList[StreamingResult]();
+    val one = buffer.take();
+    page.add(one);
+
     buffer.drainTo(page, pageSize)
     JavaConversions.asScalaIterator(page.iterator) -> !(reachEOF && buffer.isEmpty)
   }

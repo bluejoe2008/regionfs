@@ -9,5 +9,5 @@ object Constants {
   val READ_CHUNK_SIZE: Int = 1024 * 1024 * 10
   val METADATA_ENTRY_LENGTH_WITH_PADDING = 40
   val REGION_FILE_BODY_EOF: Array[Byte] = "\r\n----\r\n".getBytes
-  val SERVER_SIDE_READ_BUFFER_SIZE = 1024;
+  val SERVER_SIDE_READ_BUFFER_SIZE = 4096;
 }

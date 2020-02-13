@@ -47,14 +47,6 @@ case class SendChunkResponse(fileId: Option[FileId], chunkLength: Long) {
 
 }
 
-case class ReadChunkRequest(regionId: Long, localId: Long, offset: Long, chunkLength: Long) {
-
-}
-
-case class ReadChunkResponse(content: Array[Byte], nextOffset: Long) {
-
-}
-
 case class ReadFileRequest(regionId: Long, localId: Long) {
 
 }
@@ -68,14 +60,6 @@ case class GetNodeStatRequest() {
 }
 
 case class GetNodeStatResponse(stat: NodeStat) {
-
-}
-
-case class ReadCompleteFileRequest(regionId: Long, localId: Long) {
-
-}
-
-case class ReadCompleteFileResponse(content: Array[Byte]) {
 
 }
 

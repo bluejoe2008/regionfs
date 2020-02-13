@@ -46,29 +46,17 @@ class RemoteFileReadTest extends FileTestBase {
   private def test(path: String): Unit = {
     val src: File = new File(path)
     val id = super.writeFile(src);
-    val bytes = IOUtils.toByteArray(client.readFile(id))
-
-    Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(src)), bytes);
 
     println("read an remote file via readFile()...")
-    timing(true) {
+    Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(src)), timing(true) {
       IOUtils.toByteArray(client.readFile(id))
-    }
-
-    println("read an remote file via readFile1()...")
-    timing(true) {
-      IOUtils.toByteArray(client.readFile1(id))
-    }
-
-    println("read an remote file via readFile2()...")
-    timing(true) {
-      IOUtils.toByteArray(client.readFile2(id))
-    }
+    });
 
     println("read a local file...")
     val bytes2 = timing(true) {
       IOUtils.toByteArray(new FileInputStream(src));
     }
+
     println(s"size: ${bytes2.size}");
   }
 }

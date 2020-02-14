@@ -26,6 +26,11 @@
             <version>3.0.3</version>
         </dependency>
         <dependency>
+            <groupId>org.apache.spark</groupId>
+            <artifactId>spark-network-common_2.11</artifactId>
+            <version>2.2.0</version>
+        </dependency>
+        <dependency>
             <groupId>net.neoremind</groupId>
             <artifactId>kraps-rpc_2.11</artifactId>
             <version>1.0.0</version>

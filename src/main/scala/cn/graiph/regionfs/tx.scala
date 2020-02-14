@@ -13,26 +13,26 @@ import scala.collection.{JavaConversions, mutable}
 /**
   * Created by bluejoe on 2020/2/5.
   */
-class Transactions() extends Logging {
-  val transactions = mutable.Map[Long, Transaction]()
+class RpcStreams() extends Logging {
+  val streams = mutable.Map[Long, RpcStream]()
   val idgen = new AtomicLong(System.currentTimeMillis())
   val threadPool = Executors.newFixedThreadPool(5);
 
-  def create(produce: (Output) => Unit, pageSize: Int): Transaction = {
-    val txId = idgen.incrementAndGet()
-    val tx = new Transaction(txId, pageSize, produce, threadPool)
-    transactions += txId -> tx
+  def create(produce: (Output) => Unit, pageSize: Int): RpcStream = {
+    val streamId = idgen.incrementAndGet()
+    val tx = new RpcStream(streamId, pageSize, produce, threadPool)
+    streams += streamId -> tx
     tx
   }
 
-  def remove(transId: Long) = transactions.remove(transId)
+  def remove(streamId: Long) = streams.remove(streamId)
 
-  def get(transId: Long): Transaction = {
-    transactions(transId)
+  def get(streamId: Long): RpcStream = {
+    streams(streamId)
   }
 }
 
-class Transaction(val txId: Long, pageSize: Int, produce: (Output) => Unit, threadPool: ExecutorService) {
+class RpcStream(val streamId: Long, pageSize: Int, produce: (Output) => Unit, threadPool: ExecutorService) {
   val resultBuffer = new OutputBuffer(pageSize);
   val future = threadPool.submit(new Runnable {
     override def run(): Unit = {
@@ -88,13 +88,13 @@ class OutputBuffer(pageSize: Int) extends Output {
   * a TxQueue manages all running FileTasks
   * each TransTx has an unique id (transactionId)
   */
-class TxQueue() extends Logging {
-  val transactionalTasks = mutable.Map[Long, TransTx]()
+class FileTransmissionQueue() extends Logging {
+  val transactionalTasks = mutable.Map[Long, FileTransmission]()
   val idgen = new AtomicLong(System.currentTimeMillis())
 
-  def create(region: Region, totalLength: Long): TransTx = {
+  def create(region: Region, totalLength: Long): FileTransmission = {
     val transId = idgen.incrementAndGet()
-    val tx = new TransTx(transId, region, totalLength)
+    val tx = new FileTransmission(transId, region, totalLength)
 
     transactionalTasks += transId -> tx
     tx
@@ -102,12 +102,12 @@ class TxQueue() extends Logging {
 
   def remove(transId: Long) = transactionalTasks.remove(transId)
 
-  def get(transId: Long): TransTx = {
+  def get(transId: Long): FileTransmission = {
     transactionalTasks(transId)
   }
 }
 
-class TransTx(val txId: Long, val region: Region, val totalLength: Long) extends Logging {
+class FileTransmission(val txId: Long, val region: Region, val totalLength: Long) extends Logging {
   //besides this node, neighbour nodes will store replica chunks on the same time
   //neighbourTransactionIds is used to save these ids allocated for replica blob task
   val neighbourTransactionIds = mutable.Map[NodeAddress, Long]()

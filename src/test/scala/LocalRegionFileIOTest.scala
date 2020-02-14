@@ -28,7 +28,9 @@ class LocalRegionFileIOTest extends FileTestBase {
     }
 
     val baos = new ByteArrayOutputStream()
-    val out = new BytePageOutput() {
+    val out = null;
+    /*
+    new BytePageOutput() {
       override def write(bytes: Array[Byte], offset: Int, length: Int): Unit = {
         baos.write(bytes, offset, length)
       }
@@ -37,6 +39,7 @@ class LocalRegionFileIOTest extends FileTestBase {
 
       }
     }
+    */
 
     val bytes = region.read(id, out)
     Assert.assertArrayEquals(baos.toByteArray,

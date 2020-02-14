@@ -98,8 +98,8 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
     class FileRpcEndpoint(override val rpcEnv: RpcEnv)
       extends RpcEndpoint with Logging {
-      val queue = new TxQueue()
-      val transactions = new Transactions();
+      val queue = new FileTransmissionQueue()
+      val transactions = new RpcStreams();
       val rand = new Random();
 
       //NOTE: register only on started up
@@ -181,7 +181,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             //primary node
             if (!optRegionId.isDefined) {
               val region = chooseRegion()
-              val maybeLocalId = new TransTx(-1, region, totalLength).
+              val maybeLocalId = new FileTransmission(-1, region, totalLength).
                 writeChunk(0, block, 0, totalLength.toInt, 0)
               val neighbours = getNeighboursWhoHasRegion(region.regionId)
               //ask neigbours
@@ -197,7 +197,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             }
             else {
               val region = localRegionManager.get(optRegionId.get)
-              val maybeLocalId = new TransTx(-1, region, totalLength).
+              val maybeLocalId = new FileTransmission(-1, region, totalLength).
                 writeChunk(0, block, 0, totalLength.toInt, 0)
 
               region.regionId -> maybeLocalId.get
@@ -249,7 +249,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         case StartStreamRequest(request: AnyRef, pageSize: Int) => {
           val tx = transactions.create(streamingResultsProducer(request), pageSize)
           val (results, hasMorePage) = tx.nextPage
-          context.reply(StreamResponse(tx.txId, results.toArray, hasMorePage))
+          context.reply(StreamResponse(tx.streamId, results.toArray, hasMorePage))
         }
 
         case GetNextPageRequest(txId: Long) => {

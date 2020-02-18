@@ -1,8 +1,8 @@
-package cn.graiph.regionfs
+package cn.regionfs
 
 import java.io.InputStream
 
-import cn.graiph.regionfs.util.{IteratorUtils, Logging, StreamUtils}
+import cn.regionfs.util.{IteratorUtils, Logging, StreamUtils}
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.NettyRpcEnvFactory
 import net.neoremind.kraps.rpc.{RpcAddress, RpcEndpointRef, RpcEnv, RpcEnvClientConfig}

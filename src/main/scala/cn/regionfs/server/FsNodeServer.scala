@@ -1,12 +1,13 @@
-package cn.graiph.regionfs
+package cn.regionfs.server
 
 import java.io._
 import java.util.Random
 
-import cn.graiph.regionfs.util.{ConfigurationEx, Logging}
+import cn.regionfs._
+import cn.regionfs.util.{ConfigurationEx, Logging}
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.NettyRpcEnvFactory
-import net.neoremind.kraps.rpc.{RpcCallContext, RpcEndpoint, RpcEnv, RpcEnvServerConfig}
+import net.neoremind.kraps.rpc.{RpcCallContext, RpcEndpoint, RpcEnvServerConfig, RpcEnv}
 import org.apache.zookeeper.ZooDefs.Ids
 import org.apache.zookeeper._
 

@@ -1,10 +1,11 @@
-package cn.graiph.regionfs
+package cn.regionfs.server
 
 import java.io.{ByteArrayInputStream, File, FileInputStream, FileOutputStream}
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.{ArrayBlockingQueue, ExecutorService, Executors}
 
-import cn.graiph.regionfs.util.Logging
+import cn.regionfs.{StreamingResult, NodeAddress}
+import cn.regionfs.util.Logging
 import org.apache.commons.io.IOUtils
 
 import scala.collection.mutable.ArrayBuffer

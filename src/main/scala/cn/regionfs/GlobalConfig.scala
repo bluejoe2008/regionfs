@@ -1,9 +1,9 @@
-package cn.graiph.regionfs
+package cn.regionfs
 
 import java.io.{ByteArrayInputStream, File, FileInputStream}
 import java.util.Properties
-
-import cn.graiph.regionfs.util.ConfigurationEx
+import cn.regionfs.server.RegionFsServersException
+import cn.regionfs.util.ConfigurationEx
 import org.apache.commons.io.IOUtils
 import org.apache.zookeeper.ZooDefs.Ids
 import org.apache.zookeeper.{CreateMode, WatchedEvent, Watcher, ZooKeeper}

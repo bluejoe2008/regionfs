@@ -1,7 +1,7 @@
 import java.io.{ByteArrayInputStream, File, FileInputStream, FileOutputStream}
 
-import cn.graiph.regionfs.util.Profiler
-import cn.graiph.regionfs.{FileId, FsClient}
+import cn.regionfs.{FsClient, FileId}
+import cn.regionfs.util.Profiler
 
 /**
   * Created by bluejoe on 2019/8/23.

@@ -1,6 +1,6 @@
-package cn.graiph.regionfs
+package cn.regionfs
 
-import cn.graiph.regionfs.util.Logging
+import cn.regionfs.util.Logging
 import org.apache.zookeeper.Watcher.Event.EventType
 import org.apache.zookeeper.{WatchedEvent, Watcher, ZooKeeper}
 

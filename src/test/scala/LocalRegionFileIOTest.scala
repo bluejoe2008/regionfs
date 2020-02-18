@@ -1,9 +1,10 @@
 import java.io._
 
-import cn.graiph.regionfs.util.Profiler._
-import cn.graiph.regionfs.{BytePageOutput, GlobalConfig, Region, RegionConfig}
+import cn.regionfs.GlobalConfig
+import cn.regionfs.server.{RegionConfig, Region}
 import org.apache.commons.io.IOUtils
 import org.junit.{Assert, Before, Test}
+import cn.regionfs.util.Profiler._
 
 /**
   * Created by bluejoe on 2020/2/11.

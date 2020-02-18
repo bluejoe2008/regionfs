@@ -1,8 +1,8 @@
-package cn.graiph.regionfs.shell
+package cn.regionfs.shell
 
 import java.io.File
 
-import cn.graiph.regionfs.FileSystemStarter
+import cn.regionfs.FileSystemStarter
 
 /**
   * Created by bluejoe on 2020/2/6.

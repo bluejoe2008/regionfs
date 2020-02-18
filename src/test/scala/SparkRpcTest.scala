@@ -3,8 +3,8 @@ import java.nio.ByteBuffer
 import java.util
 import java.util.concurrent.CountDownLatch
 
-import cn.regionfs.util.{Profiler}
 import cn.regionfs.util.ByteBufferUtils._
+import cn.regionfs.util.Profiler
 import cn.regionfs.util.Profiler._
 import io.netty.buffer.Unpooled
 import org.apache.commons.io.IOUtils
@@ -21,10 +21,7 @@ import scala.collection.mutable.ArrayBuffer
 /**
   * Created by bluejoe on 2020/2/14.
   */
-class SparkRpcTest {
-
-  Profiler.enableTiming = true
-  val confProvider = new MapConfigProvider(JavaConversions.mapAsJavaMap(Map()))
+object SparkRpcServer {
   val server = {
     val handler: RpcHandler = new RpcHandler() {
       override def receive(client: TransportClient, message: ByteBuffer, callback: RpcResponseCallback) {
@@ -69,10 +66,17 @@ class SparkRpcTest {
       }
     }
 
+    val confProvider = new MapConfigProvider(JavaConversions.mapAsJavaMap(Map()))
     val conf: TransportConf = new TransportConf("test", confProvider)
     val context: TransportContext = new TransportContext(conf, handler)
     context.createServer("localhost", 1225, new util.ArrayList())
   }
+}
+
+class SparkRpcTest {
+  val server = SparkRpcServer.server
+  Profiler.enableTiming = true
+  val confProvider = new MapConfigProvider(JavaConversions.mapAsJavaMap(Map()))
 
   val clientFactory = {
     val conf: TransportConf = new TransportConf("test", confProvider)
@@ -89,7 +93,6 @@ class SparkRpcTest {
     }
 
     override def onSuccess(chunkIndex: Int, buf: ManagedBuffer): Unit = {
-      //println(s"received chunk response: $chunkIndex");
       IOUtils.copy(buf.createInputStream(), out);
       latch.countDown()
     }
@@ -130,9 +133,11 @@ class SparkRpcTest {
     }
   }
 
+  val client = clientFactory.createClient("localhost", 1225);
+
   @Test
   def test1() {
-    val client = clientFactory.createClient("localhost", 1225);
+
     client.send(Unpooled.buffer().writeByte(1.toByte).writeString("no reply").writeLong(999).nioBuffer());
     val cd = new CountDownLatch(1);
     client.sendRpc(
@@ -150,14 +155,20 @@ class SparkRpcTest {
       })
 
     cd.await()
+  }
 
+  @Test
+  def testSendLargeFiles() {
     //send large files
     val res = timing(true) {
-      client.sendRpcSync(ByteBuffer.allocate(9999999).flip().asInstanceOf[ByteBuffer], 1000000)
+      client.sendRpcSync(ByteBuffer.allocate(9999999).put(2.toByte).flip().asInstanceOf[ByteBuffer], 1000000)
     }
 
     Assert.assertEquals(100, res.getInt);
+  }
 
+  @Test
+  def testGetChunksParallelly() {
     //get chunks parallely
     timing(true) {
       val mcs = ArrayBuffer[MyChunkReceivedCallback]()
@@ -169,7 +180,10 @@ class SparkRpcTest {
 
       mcs.foreach(_.getBytes())
     }
+  }
 
+  @Test
+  def testGetChunksSerially() {
     //get chunks one by one
     timing(true) {
       for (i <- 1 to 9) {
@@ -178,26 +192,28 @@ class SparkRpcTest {
         Assert.assertEquals(1024 * 1024, mc.getBytes().length);
       }
     }
+  }
 
-    {
-      val out = new MyStreamCallback();
-      timing(true) {
-        client.stream("large", out);
-        out.getBytes();
-      }
-
-      Assert.assertEquals(9999999, out.getBytes().length)
+  @Test
+  def testGetLargeStream() {
+    val out = new MyStreamCallback();
+    timing(true) {
+      client.stream("large", out);
+      out.getBytes();
     }
 
-    {
-      val out = new MyStreamCallback();
-      timing(true) {
-        client.stream("tiny", out);
-        out.getBytes();
-      }
+    Assert.assertEquals(9999999, out.getBytes().length)
+  }
 
-      Assert.assertEquals(1024, out.getBytes().length)
+  @Test
+  def testGetTinyStream() {
+    val out = new MyStreamCallback();
+    timing(true) {
+      client.stream("tiny", out);
+      out.getBytes();
     }
+
+    Assert.assertEquals(1024, out.getBytes().length)
   }
 }
 

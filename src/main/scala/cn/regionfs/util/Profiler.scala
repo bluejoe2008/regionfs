@@ -1,4 +1,4 @@
-package cn.graiph.regionfs.util
+package cn.regionfs.util
 
 /**
   * Created by bluejoe on 2020/2/11.

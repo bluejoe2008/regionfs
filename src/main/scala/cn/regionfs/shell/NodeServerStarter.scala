@@ -1,8 +1,8 @@
-package cn.graiph.regionfs.shell
+package cn.regionfs.shell
 
 import java.io.File
 
-import cn.graiph.regionfs.FsNodeServer
+import cn.regionfs.server.FsNodeServer
 
 /**
   * Created by bluejoe on 2019/8/31.

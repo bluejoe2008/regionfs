@@ -1,8 +1,8 @@
 import java.nio.ByteBuffer
 
-import cn.graiph.regionfs.util.ByteBufferUtils._
-import cn.graiph.regionfs.util.Profiler
-import cn.graiph.regionfs.util.Profiler._
+import cn.regionfs.util.{Profiler, ByteBufferUtils}
+import cn.regionfs.util.Profiler._
+import cn.regionfs.util.ByteBufferUtils._
 import io.netty.buffer.Unpooled
 import org.junit.{Assert, Test}
 
@@ -22,14 +22,14 @@ class ByteBufTest {
     bb.writeString("hello")
     bb.putInt(100)
     println(bb.array(), bb.arrayOffset(), bb.position(), bb.remaining())
-    bb.skipBytes(2)
+    bb.skip(2)
     bb.putInt(200)
     println(bb.array(), bb.arrayOffset(), bb.position(), bb.remaining())
     bb.flip();
     Assert.assertEquals(9, bb.get);
     Assert.assertEquals("hello", bb.readString());
     Assert.assertEquals(100, bb.getInt());
-    bb.skipBytes(2)
+    bb.skip(2)
     Assert.assertEquals(200, bb.getInt());
   }
 

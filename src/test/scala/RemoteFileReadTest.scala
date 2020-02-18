@@ -1,8 +1,8 @@
 import java.io.{File, FileInputStream}
 
-import cn.graiph.regionfs.util.Profiler._
 import org.apache.commons.io.IOUtils
 import org.junit.{Assert, Before, Test}
+import cn.regionfs.util.Profiler._
 
 /**
   * Created by bluejoe on 2020/1/8.

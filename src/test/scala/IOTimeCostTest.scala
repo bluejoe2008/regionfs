@@ -1,8 +1,8 @@
 import java.io._
 import java.nio.ByteBuffer
 
-import cn.graiph.regionfs.util.Profiler
-import cn.graiph.regionfs.util.Profiler._
+import cn.regionfs.util.Profiler
+import cn.regionfs.util.Profiler._
 import org.apache.commons.io.IOUtils
 import org.junit.Test
 

@@ -1,4 +1,4 @@
-package cn.graiph.regionfs.util
+package cn.regionfs.util
 
 import java.io.InputStream
 
@@ -6,7 +6,7 @@ import java.io.InputStream
   * Created by bluejoe on 2020/2/7.
   */
 object StreamUtils {
-  def of(iter: Iterator[Byte]): InputStream = new InputStream {
+  def of(iter: Iterator[Byte]): InputStream = new InputStream() {
     override def read(): Int = {
       if (iter.hasNext) {
         iter.next()

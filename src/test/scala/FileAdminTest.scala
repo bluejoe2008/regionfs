@@ -1,4 +1,4 @@
-import cn.graiph.regionfs.FsAdmin
+import cn.regionfs.FsAdmin
 import org.junit.Test
 
 /**

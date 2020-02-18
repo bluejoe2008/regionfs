@@ -1,18 +1,13 @@
 package cn.regionfs.util
 
-import java.io.ByteArrayOutputStream
+import java.io.{ByteArrayInputStream, ByteArrayOutputStream, ObjectInputStream, ObjectOutputStream}
 import java.nio.ByteBuffer
 
-import cn.regionfs.network.Message
 import io.netty.buffer.ByteBuf
 
 /**
   * Created by bluejoe on 2020/2/15.
   */
-object Kryo {
-  val instance = new com.esotericsoftware.kryo.Kryo();
-}
-
 class ByteBufLikeEx[T](src: T, buf: ByteBufLike) {
   def readString(): String = {
     val len = buf.readInt;
@@ -24,11 +19,10 @@ class ByteBufLikeEx[T](src: T, buf: ByteBufLike) {
   def readObject[X]()(implicit m: Manifest[X]): X = {
     val len = buf.readInt;
     val arr = new Array[Byte](len)
-    val ki = Kryo.instance
     buf.readBytes(arr)
-    val input = new com.esotericsoftware.kryo.io.Input(arr)
-    val o = ki.readObject(input, m.runtimeClass)
-    o.asInstanceOf[X]
+
+    val ois = new ObjectInputStream(new ByteArrayInputStream(arr))
+    ois.readObject().asInstanceOf[X]
   }
 
   //[length][...string...]
@@ -41,12 +35,12 @@ class ByteBufLikeEx[T](src: T, buf: ByteBufLike) {
   }
 
   //[length][...object serlialization...]
-  def writeObject(o: Message): T = {
-    val ki = Kryo.instance
+  def writeObject(o: Any): T = {
     val baos = new ByteArrayOutputStream();
-    val out = new com.esotericsoftware.kryo.io.Output(baos)
-    ki.writeObject(out, o)
-    out.close()
+
+    val oos = new ObjectOutputStream(baos)
+    oos.writeObject(o)
+    oos.close()
     val bytes = baos.toByteArray
     buf.writeInt(bytes.length)
     buf.writeBytes(bytes)

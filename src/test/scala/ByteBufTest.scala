@@ -1,9 +1,10 @@
 import java.nio.ByteBuffer
 
-import cn.regionfs.util.{Profiler, ByteBufferUtils}
-import cn.regionfs.util.Profiler._
 import cn.regionfs.util.ByteBufferUtils._
+import cn.regionfs.util.Profiler
+import cn.regionfs.util.Profiler._
 import io.netty.buffer.Unpooled
+import org.apache.spark.network.buffer.NioManagedBuffer
 import org.junit.{Assert, Test}
 
 /**
@@ -57,7 +58,7 @@ class ByteBufTest {
     }
 
     //39us
-    timing(true) {
+    val buf = timing(true) {
       Unpooled.buffer(10000)
     }
 
@@ -80,5 +81,34 @@ class ByteBufTest {
 
     bb.readInt()
     println(bb.array(), bb.arrayOffset(), bb.readerIndex(), bb.writerIndex(), bb.readableBytes())
+  }
+
+  @Test
+  def testManagedBuffer(): Unit = {
+    Unpooled.buffer(1)
+
+    val buf = timing(true) {
+      Unpooled.buffer(10000)
+    }
+
+    timing(true) {
+      buf.writeBytes(new Array[Byte](1024 * 1024))
+    }
+
+    val mb = timing(true) {
+      new NioManagedBuffer(buf.nioBuffer())
+    }
+
+    timing(true) {
+      mb.createInputStream()
+    }
+
+    timing(true) {
+      mb.convertToNetty()
+    }
+
+    timing(true) {
+      mb.nioByteBuffer()
+    }
   }
 }

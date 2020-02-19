@@ -35,6 +35,7 @@ object MyStreamServer {
   val server = StreamingServer.create("test", new StreamingRpcHandler() {
 
     override def receive(request: Any, ctx: RequestContext): Unit = {
+      println(Thread.currentThread());
       request match {
         case SayHelloRequest(msg) =>
           ctx.reply(SayHelloResponse(msg.toUpperCase()))
@@ -59,13 +60,15 @@ object MyStreamServer {
             override def writeNextChunk(buf: ByteBuf): Boolean = {
               val written =
                 timing(false) {
-                  buf.writeBytes(fis, 1024 * 1024)
+                  buf.writeBytes(fis, 1024 * 10240)
                 }
 
-              written == 1024 * 1024
+              written == 1024 * 10240
             }
 
-            override def close(): Unit = fis.close()
+            override def close(): Unit = {
+              fis.close()
+            }
           }
       }
     }
@@ -116,6 +119,8 @@ class MyStreamRpcTest {
 
   @Test
   def testGetFileStream(): Unit = {
+
+    println(Thread.currentThread());
     client.send(SayHelloRequest("hello")).receive[SayHelloResponse]().await(Duration.Inf)
 
     timing(true) {
@@ -125,14 +130,34 @@ class MyStreamRpcTest {
       }, _.getLong()), Duration.Inf)
     }
 
-    val bytes = IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/9999999")))
-    val is = timing(true) {
-      client.askStream(ReadFile("./testdata/inputs/9999999"));
-    }
-    val bs = timing(true) {
-      IOUtils.toByteArray(is)
+    timing(true) {
+      val is = client.askStream(ReadFile("./testdata/inputs/9999999"));
+      var read = 0;
+      while (read != -1) {
+        read = is.read()
+      }
     }
 
-    Assert.assertArrayEquals(bytes, bs);
+    /*
+    timing(true) {
+      val is = new BufferedInputStream(client.askStream(ReadFile("./testdata/inputs/9999999")));
+      var read = 0;
+      while (read != -1) {
+        read = is.read()
+      }
+    }
+    */
+
+    val bs1 = IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/9999999")))
+    //375ms
+    val bs2 = timing(true) {
+      IOUtils.toByteArray(client.askStream(ReadFile("./testdata/inputs/9999999")))
+      IOUtils.toByteArray(client.askStream(ReadFile("./testdata/inputs/9999999")))
+      IOUtils.toByteArray(client.askStream(ReadFile("./testdata/inputs/9999999")))
+      IOUtils.toByteArray(client.askStream(ReadFile("./testdata/inputs/9999999")))
+      IOUtils.toByteArray(client.askStream(ReadFile("./testdata/inputs/9999999")))
+    }
+
+    Assert.assertArrayEquals(bs1, bs2);
   }
 }

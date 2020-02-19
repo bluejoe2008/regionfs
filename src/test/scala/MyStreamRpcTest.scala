@@ -9,8 +9,8 @@ import io.netty.buffer.ByteBuf
 import org.apache.commons.io.IOUtils
 import org.junit.{Assert, Test}
 
-import scala.concurrent.Await
 import scala.concurrent.duration.Duration
+import scala.concurrent.{Await, Future}
 
 /**
   * Created by bluejoe on 2020/2/18.
@@ -148,16 +148,28 @@ class MyStreamRpcTest {
     }
     */
 
-    val bs1 = IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/9999999")))
-    //375ms
-    val bs2 = timing(true) {
-      IOUtils.toByteArray(client.askStream(ReadFile("./testdata/inputs/9999999")))
-      IOUtils.toByteArray(client.askStream(ReadFile("./testdata/inputs/9999999")))
-      IOUtils.toByteArray(client.askStream(ReadFile("./testdata/inputs/9999999")))
-      IOUtils.toByteArray(client.askStream(ReadFile("./testdata/inputs/9999999")))
-      IOUtils.toByteArray(client.askStream(ReadFile("./testdata/inputs/9999999")))
+    import scala.concurrent.ExecutionContext.Implicits.global
+
+    //378ms
+    timing(true) {
+      val futures = (1 to 5).map { _ =>
+        Future {
+          IOUtils.toByteArray(client.askStream(ReadFile("./testdata/inputs/9999999")))
+        }
+      }
+
+      futures.foreach(Await.result(_, Duration.Inf))
     }
 
-    Assert.assertArrayEquals(bs1, bs2);
+    //483ms
+    val bs2 = timing(true) {
+      for (i <- 1 to 10) {
+        IOUtils.toByteArray(client.askStream(ReadFile("./testdata/inputs/9999999")))
+      }
+    }
+
+    Assert.assertArrayEquals(
+      IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/9999999"))),
+      IOUtils.toByteArray(client.askStream(ReadFile("./testdata/inputs/9999999"))));
   }
 }

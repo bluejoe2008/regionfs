@@ -329,7 +329,7 @@ class StreamingClient(client: TransportClient) extends Logging {
     }
   }
 
-  private def buildStream[T](streamId: Long, chunkIndex: Int, consumeResponse: (ByteBuffer) => T): Stream[T] = {
+  private def _buildStream[T](streamId: Long, chunkIndex: Int, consumeResponse: (ByteBuffer) => T): Stream[T] = {
     if (logger.isTraceEnabled)
       logger.trace(s"build stream: streamId=$streamId, chunkIndex=$chunkIndex")
 
@@ -341,7 +341,7 @@ class StreamingClient(client: TransportClient) extends Logging {
 
     Stream.cons(t,
       if (hasMoreChunks) {
-        buildStream(streamId, chunkIndex, consumeResponse)
+        _buildStream(streamId, chunkIndex, consumeResponse)
       }
       else {
         Stream.empty
@@ -365,7 +365,7 @@ class StreamingClient(client: TransportClient) extends Logging {
 
     Stream.cons(t,
       if (hasMoreChunks) {
-        buildStream(streamId, 1, consumeResponse)
+        _buildStream(streamId, 1, consumeResponse)
       }
       else {
         Stream.empty

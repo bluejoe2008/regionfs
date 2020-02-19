@@ -50,6 +50,9 @@ trait StreamingRpcHandler {
 }
 
 object StreamingServer extends Logging {
+  //WEIRLD: this makes next Upooled.buffer() call run fast
+  Unpooled.buffer(1)
+
   def create(module: String, srh: StreamingRpcHandler, port: Int = -1, host: String = null): StreamingServer = {
     val configProvider = new MapConfigProvider(JavaConversions.mapAsJavaMap(Map()))
     val conf: TransportConf = new TransportConf(module, configProvider)
@@ -87,8 +90,16 @@ object StreamingServer extends Logging {
             }
             case 3 => {
               val streamId: Long = streamIdGen.getAndIncrement();
-              streams(streamId) = srh.openStream(message.readObject())
-              ctx.replyBuffer((buf: ByteBuf) => buf.writeLong(streamId))
+              val stream = srh.openStream(message.readObject())
+              var hasNextChunk = false;
+              ctx.replyBuffer((buf: ByteBuf) => {
+                hasNextChunk = writeNextChunk(buf, streamId, 0, stream)
+              })
+
+              if (hasNextChunk) {
+                //push into stream queue
+                streams(streamId) = stream
+              }
             }
             case 4 => {
               val streamId = message.getLong();
@@ -102,21 +113,30 @@ object StreamingServer extends Logging {
         }
       }
 
+      private def writeNextChunk(buf: ByteBuf, streamId: Long, chunkIndex: Int, stream: CloseableStream): Boolean = {
+        buf.writeLong(streamId)
+        buf.writeInt(chunkIndex)
+        buf.writeByte(1.toByte)
+        val hasMore = stream.writeNextChunk(buf)
+        if (!hasMore) {
+          buf.setByte(8 + 4, 0)
+          stream.close()
+        }
+
+        hasMore
+      }
+
       val streamManager = new StreamManager() {
         override def getChunk(streamId: Long, chunkIndex: Int): ManagedBuffer = {
           if (logger.isTraceEnabled)
             logger.trace(s"get chunk: streamId=$streamId, chunkIndex=$chunkIndex")
 
-          val buf = Unpooled.buffer(1024)
-          buf.writeByte(1.toByte)
-          val stream = streams(streamId)
-          val hasMore = stream.writeNextChunk(buf)
-          if (!hasMore) {
-            buf.setByte(0, 0)
-            stream.close()
+          //1-2ms
+          timing(false) {
+            val buf = Unpooled.buffer(1024)
+            writeNextChunk(buf, streamId, chunkIndex, streams(streamId))
+            new NioManagedBuffer(buf.nioBuffer())
           }
-
-          new NioManagedBuffer(buf.nioBuffer())
         }
 
         override def openStream(streamId: String): ManagedBuffer = {
@@ -137,6 +157,9 @@ class StreamingServer(server: TransportServer) {
 }
 
 object StreamingClient extends Logging {
+  //WEIRLD: this makes next Upooled.buffer() call run fast
+  Unpooled.buffer(1)
+
   val clientFactoryMap = mutable.Map[String, TransportClientFactory]();
   val executionContext: ExecutionContext = ExecutionContext.global
 
@@ -235,11 +258,14 @@ class StreamingClient(client: TransportClient) extends Logging {
     }
   }
 
+  case class ChunkResponse[T](streamId: Long, chunkIndex: Int, hasMoreChunks: Boolean, t: T) {
+
+  }
+
   class MyChunkReceivedCallback[T](consumeResponse: (ByteBuffer) => T) extends ChunkReceivedCallback {
     val latch = new CountDownLatch(1);
 
-    var res: Any = _
-    var hasMoreChunks = false;
+    var res: ChunkResponse[T] = _
     var err: Throwable = null
 
     override def onFailure(chunkIndex: Int, e: Throwable): Unit = {
@@ -249,9 +275,11 @@ class StreamingClient(client: TransportClient) extends Logging {
 
     override def onSuccess(chunkIndex: Int, buffer: ManagedBuffer): Unit = {
       try {
-        val buf = buffer.nioByteBuffer()
-        hasMoreChunks = buf.get() != 0
-        res = consumeResponse(buf);
+        val buf = timing(true) {
+          buffer.nioByteBuffer()
+        }
+
+        res = ChunkResponse[T](buf.getLong, buf.getInt, buf.get() != 0, consumeResponse(buf));
       }
       catch {
         case e =>
@@ -261,12 +289,12 @@ class StreamingClient(client: TransportClient) extends Logging {
       latch.countDown();
     }
 
-    def await(): (T, Boolean) = {
+    def await(): ChunkResponse[T] = {
       latch.await()
       if (err != null)
         throw err;
 
-      res.asInstanceOf[T] -> hasMoreChunks
+      res
     }
   }
 
@@ -282,12 +310,14 @@ class StreamingClient(client: TransportClient) extends Logging {
   }
 
   def askStream(request: Any): InputStream = {
-    val iter: Iterator[InputStream] = timing(true) {
+    //12ms
+    val iter: Iterator[InputStream] = timing(false) {
       askStream[InputStream](request, (buf: ByteBuffer) =>
         new ByteBufferInputStream(buf)).iterator
     }
 
-    timing(true) {
+    //1ms
+    timing(false) {
       StreamUtils.concatStreams {
         if (iter.hasNext) {
           Some(iter.next)
@@ -299,34 +329,46 @@ class StreamingClient(client: TransportClient) extends Logging {
     }
   }
 
-  def askStream[T](request: Any, responseConsume: (ByteBuffer) => T): Stream[T] = {
-    //send start stream request
-    val streamId: Long = timing(true) {
-      Await.result(ask[Long]((buf: ByteBuf) => {
-        buf.writeByte(3)
-        buf.writeObject(request)
-      }, _.getLong()), Duration.Inf)
+  private def buildStream[T](streamId: Long, chunkIndex: Int, consumeResponse: (ByteBuffer) => T): Stream[T] = {
+    if (logger.isTraceEnabled)
+      logger.trace(s"build stream: streamId=$streamId, chunkIndex=$chunkIndex")
+
+    val callback = new MyChunkReceivedCallback[T](consumeResponse);
+    val ChunkResponse(_, _, hasMoreChunks, t) = timing(false) {
+      client.fetchChunk(streamId, chunkIndex, callback)
+      callback.await()
     }
 
-
-    def buildStream(index: Int): Stream[T] = {
-      if (logger.isTraceEnabled)
-        logger.trace(s"build stream: streamId=$streamId, chunkIndex=$index")
-
-      val callback = new MyChunkReceivedCallback[T](responseConsume);
-      val (t, hasMoreChunks) = timing(false) {
-        client.fetchChunk(streamId, index, callback)
-        callback.await()
+    Stream.cons(t,
+      if (hasMoreChunks) {
+        buildStream(streamId, chunkIndex, consumeResponse)
       }
-      Stream.cons(t,
-        if (hasMoreChunks) {
-          buildStream(index + 1)
+      else {
+        Stream.empty
+      })
+  }
+
+  def askStream[T](request: Any, consumeResponse: (ByteBuffer) => T): Stream[T] = {
+    //send start stream request
+    //2ms
+    val ChunkResponse(streamId, _, hasMoreChunks, t) = timing(false) {
+      Await.result(ask[ChunkResponse[T]](
+        (buf: ByteBuf) => {
+          buf.writeByte(3)
+          buf.writeObject(request)
+        },
+        (buf: ByteBuffer) => {
+          new ChunkResponse[T](buf.getLong, buf.getInt, buf.get() != 0, consumeResponse(buf))
         }
-        else {
-          Stream.empty
-        })
+      ), Duration.Inf)
     }
 
-    buildStream(0);
+    Stream.cons(t,
+      if (hasMoreChunks) {
+        buildStream(streamId, 1, consumeResponse)
+      }
+      else {
+        Stream.empty
+      })
   }
 }

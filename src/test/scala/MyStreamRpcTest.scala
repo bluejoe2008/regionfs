@@ -2,11 +2,11 @@ import java.io.{File, FileInputStream}
 import java.nio.ByteBuffer
 
 import cn.regionfs.network._
-import cn.regionfs.util.ByteBufferUtils._
 import cn.regionfs.util.Profiler
 import cn.regionfs.util.Profiler._
-import io.netty.buffer.ByteBuf
+import io.netty.buffer.{ByteBuf, Unpooled}
 import org.apache.commons.io.IOUtils
+import org.apache.spark.network.buffer.{ManagedBuffer, NettyManagedBuffer}
 import org.junit.{Assert, Test}
 
 import scala.concurrent.duration.Duration
@@ -23,7 +23,7 @@ case class SayHelloResponse(str: String) {
 
 }
 
-case class LargeBufferRequest(len: Int) {
+case class GetLargeBuffer(len: Int) {
 
 }
 
@@ -31,45 +31,32 @@ case class ReadFile(path: String) {
 
 }
 
+case class GetSizedStream(len: Int) {
+
+}
+
 object MyStreamServer {
   val server = StreamingServer.create("test", new StreamingRpcHandler() {
 
-    override def receive(request: Any, ctx: RequestContext): Unit = {
-      println(Thread.currentThread());
+    override def receive(request: Any, ctx: ReceiveContext): Unit = {
+      //println(Thread.currentThread());
       request match {
         case SayHelloRequest(msg) =>
           ctx.reply(SayHelloResponse(msg.toUpperCase()))
-        case LargeBufferRequest(len) =>
-          ctx.replyBuffer(_.writeBytes(new Array[Byte](len)))
       }
     }
 
-    override def receiveBuffer(request: ByteBuffer, ctx: RequestContext): Unit = {
-      ctx.replyBuffer(_.writeInt(request.remaining()))
+    override def receiveBuffer(request: ByteBuffer, ctx: ReceiveContext): Unit = {
+      ctx.reply(request.remaining())
     }
 
-    override def openStream(request: Any): CloseableStream = {
+    override def openStream(request: Any): ManagedBuffer = {
       request match {
         case ReadFile(path) =>
-          //60us
-          val fis = timing(false) {
-            new FileInputStream(new File(path))
-          }
-
-          new CloseableStream() {
-            override def writeNextChunk(buf: ByteBuf): Boolean = {
-              val written =
-                timing(false) {
-                  buf.writeBytes(fis, 1024 * 10240)
-                }
-
-              written == 1024 * 10240
-            }
-
-            override def close(): Unit = {
-              fis.close()
-            }
-          }
+          val fis = new FileInputStream(new File(path))
+          val buf = Unpooled.buffer()
+          buf.writeBytes(fis.getChannel, new File(path).length().toInt)
+          new NettyManagedBuffer(buf)
       }
     }
   }, 1224)
@@ -81,72 +68,58 @@ class MyStreamRpcTest {
   val client = StreamingClient.create("test", "localhost", 1224)
 
   @Test
-  def test1(): Unit = {
-    client.send(SayHelloRequest("hello")).receive[SayHelloResponse]().await(Duration.Inf)
+  def testRpc(): Unit = {
+    Await.result(client.ask[SayHelloResponse](SayHelloRequest("hello")), Duration.Inf)
 
     val res1 = timing(true) {
-      client.send(SayHelloRequest("hello")).receive[SayHelloResponse]((x: ByteBuffer) => x.readObject[SayHelloResponse]()).await(Duration.Inf)
+      Await.result(client.ask[SayHelloResponse](SayHelloRequest("hello")), Duration.Inf)
     }
 
     Assert.assertEquals("HELLO", res1.str);
-
-    val res12 = timing(true) {
-      client.send(SayHelloRequest("hello")).receive[SayHelloResponse]().await(Duration.Inf)
-    }
-
-    Assert.assertEquals("HELLO", res12.str);
-
-    timing(true) {
-      val len = client.send(LargeBufferRequest(9999999)).receive[Int]((x: ByteBuffer) => x.remaining()).await(Duration.Inf)
-      Assert.assertEquals(9999999, len);
-    }
   }
 
   @Test
   def testPutFiles(): Unit = {
-    val res = timing(true) {
-      client.sendBuffer((buf: ByteBuf) => {
+    val res = timing(true, 10) {
+      Await.result(client.send[Int]((buf: ByteBuf) => {
         val fos = new FileInputStream(new File("./testdata/inputs/9999999"));
         buf.writeBytes(fos.getChannel, new File("./testdata/inputs/9999999").length().toInt)
         fos.close()
-      }).receive((buf) => {
-        buf.getInt
-      }).await()
+      }), Duration.Inf)
     }
 
     Assert.assertEquals(new File("./testdata/inputs/9999999").length(), res)
   }
 
   @Test
-  def testGetFileStream(): Unit = {
+  def testGetStream(): Unit = {
 
-    println(Thread.currentThread());
-    client.send(SayHelloRequest("hello")).receive[SayHelloResponse]().await(Duration.Inf)
+    Await.result(client.ask[SayHelloResponse](SayHelloRequest("hello")), Duration.Inf)
 
-    timing(true) {
-      Await.result(client.ask[Long]((buf: ByteBuf) => {
-        buf.writeByte(3)
-        buf.writeObject(ReadFile("./testdata/inputs/9999999"))
-      }, _.getLong()), Duration.Inf)
-    }
-
-    timing(true) {
-      val is = client.askStream(ReadFile("./testdata/inputs/9999999"));
+    timing(true, 10) {
+      val is = client.getInputStream(ReadFile("./testdata/inputs/9999999"));
       var read = 0;
       while (read != -1) {
         read = is.read()
       }
     }
 
-    /*
-    timing(true) {
-      val is = new BufferedInputStream(client.askStream(ReadFile("./testdata/inputs/9999999")));
-      var read = 0;
-      while (read != -1) {
-        read = is.read()
+    for (size <- Array(999, 9999, 99999, 999999, 9999999)) {
+      println(s"test fetching stream: size=$size")
+      timing(true, 10) {
+        IOUtils.toByteArray(client.getInputStream(ReadFile(s"./testdata/inputs/$size")))
       }
     }
-    */
+
+    Assert.assertArrayEquals(
+      IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/999"))),
+      IOUtils.toByteArray(client.getInputStream(ReadFile("./testdata/inputs/999")))
+    );
+
+    Assert.assertArrayEquals(
+      IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/9999999"))),
+      IOUtils.toByteArray(client.getInputStream(ReadFile("./testdata/inputs/9999999")))
+    );
 
     import scala.concurrent.ExecutionContext.Implicits.global
 
@@ -154,22 +127,11 @@ class MyStreamRpcTest {
     timing(true) {
       val futures = (1 to 5).map { _ =>
         Future {
-          IOUtils.toByteArray(client.askStream(ReadFile("./testdata/inputs/9999999")))
+          IOUtils.toByteArray(client.getInputStream(ReadFile("./testdata/inputs/9999999")))
         }
       }
 
       futures.foreach(Await.result(_, Duration.Inf))
     }
-
-    //483ms
-    val bs2 = timing(true) {
-      for (i <- 1 to 10) {
-        IOUtils.toByteArray(client.askStream(ReadFile("./testdata/inputs/9999999")))
-      }
-    }
-
-    Assert.assertArrayEquals(
-      IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/9999999"))),
-      IOUtils.toByteArray(client.askStream(ReadFile("./testdata/inputs/9999999"))));
   }
 }

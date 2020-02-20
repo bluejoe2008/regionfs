@@ -31,7 +31,6 @@ object MyStreamServer {
   val server = StreamingServer.create("test", new StreamingRpcHandler() {
 
     override def receive(request: Any, ctx: ReceiveContext): Unit = {
-      //println(Thread.currentThread());
       request match {
         case SayHelloRequest(msg) =>
           ctx.reply(SayHelloResponse(msg.toUpperCase()))
@@ -42,10 +41,10 @@ object MyStreamServer {
       ctx.reply(request.remaining())
     }
 
-    override def openChunkedStream(request: Any): ChunkedStream[_] = {
+    override def openChunkedStream(request: Any): ChunkedStream = {
       request match {
         case ReadFile(path) =>
-          new ChunkedStream[Byte]() {
+          new ChunkedStream() {
             val fis = new FileInputStream(new File(path))
             val length = new File(path).length()
             var count = 0;
@@ -54,14 +53,13 @@ object MyStreamServer {
               count < length
             }
 
-            override def nextChunk(): Iterable[Byte] = {
-              val bs = new Array[Byte](10240)
-              val read = fis.read(bs, 0, 10240)
-              count += read
-              if (read < 10240)
-                bs.slice(0, read)
-              else
-                bs
+            def writeNextChunk(buf: ByteBuf) {
+              val written =
+                timing(false) {
+                  buf.writeBytes(fis, 1024 * 1024)
+                }
+
+              count += written
             }
 
             override def close(): Unit = {
@@ -146,17 +144,17 @@ class MyStreamRpcTest {
     );
 
     for (size <- Array(999, 9999, 99999, 999999, 9999999)) {
+      println("=================================")
       println(s"getInputStream(): size=$size")
       timing(true, 10) {
         IOUtils.toByteArray(client.getInputStream(ReadFile(s"./testdata/inputs/$size")))
       }
-    }
 
-    for (size <- Array(999, 9999, 99999, 999999, 9999999)) {
       println(s"getChunkedInputStream(): size=$size")
       timing(true, 10) {
         IOUtils.toByteArray(client.getChunkedInputStream(ReadFile(s"./testdata/inputs/$size")))
       }
+      println("=================================")
     }
 
     import scala.concurrent.ExecutionContext.Implicits.global

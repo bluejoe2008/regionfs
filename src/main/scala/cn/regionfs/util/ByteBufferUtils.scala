@@ -1,6 +1,5 @@
 package cn.regionfs.util
 
-import java.io.{ByteArrayInputStream, ByteArrayOutputStream, ObjectInputStream, ObjectOutputStream}
 import java.nio.ByteBuffer
 
 import io.netty.buffer.ByteBuf
@@ -35,10 +34,16 @@ class ByteBufLikeEx[T](src: T, buf: ByteBufLike) {
 
   //[length][...object serlialization...]
   def writeObject(o: Any): T = {
-    val bytes = StreamUtils.serializeObject(o)
-    buf.writeInt(bytes.length)
-    buf.writeBytes(bytes)
-    src
+    try {
+      val bytes = StreamUtils.serializeObject(o)
+      buf.writeInt(bytes.length)
+      buf.writeBytes(bytes)
+      src
+    }
+    catch {
+      case e: Throwable =>
+        throw new RuntimeException(s"failed to serialize object: ${o.getClass.getName}", e);
+    }
   }
 }
 

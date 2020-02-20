@@ -21,8 +21,7 @@ class ByteBufLikeEx[T](src: T, buf: ByteBufLike) {
     val arr = new Array[Byte](len)
     buf.readBytes(arr)
 
-    val ois = new ObjectInputStream(new ByteArrayInputStream(arr))
-    ois.readObject().asInstanceOf[X]
+    StreamUtils.deserializeObject(arr).asInstanceOf[X]
   }
 
   //[length][...string...]
@@ -36,15 +35,9 @@ class ByteBufLikeEx[T](src: T, buf: ByteBufLike) {
 
   //[length][...object serlialization...]
   def writeObject(o: Any): T = {
-    val baos = new ByteArrayOutputStream();
-
-    val oos = new ObjectOutputStream(baos)
-    oos.writeObject(o)
-    oos.close()
-    val bytes = baos.toByteArray
+    val bytes = StreamUtils.serializeObject(o)
     buf.writeInt(bytes.length)
     buf.writeBytes(bytes)
-
     src
   }
 }

@@ -6,18 +6,23 @@ package cn.regionfs.util
 object Profiler extends Logging {
   var enableTiming = false;
 
-  def timing[T](enabled: Boolean = true)(runnable: => T): T = if (enableTiming & enabled) {
+  def timing[T](enabled: Boolean = true, repeat: Int = 1)(runnable: => T): T = if (enableTiming & enabled) {
     val t1 = System.nanoTime()
-    val result = runnable;
+    var result: T = null.asInstanceOf[T];
+    for (i <- 1 to repeat) {
+      result = runnable
+    }
+
     val t2 = System.nanoTime()
 
     println(new Exception().getStackTrace()(1).toString)
-    val elapsed = t2 - t1;
+
+    val elapsed = (t2 - t1) / repeat;
     if (elapsed > 1000000) {
-      println(s"time: ${(t2 - t1) / 1000000}ms")
+      println(s"time: ${elapsed / 1000000}ms")
     }
     else {
-      println(s"time: ${(t2 - t1) / 1000}us")
+      println(s"time: ${elapsed / 1000}us")
     }
 
     result

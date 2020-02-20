@@ -216,7 +216,7 @@ case class FsNodeClient(rpcEnv: RpcEnv, val remoteAddress: NodeAddress) extends
 
   def readFile[T](fileId: FileId): InputStream = {
     StreamUtils.
-      of(askStream[ReadFileResponseDetail](ReadFileRequest(fileId.regionId, fileId.localId), 1).
+      iterator2Stream(askStream[ReadFileResponseDetail](ReadFileRequest(fileId.regionId, fileId.localId), 1).
         flatMap(_.content.iterator))
   }
 }

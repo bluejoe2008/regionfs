@@ -73,7 +73,7 @@ object MyStreamServer {
             def writeNextChunk(buf: ByteBuf) {
               val written =
                 timing(false) {
-                  buf.writeBytes(fis, 1024 * 1024)
+                  buf.writeBytes(fis, 1024 * 1024 * 10)
                 }
 
               count += written
@@ -132,7 +132,7 @@ class MyStreamRpcTest {
     Await.result(client.ask[SayHelloResponse](SayHelloRequest("hello")), Duration.Inf)
 
     val results = timing(true, 10) {
-      client.getChunkedStream(GetManyResults(100, 10, "hello"))
+      client.getChunkedStream[String](GetManyResults(100, 10, "hello"))
     }.toArray
 
     Assert.assertEquals(results(0), "hello")

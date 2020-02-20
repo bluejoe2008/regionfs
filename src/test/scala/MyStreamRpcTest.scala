@@ -23,15 +23,7 @@ case class SayHelloResponse(str: String) {
 
 }
 
-case class GetLargeBuffer(len: Int) {
-
-}
-
 case class ReadFile(path: String) {
-
-}
-
-case class GetSizedStream(len: Int) {
 
 }
 
@@ -48,6 +40,35 @@ object MyStreamServer {
 
     override def receiveBuffer(request: ByteBuffer, ctx: ReceiveContext): Unit = {
       ctx.reply(request.remaining())
+    }
+
+    override def openChunkedStream(request: Any): ChunkedStream[_] = {
+      request match {
+        case ReadFile(path) =>
+          new ChunkedStream[Byte]() {
+            val fis = new FileInputStream(new File(path))
+            val length = new File(path).length()
+            var count = 0;
+
+            override def hasNext(): Boolean = {
+              count < length
+            }
+
+            override def nextChunk(): Iterable[Byte] = {
+              val bs = new Array[Byte](10240)
+              val read = fis.read(bs, 0, 10240)
+              count += read
+              if (read < 10240)
+                bs.slice(0, read)
+              else
+                bs
+            }
+
+            override def close(): Unit = {
+              fis.close()
+            }
+          }
+      }
     }
 
     override def openStream(request: Any): ManagedBuffer = {
@@ -104,22 +125,39 @@ class MyStreamRpcTest {
       }
     }
 
-    for (size <- Array(999, 9999, 99999, 999999, 9999999)) {
-      println(s"test fetching stream: size=$size")
-      timing(true, 10) {
-        IOUtils.toByteArray(client.getInputStream(ReadFile(s"./testdata/inputs/$size")))
-      }
-    }
-
     Assert.assertArrayEquals(
       IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/999"))),
       IOUtils.toByteArray(client.getInputStream(ReadFile("./testdata/inputs/999")))
     );
 
     Assert.assertArrayEquals(
+      IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/999"))),
+      IOUtils.toByteArray(client.getChunkedInputStream(ReadFile("./testdata/inputs/999")))
+    );
+
+    Assert.assertArrayEquals(
       IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/9999999"))),
       IOUtils.toByteArray(client.getInputStream(ReadFile("./testdata/inputs/9999999")))
     );
+
+    Assert.assertArrayEquals(
+      IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/9999999"))),
+      IOUtils.toByteArray(client.getChunkedInputStream(ReadFile("./testdata/inputs/9999999")))
+    );
+
+    for (size <- Array(999, 9999, 99999, 999999, 9999999)) {
+      println(s"getInputStream(): size=$size")
+      timing(true, 10) {
+        IOUtils.toByteArray(client.getInputStream(ReadFile(s"./testdata/inputs/$size")))
+      }
+    }
+
+    for (size <- Array(999, 9999, 99999, 999999, 9999999)) {
+      println(s"getChunkedInputStream(): size=$size")
+      timing(true, 10) {
+        IOUtils.toByteArray(client.getChunkedInputStream(ReadFile(s"./testdata/inputs/$size")))
+      }
+    }
 
     import scala.concurrent.ExecutionContext.Implicits.global
 

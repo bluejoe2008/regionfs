@@ -316,7 +316,7 @@ class StreamingClient(client: TransportClient) extends Logging with StreamingCon
         res = ChunkResponse[T](buf.getLong, buf.getInt, buf.get() != 0, consumeResponse(buf));
       }
       catch {
-        case e:Throwable =>
+        case e: Throwable =>
           err = e;
       }
 
@@ -377,6 +377,11 @@ class StreamingClient(client: TransportClient) extends Logging with StreamingCon
       buf.get() != 0,
       consumeResponse(buf)
     )
+  }
+
+  def getChunkedStream[T](request: Any)(implicit m: Manifest[T]): Stream[T] = {
+    val stream = _getChunkedStream(request, _.readObject().asInstanceOf[Iterable[T]])
+    stream.flatMap(_.toIterable)
   }
 
   def _getChunkedStream[T](request: Any, consumeResponse: (ByteBuffer) => T)(implicit m: Manifest[T]): Stream[T] = {

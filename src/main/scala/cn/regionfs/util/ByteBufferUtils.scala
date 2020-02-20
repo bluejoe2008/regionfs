@@ -15,7 +15,7 @@ class ByteBufLikeEx[T](src: T, buf: ByteBufLike) {
     new String(arr, "utf-8")
   }
 
-  def readObject[X]()(implicit m: Manifest[X]): X = {
+  def readObject[X](): X = {
     val len = buf.readInt;
     val arr = new Array[Byte](len)
     buf.readBytes(arr)

@@ -5,7 +5,7 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.{CRC32, CheckedInputStream}
 
 import cn.regionfs.util.Logging
-import cn.regionfs.{GlobalConfig, Constants, FileId}
+import cn.regionfs.{Constants, FileId, GlobalConfig}
 
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
@@ -90,7 +90,7 @@ class FreeIdFile(conf: RegionConfig) {
           ids += dis.readLong()
         }
         catch {
-          case _ => break
+          case _: Throwable => break
         }
       }
     }

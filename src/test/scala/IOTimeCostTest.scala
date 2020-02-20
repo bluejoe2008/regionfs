@@ -1,8 +1,8 @@
 import java.io._
 import java.nio.ByteBuffer
 
-import cn.regionfs.util.Profiler
 import cn.regionfs.util.Profiler._
+import cn.regionfs.util.{Profiler, StreamUtils}
 import org.apache.commons.io.IOUtils
 import org.junit.Test
 
@@ -11,6 +11,19 @@ import org.junit.Test
   */
 class IOTimeCostTest {
   Profiler.enableTiming = true
+
+  @Test
+  def testSerialize(): Unit = {
+    val bytes = new Array[Byte](1024 * 1024);
+    timing(true) {
+      bytes.toArray
+    }
+    val bs2 = timing(true, 10) {
+      StreamUtils.serializeObject(bytes)
+    }
+
+    println(bs2.length)
+  }
 
   @Test
   def testByteBuffer(): Unit = {

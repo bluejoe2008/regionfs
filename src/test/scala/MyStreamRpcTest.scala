@@ -27,6 +27,10 @@ case class ReadFile(path: String) {
 
 }
 
+case class GetManyResults(times: Int, chunkSize: Int, msg: String) {
+
+}
+
 object MyStreamServer {
   val server = StreamingServer.create("test", new StreamingRpcHandler() {
 
@@ -43,6 +47,19 @@ object MyStreamServer {
 
     override def openChunkedStream(request: Any): ChunkedStream = {
       request match {
+        case GetManyResults(times, chunkSize, msg) =>
+          var count = 0;
+          new ChunkedMessageStream[String]() {
+            override def hasNext(): Boolean = count < times
+
+            override def nextChunk(): Iterable[String] = {
+              count += 1
+              (1 to chunkSize).map(_ => msg)
+            }
+
+            override def close(): Unit = {}
+          }
+
         case ReadFile(path) =>
           new ChunkedStream() {
             val fis = new FileInputStream(new File(path))
@@ -108,6 +125,19 @@ class MyStreamRpcTest {
     }
 
     Assert.assertEquals(new File("./testdata/inputs/9999999").length(), res)
+  }
+
+  @Test
+  def testGetChunkedTStream(): Unit = {
+    Await.result(client.ask[SayHelloResponse](SayHelloRequest("hello")), Duration.Inf)
+
+    val results = timing(true, 10) {
+      client.getChunkedStream(GetManyResults(100, 10, "hello"))
+    }.toArray
+
+    Assert.assertEquals(results(0), "hello")
+    Assert.assertEquals(results(100 * 10 - 1), "hello")
+    Assert.assertEquals(100 * 10, results.length)
   }
 
   @Test

@@ -15,12 +15,12 @@ class ByteBufLikeEx[T](src: T, buf: ByteBufLike) {
     new String(arr, "utf-8")
   }
 
-  def readObject[X](): X = {
+  def readObject(): Any = {
     val len = buf.readInt;
     val arr = new Array[Byte](len)
     buf.readBytes(arr)
 
-    StreamUtils.deserializeObject(arr).asInstanceOf[X]
+    StreamUtils.deserializeObject(arr)
   }
 
   //[length][...string...]

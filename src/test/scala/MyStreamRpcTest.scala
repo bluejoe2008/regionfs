@@ -1,5 +1,4 @@
 import java.io.{File, FileInputStream}
-import java.nio.ByteBuffer
 
 import cn.regionfs.network._
 import cn.regionfs.util.Profiler
@@ -23,77 +22,79 @@ case class SayHelloResponse(str: String) {
 
 }
 
-case class ReadFile(path: String) {
+case class ReadFileRequest(path: String) {
 
 }
 
-case class GetManyResults(times: Int, chunkSize: Int, msg: String) {
+case class PutFileRequest(totalLength: Int) {
+
+}
+
+case class PutFileResponse(written: Int) {
+
+}
+
+case class GetManyResultsRequest(times: Int, chunkSize: Int, msg: String) {
 
 }
 
 object MyStreamServer {
   val server = StreamingServer.create("test", new StreamingRpcHandler() {
 
-    override def receive(request: Any, ctx: ReceiveContext): Unit = {
-      request match {
-        case SayHelloRequest(msg) =>
-          ctx.reply(SayHelloResponse(msg.toUpperCase()))
-      }
+    override def receive(ctx: ReceiveContext): PartialFunction[Any, Unit] = {
+      case SayHelloRequest(msg) =>
+        ctx.reply(SayHelloResponse(msg.toUpperCase()))
+
+      case PutFileRequest(totalLength) =>
+        ctx.reply(PutFileResponse(ctx.extraInput.readableBytes()))
     }
 
-    override def receiveBuffer(request: ByteBuffer, ctx: ReceiveContext): Unit = {
-      ctx.reply(request.remaining())
-    }
-
-    override def openChunkedStream(request: Any): ChunkedStream = {
-      request match {
-        case GetManyResults(times, chunkSize, msg) =>
+    override def openChunkedStream(): PartialFunction[Any, ChunkedStream] = {
+      case GetManyResultsRequest(times, chunkSize, msg) =>
+        new ChunkedMessageStream[String]() {
           var count = 0;
-          new ChunkedMessageStream[String]() {
-            override def hasNext(): Boolean = count < times
 
-            override def nextChunk(): Iterable[String] = {
-              count += 1
-              (1 to chunkSize).map(_ => msg)
-            }
+          override def hasNext(): Boolean = count < times
 
-            override def close(): Unit = {}
+          override def nextChunk(): Iterable[String] = {
+            count += 1
+            (1 to chunkSize).map(_ => msg)
           }
 
-        case ReadFile(path) =>
-          new ChunkedStream() {
-            val fis = new FileInputStream(new File(path))
-            val length = new File(path).length()
-            var count = 0;
+          override def close(): Unit = {}
+        }
 
-            override def hasNext(): Boolean = {
-              count < length
-            }
+      case ReadFileRequest(path) =>
+        new ChunkedStream() {
+          val fis = new FileInputStream(new File(path))
+          val length = new File(path).length()
+          var count = 0;
 
-            def writeNextChunk(buf: ByteBuf) {
-              val written =
-                timing(false) {
-                  buf.writeBytes(fis, 1024 * 1024 * 10)
-                }
-
-              count += written
-            }
-
-            override def close(): Unit = {
-              fis.close()
-            }
+          override def hasNext(): Boolean = {
+            count < length
           }
-      }
+
+          def nextChunk(buf: ByteBuf): Unit = {
+            val written =
+              timing(false) {
+                buf.writeBytes(fis, 1024 * 1024 * 10)
+              }
+
+            count += written
+          }
+
+          override def close(): Unit = {
+            fis.close()
+          }
+        }
     }
 
-    override def openStream(request: Any): ManagedBuffer = {
-      request match {
-        case ReadFile(path) =>
-          val fis = new FileInputStream(new File(path))
-          val buf = Unpooled.buffer()
-          buf.writeBytes(fis.getChannel, new File(path).length().toInt)
-          new NettyManagedBuffer(buf)
-      }
+    override def openStream(): PartialFunction[Any, ManagedBuffer] = {
+      case ReadFileRequest(path) =>
+        val fis = new FileInputStream(new File(path))
+        val buf = Unpooled.buffer()
+        buf.writeBytes(fis.getChannel, new File(path).length().toInt)
+        new NettyManagedBuffer(buf)
     }
   }, 1224)
 }
@@ -115,16 +116,16 @@ class MyStreamRpcTest {
   }
 
   @Test
-  def testPutFiles(): Unit = {
+  def testPutFile(): Unit = {
     val res = timing(true, 10) {
-      Await.result(client.send[Int]((buf: ByteBuf) => {
+      Await.result(client.ask[PutFileResponse](PutFileRequest(new File("./testdata/inputs/9999999").length().toInt), (buf: ByteBuf) => {
         val fos = new FileInputStream(new File("./testdata/inputs/9999999"));
         buf.writeBytes(fos.getChannel, new File("./testdata/inputs/9999999").length().toInt)
         fos.close()
       }), Duration.Inf)
     }
 
-    Assert.assertEquals(new File("./testdata/inputs/9999999").length(), res)
+    Assert.assertEquals(new File("./testdata/inputs/9999999").length(), res.written)
   }
 
   @Test
@@ -132,7 +133,7 @@ class MyStreamRpcTest {
     Await.result(client.ask[SayHelloResponse](SayHelloRequest("hello")), Duration.Inf)
 
     val results = timing(true, 10) {
-      client.getChunkedStream[String](GetManyResults(100, 10, "hello"))
+      client.getChunkedStream[String](GetManyResultsRequest(100, 10, "hello"))
     }.toArray
 
     Assert.assertEquals(results(0), "hello")
@@ -146,7 +147,7 @@ class MyStreamRpcTest {
     Await.result(client.ask[SayHelloResponse](SayHelloRequest("hello")), Duration.Inf)
 
     timing(true, 10) {
-      val is = client.getInputStream(ReadFile("./testdata/inputs/9999999"));
+      val is = client.getInputStream(ReadFileRequest("./testdata/inputs/9999999"));
       var read = 0;
       while (read != -1) {
         read = is.read()
@@ -155,34 +156,34 @@ class MyStreamRpcTest {
 
     Assert.assertArrayEquals(
       IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/999"))),
-      IOUtils.toByteArray(client.getInputStream(ReadFile("./testdata/inputs/999")))
+      IOUtils.toByteArray(client.getInputStream(ReadFileRequest("./testdata/inputs/999")))
     );
 
     Assert.assertArrayEquals(
       IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/999"))),
-      IOUtils.toByteArray(client.getChunkedInputStream(ReadFile("./testdata/inputs/999")))
+      IOUtils.toByteArray(client.getChunkedInputStream(ReadFileRequest("./testdata/inputs/999")))
     );
 
     Assert.assertArrayEquals(
       IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/9999999"))),
-      IOUtils.toByteArray(client.getInputStream(ReadFile("./testdata/inputs/9999999")))
+      IOUtils.toByteArray(client.getInputStream(ReadFileRequest("./testdata/inputs/9999999")))
     );
 
     Assert.assertArrayEquals(
       IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/9999999"))),
-      IOUtils.toByteArray(client.getChunkedInputStream(ReadFile("./testdata/inputs/9999999")))
+      IOUtils.toByteArray(client.getChunkedInputStream(ReadFileRequest("./testdata/inputs/9999999")))
     );
 
     for (size <- Array(999, 9999, 99999, 999999, 9999999)) {
       println("=================================")
       println(s"getInputStream(): size=$size")
       timing(true, 10) {
-        IOUtils.toByteArray(client.getInputStream(ReadFile(s"./testdata/inputs/$size")))
+        IOUtils.toByteArray(client.getInputStream(ReadFileRequest(s"./testdata/inputs/$size")))
       }
 
       println(s"getChunkedInputStream(): size=$size")
       timing(true, 10) {
-        IOUtils.toByteArray(client.getChunkedInputStream(ReadFile(s"./testdata/inputs/$size")))
+        IOUtils.toByteArray(client.getChunkedInputStream(ReadFileRequest(s"./testdata/inputs/$size")))
       }
       println("=================================")
     }
@@ -193,7 +194,7 @@ class MyStreamRpcTest {
     timing(true) {
       val futures = (1 to 5).map { _ =>
         Future {
-          IOUtils.toByteArray(client.getInputStream(ReadFile("./testdata/inputs/9999999")))
+          IOUtils.toByteArray(client.getInputStream(ReadFileRequest("./testdata/inputs/9999999")))
         }
       }
 

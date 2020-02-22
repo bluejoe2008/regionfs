@@ -1,10 +1,11 @@
 import java.io._
 
 import cn.regionfs.GlobalConfig
-import cn.regionfs.server.{RegionConfig, Region}
+import cn.regionfs.server.{Region, RegionConfig}
+import cn.regionfs.util.Profiler._
+import io.netty.buffer.{ByteBufInputStream, Unpooled}
 import org.apache.commons.io.IOUtils
 import org.junit.{Assert, Before, Test}
-import cn.regionfs.util.Profiler._
 
 /**
   * Created by bluejoe on 2020/2/11.
@@ -22,28 +23,19 @@ class LocalRegionFileIOTest extends FileTestBase {
       RegionConfig(new File("./testdata/nodes/node1/131072"),
         new GlobalConfig(1, -1, false)));
 
-    val id = timing(true) {
+    val id = timing(true, 10) {
       region.write(() => {
         new FileInputStream(new File("./testdata/inputs/9999999"))
       })
     }
 
-    val baos = new ByteArrayOutputStream()
-    val out = null;
-    /*
-    new BytePageOutput() {
-      override def write(bytes: Array[Byte], offset: Int, length: Int): Unit = {
-        baos.write(bytes, offset, length)
-      }
-
-      override def writeEOF(): Unit = {
-
-      }
+    val bytes = timing(true, 10) {
+      val buf = Unpooled.buffer(1024);
+      region.writeTo(id, buf)
+      IOUtils.toByteArray(new ByteBufInputStream(buf))
     }
-    */
-
-    val bytes = region.read(id, out)
-    Assert.assertArrayEquals(baos.toByteArray,
-      IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/9999999"))));
+    Assert.assertArrayEquals(
+      IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/9999999"))),
+      bytes);
   }
 }

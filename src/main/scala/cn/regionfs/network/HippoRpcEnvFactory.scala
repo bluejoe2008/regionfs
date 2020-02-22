@@ -15,11 +15,12 @@ import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc._
 import net.neoremind.kraps.serializer.{JavaSerializer, JavaSerializerInstance}
 import net.neoremind.kraps.util.{ThreadUtils, Utils}
+import org.apache.spark.network.TransportContext
 import org.apache.spark.network.buffer.{ManagedBuffer, NettyManagedBuffer}
 import org.apache.spark.network.client.{RpcResponseCallback, TransportClient}
 import org.apache.spark.network.server.{RpcHandler, StreamManager}
 import org.slf4j.LoggerFactory
-
+import cn.regionfs.util.ByteBufferUtils._
 import scala.collection.mutable
 import scala.concurrent.Future
 import scala.util.control.NonFatal
@@ -28,7 +29,7 @@ import scala.util.control.NonFatal
   * Created by bluejoe on 2020/2/21.
   */
 object HippoRpcEnvFactory extends RpcEnvFactory {
-  override def create(config: RpcEnvConfig): NettyRpcEnv = {
+  override def create(config: RpcEnvConfig): HippoRpcEnv = {
     val conf = config.conf
 
     // Use JavaSerializerInstance in multiple threads is safe. However, if we plan to support
@@ -56,10 +57,11 @@ object HippoRpcEnvFactory extends RpcEnvFactory {
   }
 }
 
-class HippoEndpointRef(conf: RpcConf, ref: NettyRpcEndpointRef) extends RpcEndpointRef(conf) {
+class HippoEndpointRef(ref: NettyRpcEndpointRef, rpcEnv: HippoRpcEnv, conf: RpcConf) extends RpcEndpointRef(conf) {
   override def address: RpcAddress = ref.address
 
-  val streamingClient = new HippoClient(ref.client)
+  //TODO: client pool?
+  val streamingClient = new HippoClient(rpcEnv.createClient(ref.address))
 
   override def ask[T](message: Any, timeout: RpcTimeout)(implicit evidence$1: ClassManifest[T]): Future[T] =
     ref.ask(message, timeout)(evidence$1)
@@ -78,16 +80,11 @@ class HippoEndpointRef(conf: RpcConf, ref: NettyRpcEndpointRef) extends RpcEndpo
   def getChunkedInputStream(request: Any): InputStream = streamingClient.getChunkedInputStream(request)
 }
 
-class HippoRpcEnv(conf: RpcConf,
-                  javaSerializerInstance: JavaSerializerInstance,
-                  host: String)
+class HippoRpcEnv(conf: RpcConf, javaSerializerInstance: JavaSerializerInstance, host: String)
   extends NettyRpcEnv(conf, javaSerializerInstance, host) {
 
-  val hippoRpcHandler = new HippoRpcHandler(
-    this._get("transportContext.dispatcher").asInstanceOf[Dispatcher],
-    this);
-
-  this._set("transportContext.rpcHandler", hippoRpcHandler)
+  val hippoRpcHandler = new HippoRpcHandler(this._get("dispatcher").asInstanceOf[Dispatcher], this)
+  this._set("transportContext", new TransportContext(transportConf, hippoRpcHandler))
 
   def setStreamManger(streamManager: HippoStreamManager): Unit = {
     hippoRpcHandler.streamManagerAdapter.streamManager = streamManager;
@@ -95,8 +92,8 @@ class HippoRpcEnv(conf: RpcConf,
 
   override def asyncSetupEndpointRefByURI(uri: String): Future[HippoEndpointRef] = {
     super.asyncSetupEndpointRefByURI(uri).map(x =>
-      new HippoEndpointRef(conf,
-        x.asInstanceOf[NettyRpcEndpointRef]))(ThreadUtils.sameThread)
+      new HippoEndpointRef(
+        x.asInstanceOf[NettyRpcEndpointRef], this, conf))(ThreadUtils.sameThread)
   }
 
   override def setupEndpointRefByURI(uri: String): HippoEndpointRef = {
@@ -162,14 +159,13 @@ class HippoStreamManagerAdapter(var streamManager: HippoStreamManager) extends S
   def handleOpenStreamRequest(streamRequest: Any, callback: RpcResponseCallback) {
     val streamId: Long = streamIdGen.getAndIncrement();
     val stream = streamManager.openChunkedStream()(streamRequest)
-
     val output = Unpooled.buffer(1024);
-    _writeNextChunk(output, streamId, 0, stream)
-    callback.onSuccess(output.nioBuffer())
-
+    output.writeObject(OpenStreamResponse(streamId, stream.hasNext()));
     if (stream.hasNext()) {
       streams(streamId) = stream
     }
+
+    callback.onSuccess(output.nioBuffer())
   }
 
   def handleCloseStreamRequest(streamId: Long, callback: RpcResponseCallback): Unit = {
@@ -233,7 +229,6 @@ class HippoRpcHandler(dispatcher: Dispatcher, nettyEnv: NettyRpcEnv)
 
       case _ => mo
     }
-
   }
 
   override def exceptionCaught(cause: Throwable, client: TransportClient): Unit = {

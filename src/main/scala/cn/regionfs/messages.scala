@@ -15,7 +15,7 @@ case class ListFileRequest() {
 
 }
 
-case class ListFileResponseDetail(result: (FileId, Long)) extends StreamingResult {
+case class ListFileResponseDetail(result: (FileId, Long)) {
 
 }
 
@@ -51,10 +51,6 @@ case class ReadFileRequest(regionId: Long, localId: Long) {
 
 }
 
-case class ReadFileResponseDetail(content: Array[Byte]) extends StreamingResult {
-
-}
-
 case class GetNodeStatRequest() {
 
 }
@@ -62,22 +58,3 @@ case class GetNodeStatRequest() {
 case class GetNodeStatResponse(stat: NodeStat) {
 
 }
-
-//-------------streaming-------------
-case class StartStreamRequest(request: AnyRef, pageSize: Int) {
-
-}
-
-case class StreamResponse(txId: Long, page: Array[_], hasMore: Boolean) {
-
-}
-
-case class GetNextPageRequest(txId: Long) {
-
-}
-
-trait StreamingResult {
-
-}
-
-//-------------streaming-------------

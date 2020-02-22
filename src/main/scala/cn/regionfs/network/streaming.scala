@@ -3,8 +3,8 @@ package cn.regionfs.network
 import java.io.InputStream
 import java.nio.ByteBuffer
 import java.util
+import java.util.concurrent._
 import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.{ArrayBlockingQueue, CountDownLatch}
 
 import cn.regionfs.util.ByteBufferUtils._
 import cn.regionfs.util.Profiler._
@@ -34,6 +34,10 @@ case class OpenStreamRequest(streamRequest: Any) {
 
 }
 
+case class OpenStreamResponse(streamId: Long, hasMoreChunks: Boolean) {
+
+}
+
 case class CloseStreamRequest(streamId: Long) {
 
 }
@@ -56,6 +60,45 @@ trait ChunkedMessageStream[T] extends ChunkedStream {
   }
 
   override def close(): Unit
+}
+
+object BufferedMessageStream {
+  val executor = Executors.newSingleThreadExecutor();
+
+  def create[T](bufferSize: Int, producer: (OutputBuffer[T]) => Unit) =
+    new BufferedMessageStream[T](executor, bufferSize, producer);
+}
+
+trait OutputBuffer[T] {
+  def push(value: T);
+}
+
+class BufferedMessageStream[T](executor: ExecutorService, bufferSize: Int, producer: (OutputBuffer[T]) => Unit) extends ChunkedMessageStream[T] {
+  val buffer = new ArrayBlockingQueue[T](bufferSize);
+
+  val future = executor.submit(new Runnable {
+    override def run(): Unit = producer(new OutputBuffer[T]() {
+      def push(value: T) = buffer.put(value)
+    })
+  })
+
+  override def hasNext(): Boolean = !future.isDone
+
+  def nextChunk(): Iterable[T] = {
+    if (!hasNext) {
+      Iterable.empty[T]
+    }
+    else {
+      val first = buffer.take()
+      val list = new java.util.ArrayList[T]();
+      buffer.drainTo(list)
+      list.add(0, first)
+
+      JavaConversions.collectionAsScalaIterable(list)
+    }
+  }
+
+  override def close(): Unit = future.cancel(true)
 }
 
 trait StreamingRpcHandler {
@@ -111,9 +154,7 @@ object HippoServer extends Logging {
               val streamId: Long = streamIdGen.getAndIncrement();
               val stream = srh.openChunkedStream()(streamRequest)
 
-              ctx.replyBuffer((buf: ByteBuf) => {
-                _writeNextChunk(buf, streamId, 0, stream)
-              })
+              ctx.reply(OpenStreamResponse(streamId, stream.hasNext()))
 
               if (stream.hasNext()) {
                 streams(streamId) = stream
@@ -231,7 +272,7 @@ class HippoClient(client: TransportClient) extends HippoStreamingClient with Hip
       StreamUtils.serializeObject(request)))
   }
 
-  def getChunkedInputStream(request: Any): InputStream = {
+  override def getChunkedInputStream(request: Any): InputStream = {
     //12ms
     val iter: Iterator[InputStream] = timing(false) {
       _getChunkedStream[InputStream](request, (buf: ByteBuffer) =>
@@ -251,7 +292,7 @@ class HippoClient(client: TransportClient) extends HippoStreamingClient with Hip
     }
   }
 
-  def getChunkedStream[T](request: Any)(implicit m: Manifest[T]): Stream[T] = {
+  override def getChunkedStream[T](request: Any)(implicit m: Manifest[T]): Stream[T] = {
     val stream = _getChunkedStream(request, _.readObject().asInstanceOf[Iterable[T]])
     stream.flatMap(_.toIterable)
   }
@@ -327,21 +368,15 @@ class HippoClient(client: TransportClient) extends HippoStreamingClient with Hip
   private def _getChunkedStream[T](request: Any, consumeResponse: (ByteBuffer) => T)(implicit m: Manifest[T]): Stream[T] = {
     //send start stream request
     //2ms
-    val (ChunkResponse(streamId, _, hasMoreChunks, value)) =
-      Await.result(_sendAndReceive[ChunkResponse[T]](
-        (buf: ByteBuf) => {
-          buf.writeObject(OpenStreamRequest(request))
-        }, (buf: ByteBuffer) => {
-          _readChunk[T](buf, consumeResponse)
-        }), Duration.Inf)
+    val OpenStreamResponse(streamId, hasMoreChunks) =
+      Await.result(ask[OpenStreamResponse](OpenStreamRequest(request)), Duration.Inf);
 
-    Stream.cons(value,
-      if (hasMoreChunks) {
-        _buildStream(streamId, 1, consumeResponse)
-      }
-      else {
-        Stream.empty
-      })
+    if (!hasMoreChunks) {
+      Stream.empty
+    }
+    else {
+      _buildStream(streamId, 0, consumeResponse)
+    }
   }
 
   private def _readChunk[T](buf: ByteBuffer, consumeResponse: (ByteBuffer) => T): ChunkResponse[T] = {
@@ -356,12 +391,12 @@ class HippoClient(client: TransportClient) extends HippoStreamingClient with Hip
       logger.trace(s"build stream: streamId=$streamId, chunkIndex=$chunkIndex")
 
     val callback = new MyChunkReceivedCallback[T](consumeResponse);
-    val ChunkResponse(_, _, hasMoreChunks, t) = timing(false) {
+    val ChunkResponse(_, _, hasMoreChunks, values) = timing(false) {
       client.fetchChunk(streamId, chunkIndex, callback)
       callback.await()
     }
 
-    Stream.cons(t,
+    Stream.cons(values,
       if (hasMoreChunks) {
         _buildStream(streamId, chunkIndex + 1, consumeResponse)
       }

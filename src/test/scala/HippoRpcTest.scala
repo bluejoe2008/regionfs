@@ -3,105 +3,16 @@ import java.io.{File, FileInputStream}
 import cn.regionfs.network._
 import cn.regionfs.util.Profiler
 import cn.regionfs.util.Profiler._
-import io.netty.buffer.{ByteBuf, Unpooled}
+import io.netty.buffer.ByteBuf
 import org.apache.commons.io.IOUtils
-import org.apache.spark.network.buffer.{ManagedBuffer, NettyManagedBuffer}
 import org.junit.{Assert, Test}
 
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, Future}
 
-/**
-  * Created by bluejoe on 2020/2/18.
-  */
-case class SayHelloRequest(str: String) {
-
-}
-
-case class SayHelloResponse(str: String) {
-
-}
-
-case class ReadFileRequest(path: String) {
-
-}
-
-case class PutFileRequest(totalLength: Int) {
-
-}
-
-case class PutFileResponse(written: Int) {
-
-}
-
-case class GetManyResultsRequest(times: Int, chunkSize: Int, msg: String) {
-
-}
-
-object MyStreamServer {
-  val server = HippoServer.create("test", new StreamingRpcHandler() {
-
-    override def receive(ctx: ReceiveContext): PartialFunction[Any, Unit] = {
-      case SayHelloRequest(msg) =>
-        ctx.reply(SayHelloResponse(msg.toUpperCase()))
-
-      case PutFileRequest(totalLength) =>
-        ctx.reply(PutFileResponse(ctx.extraInput.readableBytes()))
-    }
-
-    override def openChunkedStream(): PartialFunction[Any, ChunkedStream] = {
-      case GetManyResultsRequest(times, chunkSize, msg) =>
-        new ChunkedMessageStream[String]() {
-          var count = 0;
-
-          override def hasNext(): Boolean = count < times
-
-          override def nextChunk(): Iterable[String] = {
-            count += 1
-            (1 to chunkSize).map(_ => msg)
-          }
-
-          override def close(): Unit = {}
-        }
-
-      case ReadFileRequest(path) =>
-        new ChunkedStream() {
-          val fis = new FileInputStream(new File(path))
-          val length = new File(path).length()
-          var count = 0;
-
-          override def hasNext(): Boolean = {
-            count < length
-          }
-
-          def nextChunk(buf: ByteBuf): Unit = {
-            val written =
-              timing(false) {
-                buf.writeBytes(fis, 1024 * 1024 * 10)
-              }
-
-            count += written
-          }
-
-          override def close(): Unit = {
-            fis.close()
-          }
-        }
-    }
-
-    override def openStream(): PartialFunction[Any, ManagedBuffer] = {
-      case ReadFileRequest(path) =>
-        val fis = new FileInputStream(new File(path))
-        val buf = Unpooled.buffer()
-        buf.writeBytes(fis.getChannel, new File(path).length().toInt)
-        new NettyManagedBuffer(buf)
-    }
-  }, 1224)
-}
-
-class MyStreamRpcTest {
+class HippoRpcTest {
   Profiler.enableTiming = true
-  val server = MyStreamServer.server
+  val server = HippoRpcServerForTest.server
   val client = HippoClient.create("test", "localhost", 1224)
 
   @Test
@@ -139,6 +50,14 @@ class MyStreamRpcTest {
     Assert.assertEquals(results(0), "hello")
     Assert.assertEquals(results(100 * 10 - 1), "hello")
     Assert.assertEquals(100 * 10, results.length)
+
+    val results2 = timing(true) {
+      client.getChunkedStream[String](GetBufferedResultsRequest(100)).toArray
+    }
+
+    Assert.assertEquals(results2(0), "hello-1")
+    Assert.assertEquals(results2(99), "hello-100")
+    Assert.assertEquals(100, results2.length)
   }
 
   @Test
@@ -176,6 +95,7 @@ class MyStreamRpcTest {
 
     for (size <- Array(999, 9999, 99999, 999999, 9999999)) {
       println("=================================")
+
       println(s"getInputStream(): size=$size")
       timing(true, 10) {
         IOUtils.toByteArray(client.getInputStream(ReadFileRequest(s"./testdata/inputs/$size")))
@@ -185,6 +105,7 @@ class MyStreamRpcTest {
       timing(true, 10) {
         IOUtils.toByteArray(client.getChunkedInputStream(ReadFileRequest(s"./testdata/inputs/$size")))
       }
+
       println("=================================")
     }
 

@@ -2,6 +2,9 @@ package cn.regionfs
 
 import cn.regionfs.util.IteratorUtils
 
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
+
 /**
   * Created by bluejoe on 2019/8/31.
   */
@@ -9,8 +12,8 @@ import cn.regionfs.util.IteratorUtils
 class FsAdmin(zks: String) extends FsClient(zks: String) {
   def stat(): Stat = {
     Stat(
-      nodes.mapNodeClients.values.map(
-        _.askSync[GetNodeStatResponse](GetNodeStatRequest()).stat
+      nodes.mapNodeClients.values.map(x =>
+        Await.result(x.endPointRef.ask[GetNodeStatResponse](GetNodeStatRequest()), Duration.Inf).stat
       ).toList
     )
   }
@@ -20,7 +23,7 @@ class FsAdmin(zks: String) extends FsClient(zks: String) {
     IteratorUtils.concatIterators { (index) =>
       if (iter.hasNext) {
         //get 10 files each page
-        Some(iter.next().askStream[ListFileResponseDetail](ListFileRequest(), 10).map(_.result))
+        Some(iter.next().endPointRef.getChunkedStream[ListFileResponseDetail](ListFileRequest()).map(_.result).iterator)
       }
       else {
         None

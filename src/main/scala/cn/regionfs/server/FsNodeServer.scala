@@ -4,10 +4,13 @@ import java.io._
 import java.util.Random
 
 import cn.regionfs._
+import cn.regionfs.network.{BufferedMessageStream, ChunkedStream}
 import cn.regionfs.util.{ConfigurationEx, Logging}
+import io.netty.buffer.Unpooled
 import net.neoremind.kraps.RpcConf
-import net.neoremind.kraps.rpc.netty.NettyRpcEnvFactory
-import net.neoremind.kraps.rpc.{RpcCallContext, RpcEndpoint, RpcEnvServerConfig, RpcEnv}
+import net.neoremind.kraps.rpc.netty.{HippoRpcEnv, HippoRpcEnvFactory, HippoStreamManager}
+import net.neoremind.kraps.rpc.{RpcCallContext, RpcEndpoint, RpcEnv, RpcEnvServerConfig}
+import org.apache.spark.network.buffer.{ManagedBuffer, NettyManagedBuffer}
 import org.apache.zookeeper.ZooDefs.Ids
 import org.apache.zookeeper._
 
@@ -75,7 +78,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
     })
     val globalConfig = GlobalConfig.load(zk)
     val localRegionManager = new RegionManager(nodeId, storeDir, globalConfig)
-    var rpcEnv: RpcEnv = null
+    var rpcEnv: HippoRpcEnv = null
 
     //get neighbour nodes
     val neighbourNodes = new NodeWatcher(zk, !address.equals(_))
@@ -86,9 +89,10 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
     def start() {
       val config = RpcEnvServerConfig(new RpcConf(), "regionfs-server", host, port)
-      rpcEnv = NettyRpcEnvFactory.create(config)
+      rpcEnv = HippoRpcEnvFactory.create(config)
       val endpoint: RpcEndpoint = new FileRpcEndpoint(rpcEnv)
       rpcEnv.setupEndpoint("regionfs-service", endpoint)
+      rpcEnv.setStreamManger(new FileStreamManager())
       rpcEnv.awaitTermination()
     }
 
@@ -97,10 +101,31 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         rpcEnv.shutdown()
     }
 
+    class FileStreamManager extends HippoStreamManager {
+      override def openStream(): PartialFunction[Any, ManagedBuffer] = {
+        case ReadFileRequest(regionId: Long, localId: Long) => {
+          // get region
+          val region = localRegionManager.get(regionId)
+          val buf = Unpooled.buffer()
+          region.writeTo(localId, buf)
+          new NettyManagedBuffer(buf)
+        }
+      }
+
+      override def openChunkedStream(): PartialFunction[Any, ChunkedStream] = {
+        case ListFileRequest() =>
+          BufferedMessageStream.create[ListFileResponseDetail](1024, (buffer) => {
+            localRegionManager.regions.values.foreach { x =>
+              val it = x.listFiles()
+              it.foreach(x => buffer.push(ListFileResponseDetail(x)))
+            }
+          })
+      }
+    }
+
     class FileRpcEndpoint(override val rpcEnv: RpcEnv)
       extends RpcEndpoint with Logging {
       val queue = new FileTransmissionQueue()
-      val transactions = new RpcStreams();
       val rand = new Random();
 
       //NOTE: register only on started up
@@ -135,8 +160,8 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             )
 
           //hello, pls create a new region with id=regionId
-          thinNeighbourClient.askSync[CreateRegionResponse](CreateRegionRequest(regionId),
-            Duration.apply("30s"))
+          Await.result(thinNeighbourClient.endPointRef.ask[CreateRegionResponse](
+            CreateRegionRequest(regionId)), Duration.Inf)
         }
 
         //ok, now I register this region
@@ -187,7 +212,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
               val neighbours = getNeighboursWhoHasRegion(region.regionId)
               //ask neigbours
               val futures = neighbours.map(addr =>
-                neighbourNodes.clientOf(addr).ask[SendCompleteFileResponse](
+                neighbourNodes.clientOf(addr).endPointRef.ask[SendCompleteFileResponse](
                   SendCompleteFileRequest(Some(region.regionId), block, totalLength)))
 
               //wait all neigbours' replies
@@ -216,7 +241,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             //notify neighbours
             val neighbours = getNeighboursWhoHasRegion(region.regionId)
             val futures = neighbours.map(addr =>
-              addr -> neighbourNodes.clientOf(addr).ask[StartSendChunksResponse](
+              addr -> neighbourNodes.clientOf(addr).endPointRef.ask[StartSendChunksResponse](
                 StartSendChunksRequest(Some(region.regionId), totalLength)))
 
             //wait all neigbours' reply
@@ -238,74 +263,17 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
           //notify neighbours
           val ids = task.getNeighbourTransactionIds()
 
-          val futures = ids.map(x => neighbourNodes.clientOf(x._1).ask[SendChunkResponse](
+          val futures = ids.map(x => neighbourNodes.clientOf(x._1).endPointRef.ask[SendChunkResponse](
             SendChunkRequest(x._2, chunkBytes, offset, chunkLength, chunkIndex)))
 
           //TODO: sync()?
           futures.foreach(Await.result(_, Duration.Inf))
           context.reply(SendChunkResponse(opt.map(FileId.make(task.region.regionId, _)), chunkLength))
         }
-
-        //-----------
-        case StartStreamRequest(request: AnyRef, pageSize: Int) => {
-          val tx = transactions.create(streamingResultsProducer(request), pageSize)
-          val (results, hasMorePage) = tx.nextPage
-          context.reply(StreamResponse(tx.streamId, results.toArray, hasMorePage))
-        }
-
-        case GetNextPageRequest(txId: Long) => {
-          val tx = transactions.get(txId);
-          val (results, hasMorePage) = tx.nextPage
-          context.reply(StreamResponse(txId, results.toArray, hasMorePage))
-        }
-        //-----------
       }
 
       override def onStop(): Unit = {
         logger.info("stop endpoint")
-      }
-
-      private def streamingResultsProducer(request: AnyRef): (Output) => Unit = {
-        request match {
-          case ListFileRequest() => {
-            (out: Output) => {
-              localRegionManager.regions.values.foreach { x =>
-                val it = x.listFiles()
-                it.foreach(x => out.push(ListFileResponseDetail(x)))
-              }
-
-              out.pushEOF();
-            }
-          }
-
-          case ReadFileRequest(regionId: Long, localId: Long) => {
-            (out: Output) => {
-              // get region
-              val region = localRegionManager.get(regionId)
-
-              region.read(localId, new BytePageOutput {
-                var baos = new ByteArrayOutputStream();
-
-                override def write(bytes: Array[Byte], offset: Int, length: Int): Unit = {
-                  //FIXME: copy??? direct write??
-                  baos.write(bytes, offset, length)
-                  //is full
-                  if (baos.size() >= Constants.READ_CHUNK_SIZE) {
-                    out.push(ReadFileResponseDetail(baos.toByteArray));
-                    baos.reset()
-                  }
-                }
-
-                override def writeEOF(): Unit = {
-                  if (baos.size() > 0)
-                    out.push(ReadFileResponseDetail(baos.toByteArray));
-
-                  out.pushEOF();
-                }
-              });
-            }
-          }
-        }
       }
     }
 

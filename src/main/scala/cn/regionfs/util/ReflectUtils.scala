@@ -19,7 +19,7 @@
  */
 package cn.regionfs.util
 
-import java.lang.reflect.Field
+import java.lang.reflect.{Field, Modifier}
 
 /**
   * Created by bluejoe on 2018/7/5.
@@ -67,14 +67,19 @@ class ReflectedObject(o: AnyRef) {
   def _set(name: String, value: AnyRef): Unit = {
     try {
       var field: Field = null
-      var o2 = o;
+      var o2: Any = o;
+      var o1: Any = null
       for (fn <- name.split("\\.")) {
         field = _getField(o2.getClass, fn);
         field.setAccessible(true);
+        o1 = o2;
         o2 = field.get(o2);
       }
 
-      field.set(o2, value);
+      val modifiersField = classOf[Field].getDeclaredField("modifiers");
+      modifiersField.setAccessible(true);
+      modifiersField.setInt(field, field.getModifiers() & ~Modifier.FINAL);
+      field.set(o1, value);
     }
     catch {
       case e: NoSuchFieldException =>

@@ -1,8 +1,10 @@
 package cn.regionfs.util
 
+import java.io.InputStream
 import java.nio.ByteBuffer
 
-import io.netty.buffer.ByteBuf
+import io.netty.buffer.{ByteBuf, ByteBufInputStream}
+import net.neoremind.kraps.util.ByteBufferInputStream
 
 /**
   * Created by bluejoe on 2020/2/15.
@@ -16,11 +18,10 @@ class ByteBufLikeEx[T](src: T, buf: ByteBufLike) {
   }
 
   def readObject(): Any = {
-    val len = buf.readInt;
-    val arr = new Array[Byte](len)
-    buf.readBytes(arr)
-
-    StreamUtils.deserializeObject(arr)
+    val is = buf.createInputStream();
+    val o = StreamUtils.readObject(is)
+    is.close
+    o;
   }
 
   //[length][...string...]
@@ -28,7 +29,6 @@ class ByteBufLikeEx[T](src: T, buf: ByteBufLike) {
     val arr = s.getBytes("utf-8")
     buf.writeInt(arr.length)
     buf.writeBytes(arr)
-
     src
   }
 
@@ -36,7 +36,6 @@ class ByteBufLikeEx[T](src: T, buf: ByteBufLike) {
   def writeObject(o: Any): T = {
     try {
       val bytes = StreamUtils.serializeObject(o)
-      buf.writeInt(bytes.length)
       buf.writeBytes(bytes)
       src
     }
@@ -48,6 +47,8 @@ class ByteBufLikeEx[T](src: T, buf: ByteBufLike) {
 }
 
 trait ByteBufLike {
+  def createInputStream(): InputStream;
+
   def readInt(): Int;
 
   def writeInt(i: Int): Unit;
@@ -65,6 +66,8 @@ class ByteBufferLike1(bb: ByteBuffer) extends ByteBufLike {
   def writeBytes(b: Array[Byte]): Unit = bb.put(b)
 
   def readBytes(b: Array[Byte]): Unit = bb.get(b)
+
+  def createInputStream(): InputStream = new ByteBufferInputStream(bb)
 }
 
 class ByteBufferLike2(bb: ByteBuf) extends ByteBufLike {
@@ -75,6 +78,8 @@ class ByteBufferLike2(bb: ByteBuf) extends ByteBufLike {
   def writeBytes(b: Array[Byte]): Unit = bb.writeBytes(b)
 
   def readBytes(b: Array[Byte]): Unit = bb.readBytes(b)
+
+  def createInputStream(): InputStream = new ByteBufInputStream(bb)
 }
 
 class ByteBufferEx(buf: ByteBuffer) extends ByteBufLikeEx(buf, new ByteBufferLike1(buf)) {

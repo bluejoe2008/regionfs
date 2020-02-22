@@ -6,6 +6,7 @@ import java.util.zip.{CRC32, CheckedInputStream}
 
 import cn.regionfs.util.Logging
 import cn.regionfs.{Constants, FileId, GlobalConfig}
+import io.netty.buffer.ByteBuf
 
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
@@ -103,11 +104,10 @@ class FreeIdFile(conf: RegionConfig) {
       None
     else {
       val id = freeIds.head
-      try {
-        consume(id)
-        freeIds.remove(0)
-        flush()
-      }
+      consume(id)
+      freeIds.remove(0)
+      flush()
+
       Some(id)
     }
   }
@@ -134,10 +134,8 @@ class LocalIdGenerator(conf: RegionConfig, meta: RegionMetaFile) {
   def consumeNextId(consume: (Long) => Unit): Long = {
     freeId.consumeNextId(consume).getOrElse {
       val id = counterLocalId.get();
-      try {
-        consume(id)
-        counterLocalId.getAndIncrement()
-      }
+      consume(id)
+      counterLocalId.getAndIncrement()
     }
   }
 
@@ -247,8 +245,8 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
     idgen.close()
   }
 
-  //maybe a perfect read()
-  def read(localId: Long, out: BytePageOutput): Long = {
+  //TODO: use channel?
+  def writeTo(localId: Long, buf: ByteBuf): Long = {
     val meta = fmeta.read(localId)
     var ptr = meta.offset;
     val end = meta.tail
@@ -258,10 +256,9 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
       val bytes = fbody.read(ptr, length);
       ptr += length
 
-      out.write(bytes, 0, length)
+      buf.writeBytes(bytes, 0, length)
     }
 
-    out.writeEOF()
     meta.length
   }
 }

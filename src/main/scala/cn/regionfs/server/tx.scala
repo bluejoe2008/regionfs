@@ -4,7 +4,7 @@ import java.io.{ByteArrayInputStream, File, FileInputStream, FileOutputStream}
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.{ArrayBlockingQueue, ExecutorService, Executors}
 
-import cn.regionfs.{StreamingResult, NodeAddress}
+import cn.regionfs.NodeAddress
 import cn.regionfs.util.Logging
 import org.apache.commons.io.IOUtils
 
@@ -14,76 +14,6 @@ import scala.collection.{JavaConversions, mutable}
 /**
   * Created by bluejoe on 2020/2/5.
   */
-class RpcStreams() extends Logging {
-  val streams = mutable.Map[Long, RpcStream]()
-  val idgen = new AtomicLong(System.currentTimeMillis())
-  val threadPool = Executors.newFixedThreadPool(5);
-
-  def create(produce: (Output) => Unit, pageSize: Int): RpcStream = {
-    val streamId = idgen.incrementAndGet()
-    val tx = new RpcStream(streamId, pageSize, produce, threadPool)
-    streams += streamId -> tx
-    tx
-  }
-
-  def remove(streamId: Long) = streams.remove(streamId)
-
-  def get(streamId: Long): RpcStream = {
-    streams(streamId)
-  }
-}
-
-class RpcStream(val streamId: Long, pageSize: Int, produce: (Output) => Unit, threadPool: ExecutorService) {
-  val resultBuffer = new OutputBuffer(pageSize);
-  val future = threadPool.submit(new Runnable {
-    override def run(): Unit = {
-      produce(resultBuffer)
-    }
-  })
-
-  def nextPage(): (Iterator[_], Boolean) = {
-    resultBuffer.readNextPage
-  }
-
-  def close(): Unit = {
-    future.cancel(true)
-  }
-}
-
-trait Output {
-  def push(result: StreamingResult): Unit
-
-  def pushEOF(): Unit
-}
-
-class OutputBuffer(pageSize: Int) extends Output {
-  val buffer = new ArrayBlockingQueue[StreamingResult](pageSize * 2);
-  var reachEOF = false;
-
-  def push(result: StreamingResult): Unit = {
-    if (reachEOF) {
-      throw new RegionFsServersException(s"EOF is committed");
-    }
-
-    buffer.put(result)
-  }
-
-  def pushEOF(): Unit = {
-    this.synchronized {
-      reachEOF = true;
-    }
-  }
-
-  def readNextPage(): (Iterator[StreamingResult], Boolean) = {
-    val page = new java.util.ArrayList[StreamingResult]();
-    val one = buffer.take();
-    page.add(one);
-
-    buffer.drainTo(page, pageSize)
-    JavaConversions.asScalaIterator(page.iterator) -> !(reachEOF && buffer.isEmpty)
-  }
-}
-
 /**
   * a TransTx stores chunks for a blob
   * a TxQueue manages all running FileTasks

@@ -1,8 +1,8 @@
 import java.io.{File, FileInputStream}
 
+import cn.regionfs.util.Profiler._
 import org.apache.commons.io.IOUtils
 import org.junit.{Assert, Before, Test}
-import cn.regionfs.util.Profiler._
 
 /**
   * Created by bluejoe on 2020/1/8.
@@ -48,7 +48,7 @@ class RemoteFileReadTest extends FileTestBase {
     val id = super.writeFile(src);
 
     println("read an remote file via readFile()...")
-    Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(src)), timing(true) {
+    Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(src)), timing(true, 10) {
       IOUtils.toByteArray(client.readFile(id))
     });
 

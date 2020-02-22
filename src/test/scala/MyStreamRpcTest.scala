@@ -39,7 +39,7 @@ case class GetManyResultsRequest(times: Int, chunkSize: Int, msg: String) {
 }
 
 object MyStreamServer {
-  val server = StreamingServer.create("test", new StreamingRpcHandler() {
+  val server = HippoServer.create("test", new StreamingRpcHandler() {
 
     override def receive(ctx: ReceiveContext): PartialFunction[Any, Unit] = {
       case SayHelloRequest(msg) =>
@@ -102,7 +102,7 @@ object MyStreamServer {
 class MyStreamRpcTest {
   Profiler.enableTiming = true
   val server = MyStreamServer.server
-  val client = StreamingClient.create("test", "localhost", 1224)
+  val client = HippoClient.create("test", "localhost", 1224)
 
   @Test
   def testRpc(): Unit = {

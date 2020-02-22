@@ -70,11 +70,11 @@ trait StreamingRpcHandler {
   }
 }
 
-object StreamingServer extends Logging {
+object HippoServer extends Logging {
   //WEIRLD: this makes next Upooled.buffer() call run fast
   Unpooled.buffer(1)
 
-  def create(module: String, srh: StreamingRpcHandler, port: Int = -1, host: String = null): StreamingServer = {
+  def create(module: String, srh: StreamingRpcHandler, port: Int = -1, host: String = null): HippoServer = {
     val configProvider = new MapConfigProvider(JavaConversions.mapAsJavaMap(Map()))
     val conf: TransportConf = new TransportConf(module, configProvider)
     val streamIdGen = new AtomicLong(System.currentTimeMillis());
@@ -174,15 +174,15 @@ object StreamingServer extends Logging {
     }
 
     val context: TransportContext = new TransportContext(conf, handler)
-    new StreamingServer(context.createServer(host, port, new util.ArrayList()))
+    new HippoServer(context.createServer(host, port, new util.ArrayList()))
   }
 }
 
-class StreamingServer(server: TransportServer) {
+class HippoServer(server: TransportServer) {
   def close() = server.close()
 }
 
-object StreamingClient extends Logging {
+object HippoClient extends Logging {
   //WEIRLD: this makes next Upooled.buffer() call run fast
   Unpooled.buffer(1)
 
@@ -199,44 +199,25 @@ object StreamingClient extends Logging {
     )
   }
 
-  def create(module: String, remoteHost: String, remotePort: Int): StreamingClient = {
-    new StreamingClient(getClientFactory(module).createClient(remoteHost, remotePort))
+  def create(module: String, remoteHost: String, remotePort: Int): HippoClient = {
+    new HippoClient(getClientFactory(module).createClient(remoteHost, remotePort))
   }
 }
 
-class StreamingClient(client: TransportClient) extends Logging {
+trait HippoStreamingClient {
+  def getChunkedStream[T](request: Any)(implicit m: Manifest[T]): Stream[T]
+
+  def getInputStream(request: Any): InputStream
+
+  def getChunkedInputStream(request: Any): InputStream
+}
+
+trait HippoRpcClient {
+  def ask[T](message: Any, extra: ((ByteBuf) => Unit)*)(implicit m: Manifest[T]): Future[T]
+}
+
+class HippoClient(client: TransportClient) extends HippoStreamingClient with HippoRpcClient with Logging {
   def close() = client.close()
-
-  class MyRpcResponseCallback[T](consumeResponse: (ByteBuffer) => T) extends RpcResponseCallback {
-    val latch = new CountDownLatch(1);
-
-    var res: Any = null
-    var err: Throwable = null
-
-    override def onFailure(e: Throwable): Unit = {
-      err = e
-      latch.countDown();
-    }
-
-    override def onSuccess(response: ByteBuffer): Unit = {
-      try {
-        res = consumeResponse(response)
-      }
-      catch {
-        case e: Throwable => err = e
-      }
-
-      latch.countDown();
-    }
-
-    def await(): T = {
-      latch.await()
-      if (err != null)
-        throw err;
-
-      res.asInstanceOf[T]
-    }
-  }
 
   def ask[T](message: Any, extra: ((ByteBuf) => Unit)*)(implicit m: Manifest[T]): Future[T] = {
     _sendAndReceive({ buf =>
@@ -250,11 +231,36 @@ class StreamingClient(client: TransportClient) extends Logging {
       StreamUtils.serializeObject(request)))
   }
 
-  case class ChunkResponse[T](streamId: Long, chunkIndex: Int, hasNext: Boolean, chunk: T) {
+  def getChunkedInputStream(request: Any): InputStream = {
+    //12ms
+    val iter: Iterator[InputStream] = timing(false) {
+      _getChunkedStream[InputStream](request, (buf: ByteBuffer) =>
+        new ByteBufferInputStream(buf)).iterator
+    }
+
+    //1ms
+    timing(false) {
+      StreamUtils.concatChunks {
+        if (iter.hasNext) {
+          Some(iter.next)
+        }
+        else {
+          None
+        }
+      }
+    }
+  }
+
+  def getChunkedStream[T](request: Any)(implicit m: Manifest[T]): Stream[T] = {
+    val stream = _getChunkedStream(request, _.readObject().asInstanceOf[Iterable[T]])
+    stream.flatMap(_.toIterable)
+  }
+
+  private case class ChunkResponse[T](streamId: Long, chunkIndex: Int, hasNext: Boolean, chunk: T) {
 
   }
 
-  class MyChunkReceivedCallback[T](consumeResponse: (ByteBuffer) => T) extends ChunkReceivedCallback {
+  private class MyChunkReceivedCallback[T](consumeResponse: (ByteBuffer) => T) extends ChunkReceivedCallback {
     val latch = new CountDownLatch(1);
 
     var res: ChunkResponse[T] = _
@@ -287,29 +293,35 @@ class StreamingClient(client: TransportClient) extends Logging {
     }
   }
 
-  def getChunkedInputStream(request: Any): InputStream = {
-    //12ms
-    val iter: Iterator[InputStream] = timing(false) {
-      _getChunkedStream[InputStream](request, (buf: ByteBuffer) =>
-        new ByteBufferInputStream(buf)).iterator
+  private class MyRpcResponseCallback[T](consumeResponse: (ByteBuffer) => T) extends RpcResponseCallback {
+    val latch = new CountDownLatch(1);
+
+    var res: Any = null
+    var err: Throwable = null
+
+    override def onFailure(e: Throwable): Unit = {
+      err = e
+      latch.countDown();
     }
 
-    //1ms
-    timing(false) {
-      StreamUtils.concatChunks {
-        if (iter.hasNext) {
-          Some(iter.next)
-        }
-        else {
-          None
-        }
+    override def onSuccess(response: ByteBuffer): Unit = {
+      try {
+        res = consumeResponse(response)
       }
-    }
-  }
+      catch {
+        case e: Throwable => err = e
+      }
 
-  def getChunkedStream[T](request: Any)(implicit m: Manifest[T]): Stream[T] = {
-    val stream = _getChunkedStream(request, _.readObject().asInstanceOf[Iterable[T]])
-    stream.flatMap(_.toIterable)
+      latch.countDown();
+    }
+
+    def await(): T = {
+      latch.await()
+      if (err != null)
+        throw err;
+
+      res.asInstanceOf[T]
+    }
   }
 
   private def _getChunkedStream[T](request: Any, consumeResponse: (ByteBuffer) => T)(implicit m: Manifest[T]): Stream[T] = {
@@ -391,7 +403,7 @@ class StreamingClient(client: TransportClient) extends Logging {
     produceRequest(buf)
     val callback = new MyRpcResponseCallback[T](consumeResponse);
     client.sendRpc(buf.nioBuffer, callback)
-    implicit val ec: ExecutionContext = StreamingClient.executionContext
+    implicit val ec: ExecutionContext = HippoClient.executionContext
     Future {
       callback.await()
     }

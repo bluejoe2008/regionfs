@@ -5,7 +5,7 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.{CRC32, CheckedInputStream}
 
 import cn.regionfs.network.CompleteStream
-import cn.regionfs.util.Logging
+import cn.regionfs.util.{Cache, FixSizedCache, Logging}
 import cn.regionfs.{Constants, FileId, GlobalConfig}
 import io.netty.buffer.ByteBuf
 import org.apache.spark.network.util.TransportConf
@@ -33,6 +33,8 @@ class RegionMetaStore(conf: RegionConfig) {
   val writer = new RandomAccessFile(fileMetaFile, "rw");
   val reader = new RandomAccessFile(fileMetaFile, "r");
 
+  val cache: Cache[Long, MetaData] = new FixSizedCache[Long, MetaData](1024);
+
   def iterator(): Iterator[MetaData] = {
     (0 to count.toInt - 1).iterator.map(read(_))
   }
@@ -41,29 +43,33 @@ class RegionMetaStore(conf: RegionConfig) {
   val block = new Array[Byte](Constants.METADATA_ENTRY_LENGTH_WITH_PADDING);
 
   def read(localId: Long): MetaData = {
-    reader.seek(Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * localId)
-    reader.readFully(block)
+    cache.get(localId).getOrElse {
+      reader.seek(Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * localId)
+      reader.readFully(block)
 
-    val dis = new DataInputStream(new ByteArrayInputStream(block))
-    val info = MetaData(dis.readLong(), dis.readLong(), dis.readLong(), dis.readLong())
+      val dis = new DataInputStream(new ByteArrayInputStream(block))
+      val info = MetaData(dis.readLong(), dis.readLong(), dis.readLong(), dis.readLong())
 
-    dis.close()
-    info
+      dis.close()
+      info
+    }
   }
 
-  def write(localId: Long, offset: Long, length: Long, crc32: Option[Long]): Unit = {
+  def write(localId: Long, offset: Long, length: Long, crc32: Long): Unit = {
     //[iiii][iiii][oooo][oooo][llll][llll][cccc][cccc]
     val block = new ByteArrayOutputStream()
     val dos = new DataOutputStream(block)
     dos.writeLong(localId)
     dos.writeLong(offset)
     dos.writeLong(length)
-    dos.writeLong(crc32.getOrElse(0))
-    dos.writeLong(crc32.map(_ => 1L).getOrElse(0L)) //reserved
+    dos.writeLong(crc32)
+    dos.writeLong(0) //reserved
 
     writer.seek(Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * localId)
     writer.write(block.toByteArray)
     dos.close()
+
+    cache.put(localId, MetaData(localId, offset, length, crc32))
   }
 
   def count = fileMetaFile.length() / Constants.METADATA_ENTRY_LENGTH_WITH_PADDING;
@@ -226,12 +232,13 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
 
   def write(source: () => InputStream): Long = {
     val info = fbody.write(source)
-    val crc32 = if (conf.globalConfig.enableCrc) {
-      Some(computeCrc32(source))
-    }
-    else {
-      None
-    }
+    val crc32 =
+      if (conf.globalConfig.enableCrc) {
+        computeCrc32(source)
+      }
+      else {
+        0
+      }
 
     //get local id
     idgen.consumeNextId((id: Long) => {

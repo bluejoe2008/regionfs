@@ -58,7 +58,7 @@ trait ByteBufLike {
   def readBytes(b: Array[Byte]): Unit;
 }
 
-class ByteBufferLike1(bb: ByteBuffer) extends ByteBufLike {
+class ByteBufferAdapter(bb: ByteBuffer) extends ByteBufLike {
   def readInt(): Int = bb.getInt()
 
   def writeInt(i: Int): Unit = bb.putInt(i)
@@ -70,7 +70,7 @@ class ByteBufferLike1(bb: ByteBuffer) extends ByteBufLike {
   def createInputStream(): InputStream = new ByteBufferInputStream(bb)
 }
 
-class ByteBufferLike2(bb: ByteBuf) extends ByteBufLike {
+class ByteBufAdapter(bb: ByteBuf) extends ByteBufLike {
   def readInt(): Int = bb.readInt()
 
   def writeInt(i: Int): Unit = bb.writeInt(i)
@@ -82,11 +82,11 @@ class ByteBufferLike2(bb: ByteBuf) extends ByteBufLike {
   def createInputStream(): InputStream = new ByteBufInputStream(bb)
 }
 
-class ByteBufferEx(buf: ByteBuffer) extends ByteBufLikeEx(buf, new ByteBufferLike1(buf)) {
+class ByteBufferEx(buf: ByteBuffer) extends ByteBufLikeEx(buf, new ByteBufferAdapter(buf)) {
   def skip(n: Int) = buf.position(buf.position() + n)
 }
 
-class ByteBufEx(buf: ByteBuf) extends ByteBufLikeEx(buf, new ByteBufferLike2(buf)) {
+class ByteBufEx(buf: ByteBuf) extends ByteBufLikeEx(buf, new ByteBufAdapter(buf)) {
 
 }
 

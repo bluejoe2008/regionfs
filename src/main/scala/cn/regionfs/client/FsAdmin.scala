@@ -1,7 +1,7 @@
 package cn.regionfs.client
 
+import cn.bluejoe.util.IteratorUtils
 import cn.regionfs._
-import cn.regionfs.util.IteratorUtils
 
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration

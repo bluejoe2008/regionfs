@@ -23,6 +23,8 @@ package cn.regionfs.util
 import java.io.{File, FileInputStream}
 import java.util.Properties
 
+import cn.bluejoe.util.Logging
+
 /**
   * Created by bluejoe on 2019/7/23.
   */

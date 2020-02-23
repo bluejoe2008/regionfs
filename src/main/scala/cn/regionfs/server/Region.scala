@@ -4,8 +4,9 @@ import java.io._
 import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.{CRC32, CheckedInputStream}
 
-import cn.regionfs.network.CompleteStream
-import cn.regionfs.util.{Cache, FixSizedCache, Logging}
+import cn.bluejoe.hippo.CompleteStream
+import cn.bluejoe.util.Logging
+import cn.regionfs.util.{Cache, FixSizedCache}
 import cn.regionfs.{Constants, FileId, GlobalConfig}
 import io.netty.buffer.ByteBuf
 import org.apache.spark.network.util.TransportConf

@@ -2,7 +2,7 @@ package regionfs
 
 import java.io.File
 
-import cn.regionfs.util.Profiler._
+import cn.bluejoe.util.Profiler._
 import org.junit.{Before, Test}
 
 /**

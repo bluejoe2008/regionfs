@@ -3,10 +3,11 @@ package cn.regionfs.server
 import java.io._
 import java.util.Random
 
+import cn.bluejoe.hippo.{ChunkedStream, HippoStreamManager, CompleteStream}
+import cn.bluejoe.util.Logging
 import cn.regionfs._
 import cn.regionfs.client.{NodeAddress, NodeStat, RegionStat}
-import cn.regionfs.network.{ChunkedStream, CompleteStream, HippoStreamManager}
-import cn.regionfs.util.{ConfigurationEx, Logging}
+import cn.regionfs.util.ConfigurationEx
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.{HippoRpcEnv, HippoRpcEnvFactory}
 import net.neoremind.kraps.rpc.{RpcCallContext, RpcEndpoint, RpcEnv, RpcEnvServerConfig}

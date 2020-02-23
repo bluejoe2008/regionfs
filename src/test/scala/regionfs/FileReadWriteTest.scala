@@ -6,6 +6,9 @@ import cn.bluejoe.util.Profiler._
 import org.apache.commons.io.IOUtils
 import org.junit.{Assert, Before, Test}
 
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
+
 /**
   * Created by bluejoe on 2019/8/23.
   */
@@ -30,6 +33,20 @@ class FileReadWriteTest extends FileTestBase {
       println(s"writing $i bytes...")
       timing(true, 10) {
         super.writeFile(new File(s"./testdata/inputs/$i"))
+      }
+    }
+  }
+
+  @Test
+  def testWriteAsync(): Unit = {
+    timing(true) {
+      (1 to 10).map(_ => super.writeFileAsync("hello, world")).map(Await.result(_, Duration.Inf))
+    }
+
+    for (i <- Array(999, 9999, 99999, 999999, 9999999)) {
+      println(s"writing $i bytes...")
+      timing(true) {
+        (1 to 10).map(_ => super.writeFileAsync(new File(s"./testdata/inputs/$i"))).map(Await.result(_, Duration.Inf))
       }
     }
   }

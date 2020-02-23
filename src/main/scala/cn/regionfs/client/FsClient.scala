@@ -1,8 +1,9 @@
-package cn.regionfs
+package cn.regionfs.client
 
 import java.io.InputStream
 
 import cn.regionfs.util.Logging
+import cn.regionfs._
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.{HippoRpcEnv, HippoRpcEnvFactory}
 import net.neoremind.kraps.rpc.{RpcAddress, RpcEnvClientConfig}

@@ -4,13 +4,12 @@ import java.io._
 import java.util.Random
 
 import cn.regionfs._
-import cn.regionfs.network.{HippoStreamManager, BufferedMessageStream, ChunkedStream}
+import cn.regionfs.client.{NodeAddress, NodeStat, RegionStat}
+import cn.regionfs.network.{ChunkedStream, CompleteStream, HippoStreamManager}
 import cn.regionfs.util.{ConfigurationEx, Logging}
-import io.netty.buffer.Unpooled
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.{HippoRpcEnv, HippoRpcEnvFactory}
 import net.neoremind.kraps.rpc.{RpcCallContext, RpcEndpoint, RpcEnv, RpcEnvServerConfig}
-import org.apache.spark.network.buffer.{ManagedBuffer, NettyManagedBuffer}
 import org.apache.zookeeper.ZooDefs.Ids
 import org.apache.zookeeper._
 
@@ -102,22 +101,25 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
     }
 
     class FileStreamManager extends HippoStreamManager {
-      override def openStream(): PartialFunction[Any, ManagedBuffer] = {
+      override def openCompleteStream(): PartialFunction[Any, CompleteStream] = {
         case ReadFileRequest(regionId: Long, localId: Long) => {
           // get region
           val region = localRegionManager.get(regionId)
+          /*
           val buf = Unpooled.buffer()
           region.writeTo(localId, buf)
           new NettyManagedBuffer(buf)
+          */
+          region.readAsStream(rpcEnv.getTransportConf(), localId)
         }
       }
 
       override def openChunkedStream(): PartialFunction[Any, ChunkedStream] = {
         case ListFileRequest() =>
-          BufferedMessageStream.create[ListFileResponseDetail](1024, (buffer) => {
+          ChunkedStream.pooled[ListFileResponseDetail](1024, (pool) => {
             localRegionManager.regions.values.foreach { x =>
               val it = x.listFiles()
-              it.foreach(x => buffer.push(ListFileResponseDetail(x)))
+              it.foreach(x => pool.push(ListFileResponseDetail(x)))
             }
           })
       }

@@ -1,3 +1,5 @@
+package regionfs
+
 import java.io.File
 
 import org.junit.{Before, Test}

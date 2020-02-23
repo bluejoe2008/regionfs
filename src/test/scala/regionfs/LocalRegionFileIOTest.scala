@@ -1,3 +1,5 @@
+package regionfs
+
 import java.io._
 
 import cn.regionfs.GlobalConfig

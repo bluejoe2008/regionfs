@@ -4,9 +4,11 @@ import java.io._
 import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.{CRC32, CheckedInputStream}
 
+import cn.regionfs.network.CompleteStream
 import cn.regionfs.util.Logging
 import cn.regionfs.{Constants, FileId, GlobalConfig}
 import io.netty.buffer.ByteBuf
+import org.apache.spark.network.util.TransportConf
 
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
@@ -26,7 +28,7 @@ case class MetaData(localId: Long, offset: Long, length: Long, crc32: Long) {
   def tail = offset + length
 }
 
-class RegionMetaFile(conf: RegionConfig) {
+class RegionMetaStore(conf: RegionConfig) {
   val fileMetaFile = new File(conf.regionDir, "meta")
   val writer = new RandomAccessFile(fileMetaFile, "rw");
   val reader = new RandomAccessFile(fileMetaFile, "r");
@@ -72,7 +74,7 @@ class RegionMetaFile(conf: RegionConfig) {
   }
 }
 
-class FreeIdFile(conf: RegionConfig) {
+class FreeIdStore(conf: RegionConfig) {
   val freeIdFile = new File(conf.regionDir, "freeid")
   val writer = new FileOutputStream(freeIdFile, false);
 
@@ -126,10 +128,10 @@ class FreeIdFile(conf: RegionConfig) {
   }
 }
 
-class LocalIdGenerator(conf: RegionConfig, meta: RegionMetaFile) {
+class LocalIdGenerator(conf: RegionConfig, meta: RegionMetaStore) {
   //free id
   val counterLocalId = new AtomicLong(meta.count);
-  val freeId = new FreeIdFile(conf)
+  val freeId = new FreeIdStore(conf)
 
   def consumeNextId(consume: (Long) => Unit): Long = {
     freeId.consumeNextId(consume).getOrElse {
@@ -147,7 +149,7 @@ case class WriteInfo(offset: Long, length: Long, actualWritten: Long) {
 
 }
 
-class RegionBodyFile(conf: RegionConfig) {
+class RegionBodyStore(conf: RegionConfig) {
   val WRITE_BUFFER_SIZE = 10240
   //region file, one file for each region by far
   val fileBody = new File(conf.regionDir, "body")
@@ -197,8 +199,8 @@ class RegionBodyFile(conf: RegionConfig) {
   */
 class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) extends Logging {
   //metadata file
-  val fbody = new RegionBodyFile(conf)
-  val fmeta = new RegionMetaFile(conf)
+  val fbody = new RegionBodyStore(conf)
+  val fmeta = new RegionMetaStore(conf)
   val idgen = new LocalIdGenerator(conf, fmeta)
 
   def statFileCount(): Long = {
@@ -245,7 +247,11 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
     idgen.close()
   }
 
-  //TODO: use channel?
+  def readAsStream(conf: TransportConf, localId: Long): CompleteStream = {
+    val meta = fmeta.read(localId)
+    CompleteStream.fromFile(conf, fbody.fileBody, meta.offset, meta.length)
+  }
+
   def writeTo(localId: Long, buf: ByteBuf): Long = {
     val meta = fmeta.read(localId)
     var ptr = meta.offset;
@@ -327,10 +333,4 @@ class RegionManager(nodeId: Long, storeDir: File, globalConfig: GlobalConfig) ex
     regions += (regionId -> region)
     region
   }
-}
-
-trait BytePageOutput {
-  def write(bytes: Array[Byte], offset: Int, length: Int): Unit
-
-  def writeEOF(): Unit
 }

@@ -1,7 +1,9 @@
+package util
+
 import java.nio.ByteBuffer
 
 import cn.regionfs.util.ByteBufferUtils._
-import cn.regionfs.util.{StreamUtils, Profiler}
+import cn.regionfs.util.Profiler
 import cn.regionfs.util.Profiler._
 import io.netty.buffer.Unpooled
 import org.apache.spark.network.buffer.NioManagedBuffer

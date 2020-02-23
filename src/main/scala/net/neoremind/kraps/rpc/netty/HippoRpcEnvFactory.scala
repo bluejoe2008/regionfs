@@ -6,6 +6,7 @@ import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 
 import cn.regionfs.network._
+import cn.regionfs.util.ReflectUtils._
 import io.netty.buffer.ByteBuf
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc._
@@ -15,7 +16,7 @@ import org.apache.spark.network.TransportContext
 import org.apache.spark.network.client.{RpcResponseCallback, TransportClient}
 import org.apache.spark.network.server.RpcHandler
 import org.slf4j.LoggerFactory
-import cn.regionfs.util.ReflectUtils._
+
 import scala.concurrent.Future
 import scala.util.control.NonFatal
 
@@ -113,6 +114,8 @@ class HippoRpcEnv(conf: RpcConf, javaSerializerInstance: JavaSerializerInstance,
 
   val hippoRpcHandler = new HippoRpcHandler(this._get("dispatcher").asInstanceOf[Dispatcher], this)
   this._set("transportContext", new TransportContext(transportConf, hippoRpcHandler))
+
+  def getTransportConf() = transportConf;
 
   def setStreamManger(streamManager: HippoStreamManager): Unit = {
     hippoRpcHandler.streamManagerAdapter.streamManager = streamManager;

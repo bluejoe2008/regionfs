@@ -1,4 +1,6 @@
-import cn.regionfs.FsAdmin
+package regionfs
+
+import cn.regionfs.client.FsAdmin
 import org.junit.Test
 
 /**

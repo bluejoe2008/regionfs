@@ -1,17 +1,18 @@
 package cn.regionfs.network
 
-import java.io.InputStream
+import java.io.{File, InputStream}
 import java.nio.ByteBuffer
 import java.util
 import java.util.concurrent._
 import java.util.concurrent.atomic.AtomicLong
+import java.util.function.Predicate
 
 import cn.regionfs.util.ByteBufferUtils._
 import cn.regionfs.util.Profiler._
 import cn.regionfs.util.{Logging, StreamUtils}
 import io.netty.buffer.{ByteBuf, ByteBufInputStream, Unpooled}
 import org.apache.spark.network.TransportContext
-import org.apache.spark.network.buffer.{ManagedBuffer, NettyManagedBuffer}
+import org.apache.spark.network.buffer.{FileSegmentManagedBuffer, ManagedBuffer, NettyManagedBuffer}
 import org.apache.spark.network.client._
 import org.apache.spark.network.server.{NoOpRpcHandler, RpcHandler, StreamManager, TransportServer}
 import org.apache.spark.network.util.{MapConfigProvider, TransportConf}
@@ -90,42 +91,92 @@ trait ChunkedMessageStream[T] extends ChunkedStream {
   override def close(): Unit
 }
 
-object BufferedMessageStream {
+object ChunkedStream {
   val executor = Executors.newSingleThreadExecutor();
 
-  def create[T](bufferSize: Int, producer: (OutputBuffer[T]) => Unit)(implicit m: Manifest[T]) =
-    new BufferedMessageStream[T](executor, bufferSize, producer);
+  def grouped[T](batchSize: Int, iterable: Iterable[T]) = new GroupedMessageStream[T](batchSize, iterable);
+
+  def pooled[T](poolSize: Int, producer: (MessagePool[T]) => Unit)(implicit m: Manifest[T]) =
+    new PooledMessageStream[T](executor, poolSize, producer);
 }
 
-trait OutputBuffer[T] {
+class GroupedMessageStream[T](batchSize: Int, iterable: Iterable[T]) extends ChunkedMessageStream[T] {
+  val it = iterable.iterator.grouped(batchSize)
+
+  override def hasNext() = it.hasNext;
+
+  def nextChunk(): Iterable[T] = it.next();
+
+  override def close(): Unit = {
+  }
+}
+
+trait MessagePool[T] {
   def push(value: T);
 }
 
-class BufferedMessageStream[T](executor: ExecutorService, bufferSize: Int, producer: (OutputBuffer[T]) => Unit)(implicit m: Manifest[T]) extends ChunkedMessageStream[T] {
-  val buffer = new ArrayBlockingQueue[T](bufferSize);
+class PooledMessageStream[T](executor: ExecutorService, bufferSize: Int, producer: (MessagePool[T]) => Unit)
+                            (implicit m: Manifest[T]) extends ChunkedMessageStream[T] {
+  val buffer = new ArrayBlockingQueue[Any](bufferSize);
+  val END_OF_STREAM = new Object();
 
   val future = executor.submit(new Runnable {
-    override def run(): Unit = producer(new OutputBuffer[T]() {
-      def push(value: T) = buffer.put(value)
-    })
+    override def run(): Unit = {
+      producer(new MessagePool[T]() {
+        def push(value: T) = buffer.put(value)
+      })
+
+      buffer.put(END_OF_STREAM);
+    }
   })
 
   override def hasNext(): Boolean = !(future.isDone && buffer.isEmpty)
 
   def nextChunk(): Iterable[T] = {
     val first = buffer.take()
-    val list = new java.util.ArrayList[T]();
-    buffer.drainTo(list)
-    list.add(0, first)
-    println(list);
-    JavaConversions.collectionAsScalaIterable(list)
+    if (first == END_OF_STREAM) {
+      Iterable.empty[T]
+    }
+    else {
+      val list = new java.util.ArrayList[Any]();
+      buffer.drainTo(list)
+      list.add(0, first)
+      list.removeIf(new Predicate[Any]() {
+        override def test(t: Any) = t == END_OF_STREAM
+      })
+
+      JavaConversions.collectionAsScalaIterable(list).map(_.asInstanceOf[T])
+    }
   }
 
   override def close(): Unit = future.cancel(true)
 }
 
+trait CompleteStream {
+  def createManagedBuffer(): ManagedBuffer;
+}
+
+object CompleteStream {
+  def fromFile(conf: TransportConf, file: File, offset: Long, length: Long): CompleteStream = new CompleteStream() {
+    override def createManagedBuffer(): ManagedBuffer =
+      new FileSegmentManagedBuffer(conf, file, offset, length);
+  }
+
+  def fromFile(conf: TransportConf, file: File): CompleteStream = {
+    fromFile(conf, file, 0, file.length().toInt);
+  }
+
+  def fromByteBuf(produce: (ByteBuf) => Unit): CompleteStream = new CompleteStream() {
+    override def createManagedBuffer(): ManagedBuffer = {
+      val buf = Unpooled.buffer()
+      produce(buf)
+      new NettyManagedBuffer(buf)
+    }
+  }
+}
+
 trait HippoStreamManager {
-  def openStream(): PartialFunction[Any, ManagedBuffer] = {
+  def openCompleteStream(): PartialFunction[Any, CompleteStream] = {
     throw new UnsupportedOperationException();
   }
 
@@ -154,12 +205,13 @@ class HippoStreamManagerAdapter(var streamManager: HippoStreamManager) extends S
 
   override def openStream(streamId: String): ManagedBuffer = {
     val request = StreamUtils.deserializeObject(StreamUtils.base64.decode(streamId))
-    streamManager.openStream()(request);
+    streamManager.openCompleteStream()(request).createManagedBuffer();
   }
 
   private def _writeNextChunk(buf: ByteBuf, streamId: Long, chunkIndex: Int, stream: ChunkedStream) {
     buf.writeLong(streamId).writeInt(0).writeByte(1)
 
+    //write next chunk
     if (stream.hasNext()) {
       stream.nextChunk(buf)
     }
@@ -246,11 +298,13 @@ object HippoServer extends Logging {
     }
 
     val context: TransportContext = new TransportContext(conf, handler)
-    new HippoServer(context.createServer(host, port, new util.ArrayList()))
+    new HippoServer(context.createServer(host, port, new util.ArrayList()), conf)
   }
 }
 
-class HippoServer(server: TransportServer) {
+class HippoServer(server: TransportServer, val conf: TransportConf) {
+  def getPort() = server.getPort()
+
   def close() = server.close()
 }
 
@@ -324,7 +378,15 @@ class HippoClient(client: TransportClient) extends HippoStreamingClient with Hip
   }
 
   override def getChunkedStream[T](request: Any)(implicit m: Manifest[T]): Stream[T] = {
-    val stream = _getChunkedStream(request, _.readObject().asInstanceOf[Iterable[T]])
+    val stream = _getChunkedStream(request, { buf =>
+      if (buf.hasRemaining) {
+        buf.readObject().asInstanceOf[Iterable[T]]
+      }
+      else {
+        Iterable.empty[T]
+      }
+    })
+
     stream.flatMap(_.toIterable)
   }
 
@@ -403,7 +465,7 @@ class HippoClient(client: TransportClient) extends HippoStreamingClient with Hip
       Await.result(ask[OpenStreamResponse](OpenStreamRequest(request)), Duration.Inf);
 
     if (!hasMoreChunks) {
-      Stream.empty
+      Stream.empty[T]
     }
     else {
       _buildStream(streamId, 0, consumeResponse)

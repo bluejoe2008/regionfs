@@ -3,8 +3,7 @@ package cn.regionfs.server
 import java.io.{ByteArrayInputStream, File, FileInputStream, FileOutputStream}
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.{ArrayBlockingQueue, ExecutorService, Executors}
-
-import cn.regionfs.NodeAddress
+import cn.regionfs.client.NodeAddress
 import cn.regionfs.util.Logging
 import org.apache.commons.io.IOUtils
 

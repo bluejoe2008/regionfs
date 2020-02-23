@@ -1,5 +1,6 @@
 package cn.regionfs
 
+import cn.regionfs.client.{NodeAddress, FsNodeClient}
 import cn.regionfs.util.Logging
 import org.apache.zookeeper.Watcher.Event.EventType
 import org.apache.zookeeper.{WatchedEvent, Watcher, ZooKeeper}

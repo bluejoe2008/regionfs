@@ -1,6 +1,9 @@
+package regionfs
+
 import java.io.{ByteArrayInputStream, File, FileInputStream, FileOutputStream}
 
-import cn.regionfs.{FsClient, FileId}
+import cn.regionfs.FileId
+import cn.regionfs.client.FsClient
 import cn.regionfs.util.Profiler
 
 /**

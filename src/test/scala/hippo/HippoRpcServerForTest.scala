@@ -1,9 +1,10 @@
+package hippo
+
 import java.io.{File, FileInputStream}
 
 import cn.regionfs.network._
 import cn.regionfs.util.Profiler._
-import io.netty.buffer.{ByteBuf, Unpooled}
-import org.apache.spark.network.buffer.{ManagedBuffer, NettyManagedBuffer}
+import io.netty.buffer.ByteBuf
 
 /**
   * Created by bluejoe on 2020/2/22.
@@ -37,7 +38,8 @@ case class GetBufferedResultsRequest(total: Int) {
 }
 
 object HippoRpcServerForTest {
-  val server = HippoServer.create("test", new HippoRpcHandler() {
+  var server: HippoServer = _;
+  server = HippoServer.create("test", new HippoRpcHandler() {
 
     override def receive(ctx: ReceiveContext): PartialFunction[Any, Unit] = {
       case SayHelloRequest(msg) =>
@@ -49,23 +51,12 @@ object HippoRpcServerForTest {
 
     override def openChunkedStream(): PartialFunction[Any, ChunkedStream] = {
       case GetManyResultsRequest(times, chunkSize, msg) =>
-        new ChunkedMessageStream[String]() {
-          var count = 0;
-
-          override def hasNext(): Boolean = count < times
-
-          override def nextChunk(): Iterable[String] = {
-            count += 1
-            (1 to chunkSize).map(_ => msg)
-          }
-
-          override def close(): Unit = {}
-        }
+        ChunkedStream.grouped(chunkSize, (1 to times * chunkSize).map(x => s"hello-${x}"))
 
       case GetBufferedResultsRequest(total) =>
-        BufferedMessageStream.create[String](10, (queue) => {
+        ChunkedStream.pooled[String](10, (pool) => {
           for (i <- 1 to total) {
-            queue.push(s"hello-$i");
+            pool.push(s"hello-$i");
             Thread.sleep(1);
           }
         })
@@ -95,12 +86,15 @@ object HippoRpcServerForTest {
         }
     }
 
-    override def openStream(): PartialFunction[Any, ManagedBuffer] = {
+    override def openCompleteStream(): PartialFunction[Any, CompleteStream] = {
       case ReadFileRequest(path) =>
+        /*
         val fis = new FileInputStream(new File(path))
         val buf = Unpooled.buffer()
         buf.writeBytes(fis.getChannel, new File(path).length().toInt)
         new NettyManagedBuffer(buf)
+        */
+        CompleteStream.fromFile(server.conf, new File(path));
     }
   }, 1224)
 }

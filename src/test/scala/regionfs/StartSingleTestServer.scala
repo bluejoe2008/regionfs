@@ -1,3 +1,5 @@
+package regionfs
+
 
 import cn.regionfs.shell.{ShellFileSystemStarter, ShellNodeServerStarter}
 import cn.regionfs.util.Profiler

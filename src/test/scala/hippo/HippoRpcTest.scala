@@ -1,3 +1,5 @@
+package hippo
+
 import java.io.{File, FileInputStream}
 
 import cn.regionfs.network._
@@ -40,18 +42,18 @@ class HippoRpcTest {
   }
 
   @Test
-  def testGetChunkedTStream(): Unit = {
+  def testGetChunkedStream(): Unit = {
     Await.result(client.ask[SayHelloResponse](SayHelloRequest("hello")), Duration.Inf)
 
     val results = timing(true, 10) {
       client.getChunkedStream[String](GetManyResultsRequest(100, 10, "hello"))
     }.toArray
 
-    Assert.assertEquals(results(0), "hello")
-    Assert.assertEquals(results(100 * 10 - 1), "hello")
+    Assert.assertEquals(results(0), "hello-1")
+    Assert.assertEquals(results(99), "hello-100")
     Assert.assertEquals(100 * 10, results.length)
 
-    val results2 = timing(true) {
+    val results2 = timing(true, 10) {
       client.getChunkedStream[String](GetBufferedResultsRequest(100)).toArray
     }
 

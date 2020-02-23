@@ -1,5 +1,6 @@
-package cn.regionfs
+package cn.regionfs.client
 
+import cn.regionfs._
 import cn.regionfs.util.IteratorUtils
 
 import scala.concurrent.Await

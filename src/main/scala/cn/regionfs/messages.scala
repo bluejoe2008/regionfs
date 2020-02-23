@@ -1,5 +1,7 @@
 package cn.regionfs
 
+import cn.regionfs.client.NodeStat
+
 /**
   * Created by bluejoe on 2019/8/23.
   */

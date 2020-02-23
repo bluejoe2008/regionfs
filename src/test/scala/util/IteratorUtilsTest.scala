@@ -1,3 +1,5 @@
+package util
+
 
 import cn.regionfs.util.IteratorUtils
 import org.junit.{Assert, Test}

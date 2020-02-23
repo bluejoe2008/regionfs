@@ -1,3 +1,5 @@
+package regionfs
+
 import java.io.{File, FileInputStream}
 
 import cn.regionfs.util.Profiler._
@@ -47,16 +49,21 @@ class RemoteFileReadTest extends FileTestBase {
     val src: File = new File(path)
     val id = super.writeFile(src);
 
-    println("read an remote file via readFile()...")
-    Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(src)), timing(true, 10) {
-      IOUtils.toByteArray(client.readFile(id))
-    });
+    println("=================================")
+    println(s"file size: ${src.length()}");
 
     println("read a local file...")
-    val bytes2 = timing(true) {
+    val bytes1 = timing(true) {
       IOUtils.toByteArray(new FileInputStream(src));
     }
 
-    println(s"size: ${bytes2.size}");
+    println("read an remote file...")
+    val bytes2 = timing(true, 10) {
+      IOUtils.toByteArray(client.readFile(id))
+    };
+
+    Assert.assertArrayEquals(bytes1, bytes2)
+
+    println("=================================")
   }
 }

@@ -1,3 +1,5 @@
+package hippo
+
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.util

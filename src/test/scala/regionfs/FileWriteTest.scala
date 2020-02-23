@@ -2,6 +2,7 @@ package regionfs
 
 import java.io.File
 
+import cn.regionfs.util.Profiler._
 import org.junit.{Before, Test}
 
 /**
@@ -18,48 +19,21 @@ class FileWriteTest extends FileTestBase {
   }
 
   @Test
-  def test1(): Unit = {
-    writeFileClock(new File("./testdata/inputs/999"))
-    writeFileClock(new File("./testdata/inputs/9999"))
-    writeFileClock(new File("./testdata/inputs/99999"))
-    writeFileClock(new File("./testdata/inputs/999999"))
-  }
-
-  @Test
-  def test0(): Unit = {
-    writeFileClock("this is a test")
-    writeFileClock("hello, world")
-  }
-
-  @Test
-  def test2(): Unit = {
-    writeFilesClock(new File("./testdata/inputs/999"), 2)
-    writeFilesClock(new File("./testdata/inputs/9999"), 2)
-    writeFilesClock(new File("./testdata/inputs/99999"), 2)
-    writeFilesClock(new File("./testdata/inputs/999999"), 2)
-  }
-
-  @Test
-  def test3(): Unit = {
-    writeFilesClock(new File("./testdata/inputs/999"), 3)
-    writeFilesClock(new File("./testdata/inputs/9999"), 3)
-    writeFilesClock(new File("./testdata/inputs/99999"), 3)
-    writeFilesClock(new File("./testdata/inputs/999999"), 3)
-  }
-
-  @Test
-  def test4(): Unit = {
-    writeFilesClock(new File("./testdata/inputs/999"), 4)
-    writeFilesClock(new File("./testdata/inputs/9999"), 4)
-    writeFilesClock(new File("./testdata/inputs/99999"), 4)
-    writeFilesClock(new File("./testdata/inputs/999999"), 4)
-  }
-
-  @Test
-  def test10(): Unit = {
-    writeFilesClock(new File("./testdata/inputs/999"), 10)
-    writeFilesClock(new File("./testdata/inputs/9999"), 10)
-    writeFilesClock(new File("./testdata/inputs/99999"), 10)
-    writeFilesClock(new File("./testdata/inputs/999999"), 10)
+  def test(): Unit = {
+    timing(true) {
+      super.writeFile("hello, world")
+    }
+    timing(true, 10) {
+      super.writeFile(new File("./testdata/inputs/999"))
+    }
+    timing(true, 10) {
+      super.writeFile(new File("./testdata/inputs/9999"))
+    }
+    timing(true, 10) {
+      super.writeFile(new File("./testdata/inputs/99999"))
+    }
+    timing(true, 10) {
+      super.writeFile(new File("./testdata/inputs/999999"))
+    }
   }
 }

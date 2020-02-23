@@ -2,7 +2,7 @@ package regionfs
 
 import java.io.{File, FileInputStream}
 
-import cn.regionfs.util.Profiler._
+import cn.bluejoe.util.Profiler._
 import org.apache.commons.io.IOUtils
 import org.junit.{Assert, Before, Test}
 

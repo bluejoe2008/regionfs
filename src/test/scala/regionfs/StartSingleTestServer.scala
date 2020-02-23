@@ -2,7 +2,7 @@ package regionfs
 
 
 import cn.regionfs.shell.{ShellFileSystemStarter, ShellNodeServerStarter}
-import cn.regionfs.util.Profiler
+import cn.bluejoe.util.Profiler
 
 /**
   * Created by bluejoe on 2019/8/31.

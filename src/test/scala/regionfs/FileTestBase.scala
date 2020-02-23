@@ -4,7 +4,7 @@ import java.io.{ByteArrayInputStream, File, FileInputStream, FileOutputStream}
 
 import cn.regionfs.FileId
 import cn.regionfs.client.FsClient
-import cn.regionfs.util.Profiler
+import cn.bluejoe.util.Profiler
 
 /**
   * Created by bluejoe on 2019/8/23.

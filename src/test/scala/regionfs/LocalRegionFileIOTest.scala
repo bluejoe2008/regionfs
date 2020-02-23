@@ -4,7 +4,7 @@ import java.io._
 
 import cn.regionfs.GlobalConfig
 import cn.regionfs.server.{Region, RegionConfig}
-import cn.regionfs.util.Profiler._
+import cn.bluejoe.util.Profiler._
 import io.netty.buffer.{ByteBufInputStream, Unpooled}
 import org.apache.commons.io.IOUtils
 import org.junit.{Assert, Before, Test}

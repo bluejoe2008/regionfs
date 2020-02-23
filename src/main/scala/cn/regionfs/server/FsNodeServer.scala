@@ -199,14 +199,8 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
     override def openCompleteStream(): PartialFunction[Any, CompleteStream] = {
       case ReadFileRequest(regionId: Long, localId: Long) => {
-        // get region
         val region = localRegionManager.get(regionId)
-        /*
-        val buf = Unpooled.buffer()
-        region.writeTo(localId, buf)
-        new NettyManagedBuffer(buf)
-        */
-        region.readAsStream(rpcEnv.getTransportConf(), localId)
+        region.readAsStream(localId)
       }
     }
 
@@ -228,7 +222,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             val region = chooseRegionForWrite()
             val regionId = region.regionId
             val clone = extraInput.duplicate()
-            val localId = region.write(() => new ByteBufferInputStream(extraInput))
+            val localId = region.write(() => new ByteBufferInputStream(extraInput), totalLength)
             val neighbours = getNeighboursWhoHasRegion(regionId)
             //ask neigbours
             val futures = neighbours.map(addr =>
@@ -245,7 +239,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
           }
           else {
             val region = localRegionManager.get(maybeRegionId.get)
-            val localId = region.write(() => new ByteBufferInputStream(extraInput))
+            val localId = region.write(() => new ByteBufferInputStream(extraInput), totalLength)
 
             region.regionId -> localId
           }

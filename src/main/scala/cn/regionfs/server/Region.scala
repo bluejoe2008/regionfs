@@ -1,6 +1,8 @@
 package cn.regionfs.server
 
 import java.io._
+import java.nio.ByteBuffer
+import java.nio.channels.FileChannel
 import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.{CRC32, CheckedInputStream}
 
@@ -8,8 +10,6 @@ import cn.bluejoe.hippo.CompleteStream
 import cn.bluejoe.util.Logging
 import cn.regionfs.util.{Cache, FixSizedCache}
 import cn.regionfs.{Constants, FileId, GlobalConfig}
-import io.netty.buffer.ByteBuf
-import org.apache.spark.network.util.TransportConf
 
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
@@ -162,10 +162,10 @@ class RegionBodyStore(conf: RegionConfig) {
   val fileBody = new File(conf.regionDir, "body")
   val fileBodyLength = new AtomicLong(fileBody.length())
 
-  val reader = new RandomAccessFile(fileBody, "r");
+  val readerChannel = new RandomAccessFile(fileBody, "r").getChannel
   val appender = new FileOutputStream(fileBody, true)
 
-  def write(source: () => InputStream): WriteInfo = {
+  def write(source: () => InputStream, length: Long): WriteInfo = {
     val is = source()
     var n = 0
     var written = 0L
@@ -180,7 +180,6 @@ class RegionBodyStore(conf: RegionConfig) {
     }
 
     appender.write(Constants.REGION_FILE_BODY_EOF)
-    val length = written
     written += Constants.REGION_FILE_BODY_EOF.length
 
     appender.flush()
@@ -189,15 +188,12 @@ class RegionBodyStore(conf: RegionConfig) {
 
   def close(): Unit = {
     appender.close()
-    reader.close()
+    readerChannel.close()
   }
 
-  val content: Array[Byte] = new Array[Byte](Constants.SERVER_SIDE_READ_BUFFER_SIZE);
-
-  def read(offset: Long, length: Int): Array[Byte] = {
-    reader.seek(offset)
-    reader.readFully(content, 0, length)
-    content
+  def read(offset: Long, length: Int): ByteBuffer = {
+    readerChannel.position(offset)
+    readerChannel.map(FileChannel.MapMode.READ_ONLY, offset, length);
   }
 }
 
@@ -231,8 +227,8 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
     fmeta.iterator.map(meta => FileId.make(regionId, meta.localId) -> meta.length)
   }
 
-  def write(source: () => InputStream): Long = {
-    val info = fbody.write(source)
+  def write(source: () => InputStream, length: Long): Long = {
+    val info = fbody.write(source, length)
     val crc32 =
       if (conf.globalConfig.enableCrc) {
         computeCrc32(source)
@@ -255,25 +251,9 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
     idgen.close()
   }
 
-  def readAsStream(conf: TransportConf, localId: Long): CompleteStream = {
+  def readAsStream(localId: Long): CompleteStream = {
     val meta = fmeta.read(localId)
-    CompleteStream.fromFile(conf, fbody.fileBody, meta.offset, meta.length)
-  }
-
-  def writeTo(localId: Long, buf: ByteBuf): Long = {
-    val meta = fmeta.read(localId)
-    var ptr = meta.offset;
-    val end = meta.tail
-
-    while (ptr < end) {
-      val length = Math.min((end - ptr).toInt, Constants.SERVER_SIDE_READ_BUFFER_SIZE)
-      val bytes = fbody.read(ptr, length);
-      ptr += length
-
-      buf.writeBytes(bytes, 0, length)
-    }
-
-    meta.length
+    CompleteStream.fromByteBuffer(fbody.read(meta.offset, meta.length.toInt))
   }
 }
 

@@ -16,6 +16,7 @@ class FileTestBase {
   // StartSingleTestServer ./node1.conf
   // StartSingleTestServer ./node2.conf
   // StartSingleTestServer ./node3.conf
+  val server = NodeServerForTest.server
   val client = new FsClient("localhost:2181")
 
   def writeFiles(src: File, times: Int): Unit = {

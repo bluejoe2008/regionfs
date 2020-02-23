@@ -12,7 +12,7 @@ object ShellNodeServerStarter {
     if (args.length != 1)
       throw new RuntimeException("conf file is required!")
 
-    val server = FsNodeServer.build(new File(args(0)))
-    server.start()
+    val server = FsNodeServer.create(new File(args(0)))
+    server.startup()
   }
 }

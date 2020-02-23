@@ -4,29 +4,58 @@ import java.io.InputStream
 import java.net.InetSocketAddress
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
 
 import cn.regionfs.network._
-import cn.regionfs.util.Profiler._
-import cn.regionfs.util.ReflectUtils._
-import cn.regionfs.util.StreamUtils
-import io.netty.buffer.{ByteBuf, Unpooled}
+import io.netty.buffer.ByteBuf
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc._
 import net.neoremind.kraps.serializer.{JavaSerializer, JavaSerializerInstance}
 import net.neoremind.kraps.util.{ThreadUtils, Utils}
 import org.apache.spark.network.TransportContext
-import org.apache.spark.network.buffer.{ManagedBuffer, NettyManagedBuffer}
 import org.apache.spark.network.client.{RpcResponseCallback, TransportClient}
-import org.apache.spark.network.server.{RpcHandler, StreamManager}
+import org.apache.spark.network.server.RpcHandler
 import org.slf4j.LoggerFactory
-import cn.regionfs.util.ByteBufferUtils._
-import scala.collection.mutable
+import cn.regionfs.util.ReflectUtils._
 import scala.concurrent.Future
 import scala.util.control.NonFatal
 
 /**
   * Created by bluejoe on 2020/2/21.
+  *
+  * HippoRpcEnv enhances NettyRpcEnv with stream handling functions, besides RPC messaging
+  *
+  *                    ,.I ....
+  *                  ... ZO.. .. M  .
+  *                  ...=.       .,,.
+  *                 .,D           ..?...O.
+  *        ..=MD~,.. .,           .O  . O
+  *     ..,            +I.        . .,N,  ,$N,,...
+  *     O.                   ..    .~.+.      . N, .
+  *    7.,, .                8. ..   ...         ,O.
+  *    I.DMM,.                .M     .O           ,D
+  *    ...MZ .                 ~.   ....          ..N..    :
+  *    ?                     .I.    ,..             ..     ,
+  *    +.       ,MM=       ..Z.   .,.               .MDMN~$
+  *    .I.      .MMD     ..M . .. =..                :. . ..
+  *    .,M      ....   .Z. .   +=. .                 ..
+  *       ~M~  ... 7D...   .=~.      . .              .
+  *        ..$Z... ...+MO..          .M               .
+  *                     .M. ,.       .I   .?.        ..
+  *                     .~ .. Z=I7.. .7.  .ZM~+N..   ..
+  *                     .O   D   . , .M ...M   . .  .: .
+  *                     . NNN.I....O.... .. M:. .M,=8..
+  *                      ....,...,.  ..   ...   ..
+  *
+  *
+  * usage of HippoRpcEnv is like that of NettyRpcEnv:
+  *
+  *   rpcEnv = HippoRpcEnvFactory.create(config)
+  *   val endpoint: RpcEndpoint = new FileRpcEndpoint(rpcEnv)
+  *   rpcEnv.setupEndpoint("endpoint-name", endpoint)
+  *   rpcEnv.setStreamManger(new FileStreamManager())
+  *   ...
+  *   ...
+  *   val endPointRef = rpcEnv.setupEndpointRef(RpcAddress(...), "...");
   */
 object HippoRpcEnvFactory extends RpcEnvFactory {
   override def create(config: RpcEnvConfig): HippoRpcEnv = {
@@ -60,7 +89,6 @@ object HippoRpcEnvFactory extends RpcEnvFactory {
 class HippoEndpointRef(ref: NettyRpcEndpointRef, rpcEnv: HippoRpcEnv, conf: RpcConf) extends RpcEndpointRef(conf) {
   override def address: RpcAddress = ref.address
 
-  //TODO: client pool?
   val streamingClient = new HippoClient(rpcEnv.createClient(ref.address))
 
   override def ask[T](message: Any, timeout: RpcTimeout)(implicit evidence$1: ClassManifest[T]): Future[T] =
@@ -105,73 +133,8 @@ class HippoRpcEnv(conf: RpcConf, javaSerializerInstance: JavaSerializerInstance,
   }
 }
 
-trait HippoStreamManager {
-  def openStream(): PartialFunction[Any, ManagedBuffer] = {
-    throw new UnsupportedOperationException();
-  }
-
-  def openChunkedStream(): PartialFunction[Any, ChunkedStream] = {
-    throw new UnsupportedOperationException();
-  }
-}
-
 class NullHippoStreamManager extends HippoStreamManager {
 
-}
-
-class HippoStreamManagerAdapter(var streamManager: HippoStreamManager) extends StreamManager {
-  val streamIdGen = new AtomicLong(System.currentTimeMillis());
-  val streams = mutable.Map[Long, ChunkedStream]();
-
-  override def getChunk(streamId: Long, chunkIndex: Int): ManagedBuffer = {
-    if (logger.isTraceEnabled)
-      logger.trace(s"get chunk: streamId=$streamId, chunkIndex=$chunkIndex")
-
-    //1-2ms
-    timing(false) {
-      val buf = Unpooled.buffer(1024)
-      val stream = streams(streamId)
-      _writeNextChunk(buf, streamId, chunkIndex, stream)
-
-      new NettyManagedBuffer(buf)
-    }
-  }
-
-  override def openStream(streamId: String): ManagedBuffer = {
-    val request = StreamUtils.deserializeObject(StreamUtils.base64.decode(streamId))
-    streamManager.openStream()(request);
-  }
-
-  private def _writeNextChunk(buf: ByteBuf, streamId: Long, chunkIndex: Int, stream: ChunkedStream) {
-    buf.writeLong(streamId).writeInt(0).writeByte(1)
-
-    if (stream.hasNext()) {
-      stream.nextChunk(buf)
-    }
-
-    if (!stream.hasNext()) {
-      buf.setByte(8 + 4, 0)
-      stream.close()
-      streams.remove(streamId)
-    }
-  }
-
-  def handleOpenStreamRequest(streamRequest: Any, callback: RpcResponseCallback) {
-    val streamId: Long = streamIdGen.getAndIncrement();
-    val stream = streamManager.openChunkedStream()(streamRequest)
-    val output = Unpooled.buffer(1024);
-    output.writeObject(OpenStreamResponse(streamId, stream.hasNext()));
-    if (stream.hasNext()) {
-      streams(streamId) = stream
-    }
-
-    callback.onSuccess(output.nioBuffer())
-  }
-
-  def handleCloseStreamRequest(streamId: Long, callback: RpcResponseCallback): Unit = {
-    streams(streamId).close
-    streams -= streamId
-  }
 }
 
 class HippoRpcHandler(dispatcher: Dispatcher, nettyEnv: NettyRpcEnv)

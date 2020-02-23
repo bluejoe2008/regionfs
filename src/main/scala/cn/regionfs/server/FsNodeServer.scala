@@ -4,11 +4,11 @@ import java.io._
 import java.util.Random
 
 import cn.regionfs._
-import cn.regionfs.network.{BufferedMessageStream, ChunkedStream}
+import cn.regionfs.network.{HippoStreamManager, BufferedMessageStream, ChunkedStream}
 import cn.regionfs.util.{ConfigurationEx, Logging}
 import io.netty.buffer.Unpooled
 import net.neoremind.kraps.RpcConf
-import net.neoremind.kraps.rpc.netty.{HippoRpcEnv, HippoRpcEnvFactory, HippoStreamManager}
+import net.neoremind.kraps.rpc.netty.{HippoRpcEnv, HippoRpcEnvFactory}
 import net.neoremind.kraps.rpc.{RpcCallContext, RpcEndpoint, RpcEnv, RpcEnvServerConfig}
 import org.apache.spark.network.buffer.{ManagedBuffer, NettyManagedBuffer}
 import org.apache.zookeeper.ZooDefs.Ids

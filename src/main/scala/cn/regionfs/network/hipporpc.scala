@@ -23,6 +23,34 @@ import scala.concurrent.{Await, ExecutionContext, Future}
 
 /**
   * Created by bluejoe on 2020/2/17.
+  *
+  * Hippo Transport Library enhances spark-commons with easy stream management & handling
+  *
+  *                    ,.I ....
+  *                  ... ZO.. .. M  .
+  *                  ...=.       .,,.
+  *                 .,D           ..?...O.
+  *        ..=MD~,.. .,           .O  . O
+  *     ..,            +I.        . .,N,  ,$N,,...
+  *     O.                   ..    .~.+.      . N, .
+  *    7.,, .                8. ..   ...         ,O.
+  *    I.DMM,.                .M     .O           ,D
+  *    ...MZ .                 ~.   ....          ..N..    :
+  *    ?                     .I.    ,..             ..     ,
+  *    +.       ,MM=       ..Z.   .,.               .MDMN~$
+  *    .I.      .MMD     ..M . .. =..                :. . ..
+  *    .,M      ....   .Z. .   +=. .                 ..
+  *       ~M~  ... 7D...   .=~.      . .              .
+  *        ..$Z... ...+MO..          .M               .
+  *                     .M. ,.       .I   .?.        ..
+  *                     .~ .. Z=I7.. .7.  .ZM~+N..   ..
+  *                     .O   D   . , .M ...M   . .  .: .
+  *                     . NNN.I....O.... .. M:. .M,=8..
+  *                      ....,...,.  ..   ...   ..
+  *
+  * HippoServer enhances TransportServer with stream manager(open, streaming fetch, close)
+  * HippoClient enhances TransportClient with stream request and result boxing (as Stream[T])
+  *
   */
 trait ReceiveContext {
   def extraInput: ByteBuf
@@ -65,7 +93,7 @@ trait ChunkedMessageStream[T] extends ChunkedStream {
 object BufferedMessageStream {
   val executor = Executors.newSingleThreadExecutor();
 
-  def create[T](bufferSize: Int, producer: (OutputBuffer[T]) => Unit) =
+  def create[T](bufferSize: Int, producer: (OutputBuffer[T]) => Unit)(implicit m: Manifest[T]) =
     new BufferedMessageStream[T](executor, bufferSize, producer);
 }
 
@@ -73,7 +101,7 @@ trait OutputBuffer[T] {
   def push(value: T);
 }
 
-class BufferedMessageStream[T](executor: ExecutorService, bufferSize: Int, producer: (OutputBuffer[T]) => Unit) extends ChunkedMessageStream[T] {
+class BufferedMessageStream[T](executor: ExecutorService, bufferSize: Int, producer: (OutputBuffer[T]) => Unit)(implicit m: Manifest[T]) extends ChunkedMessageStream[T] {
   val buffer = new ArrayBlockingQueue[T](bufferSize);
 
   val future = executor.submit(new Runnable {
@@ -82,28 +110,21 @@ class BufferedMessageStream[T](executor: ExecutorService, bufferSize: Int, produ
     })
   })
 
-  override def hasNext(): Boolean = !future.isDone
+  override def hasNext(): Boolean = !(future.isDone && buffer.isEmpty)
 
   def nextChunk(): Iterable[T] = {
-    if (!hasNext) {
-      Iterable.empty[T]
-    }
-    else {
-      val first = buffer.take()
-      val list = new java.util.ArrayList[T]();
-      buffer.drainTo(list)
-      list.add(0, first)
-
-      JavaConversions.collectionAsScalaIterable(list)
-    }
+    val first = buffer.take()
+    val list = new java.util.ArrayList[T]();
+    buffer.drainTo(list)
+    list.add(0, first)
+    println(list);
+    JavaConversions.collectionAsScalaIterable(list)
   }
 
   override def close(): Unit = future.cancel(true)
 }
 
-trait StreamingRpcHandler {
-  def receive(ctx: ReceiveContext): PartialFunction[Any, Unit];
-
+trait HippoStreamManager {
   def openStream(): PartialFunction[Any, ManagedBuffer] = {
     throw new UnsupportedOperationException();
   }
@@ -113,22 +134,75 @@ trait StreamingRpcHandler {
   }
 }
 
+class HippoStreamManagerAdapter(var streamManager: HippoStreamManager) extends StreamManager {
+  val streamIdGen = new AtomicLong(System.currentTimeMillis());
+  val streams = mutable.Map[Long, ChunkedStream]();
+
+  override def getChunk(streamId: Long, chunkIndex: Int): ManagedBuffer = {
+    if (logger.isTraceEnabled)
+      logger.trace(s"get chunk: streamId=$streamId, chunkIndex=$chunkIndex")
+
+    //1-2ms
+    timing(false) {
+      val buf = Unpooled.buffer(1024)
+      val stream = streams(streamId)
+      _writeNextChunk(buf, streamId, chunkIndex, stream)
+
+      new NettyManagedBuffer(buf)
+    }
+  }
+
+  override def openStream(streamId: String): ManagedBuffer = {
+    val request = StreamUtils.deserializeObject(StreamUtils.base64.decode(streamId))
+    streamManager.openStream()(request);
+  }
+
+  private def _writeNextChunk(buf: ByteBuf, streamId: Long, chunkIndex: Int, stream: ChunkedStream) {
+    buf.writeLong(streamId).writeInt(0).writeByte(1)
+
+    if (stream.hasNext()) {
+      stream.nextChunk(buf)
+    }
+
+    if (!stream.hasNext()) {
+      buf.setByte(8 + 4, 0)
+      stream.close()
+      streams.remove(streamId)
+    }
+  }
+
+  def handleOpenStreamRequest(streamRequest: Any, callback: RpcResponseCallback) {
+    val streamId: Long = streamIdGen.getAndIncrement();
+    val stream = streamManager.openChunkedStream()(streamRequest)
+    val output = Unpooled.buffer(1024);
+    output.writeObject(OpenStreamResponse(streamId, stream.hasNext()));
+    if (stream.hasNext()) {
+      streams(streamId) = stream
+    }
+
+    callback.onSuccess(output.nioBuffer())
+  }
+
+  def handleCloseStreamRequest(streamId: Long, callback: RpcResponseCallback): Unit = {
+    streams(streamId).close
+    streams -= streamId
+  }
+}
+
+trait HippoRpcHandler extends HippoStreamManager {
+  def receive(ctx: ReceiveContext): PartialFunction[Any, Unit];
+}
+
 object HippoServer extends Logging {
   //WEIRLD: this makes next Upooled.buffer() call run fast
   Unpooled.buffer(1)
 
-  def create(module: String, srh: StreamingRpcHandler, port: Int = -1, host: String = null): HippoServer = {
+  def create(module: String, rpcHandler: HippoRpcHandler, port: Int = -1, host: String = null): HippoServer = {
     val configProvider = new MapConfigProvider(JavaConversions.mapAsJavaMap(Map()))
     val conf: TransportConf = new TransportConf(module, configProvider)
-    val streamIdGen = new AtomicLong(System.currentTimeMillis());
-    val streams = mutable.Map[Long, ChunkedStream]();
 
     val handler: RpcHandler = new RpcHandler() {
-      //mark=message(0)
-      //1: raw buffer
-      //2: rpc message
-      //3: open stream request
-      //4: close stream request
+
       override def receive(client: TransportClient, input: ByteBuffer, callback: RpcResponseCallback) {
         try {
           val ctx = new ReceiveContext {
@@ -146,28 +220,18 @@ object HippoServer extends Logging {
             }
 
             def extraInput: ByteBuf = Unpooled.wrappedBuffer(input)
-          };
+          }
 
           val message = input.readObject();
           message match {
-            case OpenStreamRequest(streamRequest) => {
-              val streamId: Long = streamIdGen.getAndIncrement();
-              val stream = srh.openChunkedStream()(streamRequest)
+            case OpenStreamRequest(streamRequest) =>
+              streamManagerAdapter.handleOpenStreamRequest(streamRequest, callback)
 
-              ctx.reply(OpenStreamResponse(streamId, stream.hasNext()))
-
-              if (stream.hasNext()) {
-                streams(streamId) = stream
-              }
-            }
-
-            case CloseStreamRequest(streamId) => {
-              streams(streamId).close
-              streams -= streamId
-            }
+            case CloseStreamRequest(streamId) =>
+              streamManagerAdapter.handleCloseStreamRequest(streamId, callback)
 
             case _ => {
-              srh.receive(ctx)(message)
+              rpcHandler.receive(ctx)(message)
             }
           }
         }
@@ -176,42 +240,9 @@ object HippoServer extends Logging {
         }
       }
 
-      private def _writeNextChunk(buf: ByteBuf, streamId: Long, chunkIndex: Int, stream: ChunkedStream) {
-        buf.writeLong(streamId).writeInt(0).writeByte(1)
+      val streamManagerAdapter = new HippoStreamManagerAdapter(rpcHandler);
 
-        if (stream.hasNext()) {
-          stream.nextChunk(buf)
-        }
-
-        if (!stream.hasNext()) {
-          buf.setByte(8 + 4, 0)
-          stream.close()
-          streams.remove(streamId)
-        }
-      }
-
-      val streamManager = new StreamManager() {
-        override def getChunk(streamId: Long, chunkIndex: Int): ManagedBuffer = {
-          if (logger.isTraceEnabled)
-            logger.trace(s"get chunk: streamId=$streamId, chunkIndex=$chunkIndex")
-
-          //1-2ms
-          timing(false) {
-            val buf = Unpooled.buffer(1024)
-            val stream = streams(streamId)
-            _writeNextChunk(buf, streamId, chunkIndex, stream)
-
-            new NettyManagedBuffer(buf)
-          }
-        }
-
-        override def openStream(streamId: String): ManagedBuffer = {
-          val request = StreamUtils.deserializeObject(StreamUtils.base64.decode(streamId))
-          srh.openStream()(request);
-        }
-      }
-
-      override def getStreamManager: StreamManager = streamManager
+      override def getStreamManager: StreamManager = streamManagerAdapter
     }
 
     val context: TransportContext = new TransportContext(conf, handler)

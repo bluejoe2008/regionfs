@@ -37,7 +37,7 @@ case class GetBufferedResultsRequest(total: Int) {
 }
 
 object HippoRpcServerForTest {
-  val server = HippoServer.create("test", new StreamingRpcHandler() {
+  val server = HippoServer.create("test", new HippoRpcHandler() {
 
     override def receive(ctx: ReceiveContext): PartialFunction[Any, Unit] = {
       case SayHelloRequest(msg) =>

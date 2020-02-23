@@ -21,31 +21,11 @@ case class ListFileResponseDetail(result: (FileId, Long)) {
 
 }
 
-case class SendCompleteFileRequest(regionId: Option[Long], bytes: Array[Byte], totalLength: Long) {
+case class SendFileRequest(maybeRegionId: Option[Long], totalLength: Long) {
 
 }
 
-case class SendCompleteFileResponse(fileId: FileId) {
-
-}
-
-case class DiscardSendChunksRequest(transId: Long) {
-
-}
-
-case class StartSendChunksRequest(regionId: Option[Long], totalLength: Long) {
-
-}
-
-case class StartSendChunksResponse(transId: Long) {
-
-}
-
-case class SendChunkRequest(transId: Long, chunkBytes: Array[Byte], offset: Long, chunkLength: Int, chunkIndex: Int) {
-
-}
-
-case class SendChunkResponse(fileId: Option[FileId], chunkLength: Long) {
+case class SendFileResponse(fileId: FileId) {
 
 }
 

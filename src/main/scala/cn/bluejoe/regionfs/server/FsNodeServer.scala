@@ -1,4 +1,4 @@
-package cn.regionfs.server
+package cn.bluejoe.regionfs.server
 
 import java.io._
 import java.nio.ByteBuffer
@@ -6,9 +6,9 @@ import java.util.Random
 
 import cn.bluejoe.hippo.{ChunkedStream, CompleteStream, HippoRpcHandler, ReceiveContext}
 import cn.bluejoe.util.{ByteBufferInputStream, Logging}
-import cn.regionfs._
-import cn.regionfs.client.{NodeAddress, NodeStat, RegionStat}
-import cn.regionfs.util.ConfigurationEx
+import cn.bluejoe.regionfs._
+import cn.bluejoe.regionfs.client.{NodeAddress, NodeStat, RegionStat}
+import cn.bluejoe.regionfs.util.ConfigurationEx
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.{HippoRpcEnv, HippoRpcEnvFactory}
 import net.neoremind.kraps.rpc.{RpcCallContext, RpcEndpoint, RpcEnvServerConfig}

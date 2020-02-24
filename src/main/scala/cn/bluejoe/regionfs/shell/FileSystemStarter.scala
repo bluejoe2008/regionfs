@@ -1,8 +1,8 @@
-package cn.regionfs.shell
+package cn.bluejoe.regionfs.shell
 
 import java.io.File
 
-import cn.regionfs.FileSystemStarter
+import cn.bluejoe.regionfs.FileSystemStarter
 
 /**
   * Created by bluejoe on 2020/2/6.

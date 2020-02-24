@@ -1,4 +1,4 @@
-package cn.regionfs.server
+package cn.bluejoe.regionfs.server
 
 import java.io._
 import java.nio.ByteBuffer
@@ -8,8 +8,8 @@ import java.util.zip.{CRC32, CheckedInputStream}
 
 import cn.bluejoe.hippo.CompleteStream
 import cn.bluejoe.util.Logging
-import cn.regionfs.util.{Cache, FixSizedCache}
-import cn.regionfs.{Constants, FileId, GlobalConfig}
+import cn.bluejoe.regionfs.util.{Cache, FixSizedCache}
+import cn.bluejoe.regionfs.{Constants, FileId, GlobalConfig}
 
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer

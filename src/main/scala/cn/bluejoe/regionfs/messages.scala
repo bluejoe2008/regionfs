@@ -1,6 +1,6 @@
-package cn.regionfs
+package cn.bluejoe.regionfs
 
-import cn.regionfs.client.NodeStat
+import cn.bluejoe.regionfs.client.NodeStat
 
 /**
   * Created by bluejoe on 2019/8/23.

@@ -1,4 +1,4 @@
-package cn.regionfs.util
+package cn.bluejoe.regionfs.util
 
 import scala.collection.mutable
 

@@ -1,7 +1,7 @@
-package cn.regionfs
+package cn.bluejoe.regionfs
 
 import cn.bluejoe.util.Logging
-import cn.regionfs.client.{NodeAddress, FsNodeClient}
+import cn.bluejoe.regionfs.client.{NodeAddress, FsNodeClient}
 import org.apache.zookeeper.Watcher.Event.EventType
 import org.apache.zookeeper.{WatchedEvent, Watcher, ZooKeeper}
 

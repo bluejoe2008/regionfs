@@ -1,4 +1,4 @@
-package cn.regionfs
+package cn.bluejoe.regionfs
 
 import java.io.{ByteArrayOutputStream, DataOutputStream}
 

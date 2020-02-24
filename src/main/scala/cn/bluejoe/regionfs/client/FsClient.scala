@@ -1,9 +1,9 @@
-package cn.regionfs.client
+package cn.bluejoe.regionfs.client
 
 import java.io.InputStream
 
 import cn.bluejoe.util.Logging
-import cn.regionfs._
+import cn.bluejoe.regionfs._
 import io.netty.buffer.ByteBuf
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.{HippoRpcEnv, HippoRpcEnvFactory}

@@ -1,9 +1,9 @@
-package cn.regionfs
+package cn.bluejoe.regionfs
 
 import java.io.{ByteArrayInputStream, File, FileInputStream}
 import java.util.Properties
-import cn.regionfs.server.RegionFsServersException
-import cn.regionfs.util.ConfigurationEx
+import cn.bluejoe.regionfs.server.RegionFsServersException
+import cn.bluejoe.regionfs.util.ConfigurationEx
 import org.apache.commons.io.IOUtils
 import org.apache.zookeeper.ZooDefs.Ids
 import org.apache.zookeeper.{CreateMode, WatchedEvent, Watcher, ZooKeeper}

@@ -3,8 +3,8 @@ package regionfs
 import java.io.{ByteArrayInputStream, File, FileInputStream, FileOutputStream}
 
 import cn.bluejoe.util.Profiler
-import cn.regionfs.FileId
-import cn.regionfs.client.FsClient
+import cn.bluejoe.regionfs.FileId
+import cn.bluejoe.regionfs.client.FsClient
 
 import scala.concurrent.Future
 

@@ -18,7 +18,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package cn.regionfs.util
+package cn.bluejoe.regionfs.util
 
 import java.io.{File, FileInputStream}
 import java.util.Properties

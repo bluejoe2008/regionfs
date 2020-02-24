@@ -3,8 +3,8 @@ package regionfs
 import java.io._
 
 import cn.bluejoe.util.Profiler._
-import cn.regionfs.GlobalConfig
-import cn.regionfs.server.{Region, RegionConfig}
+import cn.bluejoe.regionfs.GlobalConfig
+import cn.bluejoe.regionfs.server.{Region, RegionConfig}
 import org.apache.commons.io.IOUtils
 import org.junit.{Assert, Before, Test}
 

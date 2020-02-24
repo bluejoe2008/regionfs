@@ -1,6 +1,6 @@
 package regionfs
 
-import cn.regionfs.client.FsAdmin
+import cn.bluejoe.regionfs.client.FsAdmin
 import org.junit.Test
 
 /**

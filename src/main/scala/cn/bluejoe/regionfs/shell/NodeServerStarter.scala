@@ -1,8 +1,8 @@
-package cn.regionfs.shell
+package cn.bluejoe.regionfs.shell
 
 import java.io.File
 
-import cn.regionfs.server.FsNodeServer
+import cn.bluejoe.regionfs.server.FsNodeServer
 
 /**
   * Created by bluejoe on 2019/8/31.

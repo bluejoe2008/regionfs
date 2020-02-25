@@ -29,7 +29,6 @@ class NodeWatcher(zk: ZooKeeper, filter: (RpcAddress) => Boolean) extends Loggin
 
   def stop(): Unit = {
     watchingFlag = false
-    zk.getChildren(s"/regionfs/nodes", null)
     mapNodeClients.foreach(_._2.close())
   }
 
@@ -105,7 +104,6 @@ class RegionWatcher(zk: ZooKeeper, filter: (RpcAddress) => Boolean) extends Logg
 
   def stop(): Unit = {
     watchingFlag = false
-    zk.getChildren(s"/regionfs/regions", null)
   }
 
   mapNodeRegions ++=
@@ -152,7 +150,6 @@ class RegionNodesWatcher(zk: ZooKeeper) extends Logging {
 
   def stop(): Unit = {
     watchingFlag = false
-    zk.getChildren(s"/regionfs/regions", null)
   }
 
   mapRegionNodes ++=

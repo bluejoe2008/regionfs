@@ -1,7 +1,9 @@
 package cn.bluejoe.regionfs
 
+import cn.bluejoe.regionfs.client.FsNodeClient
+import cn.bluejoe.regionfs.util.RpcAddressUtils
 import cn.bluejoe.util.Logging
-import cn.bluejoe.regionfs.client.{NodeAddress, FsNodeClient}
+import net.neoremind.kraps.rpc.RpcAddress
 import org.apache.zookeeper.Watcher.Event.EventType
 import org.apache.zookeeper.{WatchedEvent, Watcher, ZooKeeper}
 
@@ -22,28 +24,36 @@ import scala.collection.mutable
   *    node2_1224
   *    ...
   */
-class NodeWatcher(zk: ZooKeeper, filter: (NodeAddress) => Boolean) extends Logging {
+class NodeWatcher(zk: ZooKeeper, filter: (RpcAddress) => Boolean) extends Logging {
+  var watchingFlag = true
+
+  def stop(): Unit = {
+    watchingFlag = false
+    zk.getChildren(s"/regionfs/nodes", null)
+    mapNodeClients.foreach(_._2.close())
+  }
 
   //node1_1224->client1, node1_1225->client2, ...
   //client will be automatically created
-  val mapNodeClients = mutable.Map[NodeAddress, FsNodeClient]()
+  val mapNodeClients = mutable.Map[RpcAddress, FsNodeClient]()
 
   mapNodeClients ++= zk.getChildren(s"/regionfs/nodes", new Watcher {
     private def keepWatching() = {
-      zk.getChildren(s"/regionfs/nodes", this.asInstanceOf[Watcher])
+      if (watchingFlag)
+        zk.getChildren(s"/regionfs/nodes", this.asInstanceOf[Watcher])
     }
 
     override def process(event: WatchedEvent): Unit = {
       event.getType match {
         case EventType.NodeCreated => {
           //get `node1_1224`
-          val addr = NodeAddress.fromString(event.getPath.drop("/regionfs/nodes".length), "_");
+          val addr = RpcAddressUtils.fromString(event.getPath.drop("/regionfs/nodes".length), "_");
           //new node created, now add it to mapNodeClients
           mapNodeClients += (addr -> FsNodeClient.connect(addr))
         }
 
         case EventType.NodeDeleted => {
-          val addr = NodeAddress.fromString(event.getPath.drop("/regionfs/nodes".length), "_");
+          val addr = RpcAddressUtils.fromString(event.getPath.drop("/regionfs/nodes".length), "_");
           mapNodeClients(addr).close
           //remove deleted node (dead node)
           mapNodeClients -= addr
@@ -58,7 +68,7 @@ class NodeWatcher(zk: ZooKeeper, filter: (NodeAddress) => Boolean) extends Loggi
       //this call renews the getChildren() Events
       keepWatching
     }
-  }).map(NodeAddress.fromString(_, "_")).
+  }).map(RpcAddressUtils.fromString(_, "_")).
     filter(filter).
     map { addr =>
       addr -> FsNodeClient.connect(addr)
@@ -70,7 +80,7 @@ class NodeWatcher(zk: ZooKeeper, filter: (NodeAddress) => Boolean) extends Loggi
 
   def isEmpty = mapNodeClients.isEmpty
 
-  def clientOf(addr: NodeAddress): FsNodeClient = mapNodeClients(addr)
+  def clientOf(addr: RpcAddress): FsNodeClient = mapNodeClients(addr)
 
   def size = mapNodeClients.size
 
@@ -87,28 +97,35 @@ class NodeWatcher(zk: ZooKeeper, filter: (NodeAddress) => Boolean) extends Loggi
   *    node2_1224_1
   *    ...
   */
-class RegionWatcher(zk: ZooKeeper, filter: (NodeAddress) => Boolean) extends Logging {
+class RegionWatcher(zk: ZooKeeper, filter: (RpcAddress) => Boolean) extends Logging {
 
   //node1_1224->1, node1_1225->2, ...
-  val mapNodeRegions = mutable.Map[NodeAddress, Long]()
+  val mapNodeRegions = mutable.Map[RpcAddress, Long]()
+  var watchingFlag = true
+
+  def stop(): Unit = {
+    watchingFlag = false
+    zk.getChildren(s"/regionfs/regions", null)
+  }
 
   mapNodeRegions ++=
     zk.getChildren(s"/regionfs/regions", new Watcher {
 
       private def keepWatching() = {
-        zk.getChildren(s"/regionfs/regions", this.asInstanceOf[Watcher])
+        if (watchingFlag)
+          zk.getChildren(s"/regionfs/regions", this.asInstanceOf[Watcher])
       }
 
       override def process(event: WatchedEvent): Unit = {
         event.getType match {
           case EventType.NodeCreated => {
             val splits = event.getPath.split("_")
-            mapNodeRegions += NodeAddress(splits(0), splits(1).toInt) -> splits(2).toLong
+            mapNodeRegions += RpcAddress(splits(0), splits(1).toInt) -> splits(2).toLong
           }
 
           case EventType.NodeDeleted => {
             val splits = event.getPath.split("_")
-            mapNodeRegions -= NodeAddress(splits(0), splits(1).toInt)
+            mapNodeRegions -= RpcAddress(splits(0), splits(1).toInt)
           }
 
           case _ => {
@@ -120,7 +137,7 @@ class RegionWatcher(zk: ZooKeeper, filter: (NodeAddress) => Boolean) extends Log
       }
     }).map { name =>
       val splits = name.split("_")
-      NodeAddress(splits(0), splits(1).toInt) -> splits(2).toLong
+      RpcAddress(splits(0), splits(1).toInt) -> splits(2).toLong
     }.
       filter(x => filter(x._1))
 
@@ -129,20 +146,27 @@ class RegionWatcher(zk: ZooKeeper, filter: (NodeAddress) => Boolean) extends Log
 
 
 class RegionNodesWatcher(zk: ZooKeeper) extends Logging {
-  private val mapRegionNodes = mutable.Map[Long, NodeAddress]() // map: Region -> host_port
+  private val mapRegionNodes = mutable.Map[Long, RpcAddress]()
+  // map: Region -> host_port
+  var watchingFlag = true
+
+  def stop(): Unit = {
+    watchingFlag = false
+    zk.getChildren(s"/regionfs/regions", null)
+  }
 
   mapRegionNodes ++=
     zk.getChildren(s"/regionfs/regions", new Watcher {
-
       private def keepWatching() = {
-        zk.getChildren(s"/regionfs/regions", this.asInstanceOf[Watcher])
+        if (watchingFlag)
+          zk.getChildren(s"/regionfs/regions", this.asInstanceOf[Watcher])
       }
 
       override def process(event: WatchedEvent): Unit = {
         event.getType match {
           case EventType.NodeCreated => {
             val splits = event.getPath.split("_")
-            mapRegionNodes += splits(2).toLong -> NodeAddress(splits(0), splits(1).toInt)
+            mapRegionNodes += splits(2).toLong -> RpcAddress(splits(0), splits(1).toInt)
 
             keepWatching
           }
@@ -161,7 +185,7 @@ class RegionNodesWatcher(zk: ZooKeeper) extends Logging {
       }
     }).map { name =>
       val splits = name.split("_")
-      splits(2).toLong -> NodeAddress(splits(0), splits(1).toInt)
+      splits(2).toLong -> RpcAddress(splits(0), splits(1).toInt)
     }
 
   logger.debug(s"loaded neighbour regions: $mapRegionNodes")

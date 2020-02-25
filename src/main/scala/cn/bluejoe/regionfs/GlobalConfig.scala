@@ -41,8 +41,13 @@ object GlobalConfig {
   }
 }
 
-class FileSystemStarter {
-  def start(configFile: File): Unit = {
+class GlobalConfigPathNotFoundException(path: String) extends
+  RegionFsServersException(s"zookeeper path not exists: $path") {
+
+}
+
+class GlobalConfigConfigurer {
+  def config(configFile: File): Unit = {
     val conf = new ConfigurationEx(configFile)
 
     val zks = conf.get("zookeeper.address").asString
@@ -54,10 +59,7 @@ class FileSystemStarter {
     val fis = new FileInputStream(configFile)
     GlobalConfig.save(zk, IOUtils.toByteArray(fis))
     fis.close()
+
+    zk.close()
   }
-}
-
-class GlobalConfigPathNotFoundException(path: String) extends
-  RegionFsServersException(s"zookeeper path not exists: $path") {
-
 }

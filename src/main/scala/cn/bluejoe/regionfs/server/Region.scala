@@ -6,10 +6,9 @@ import java.nio.channels.FileChannel
 import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.{CRC32, CheckedInputStream}
 
-import cn.bluejoe.hippo.CompleteStream
-import cn.bluejoe.util.Logging
 import cn.bluejoe.regionfs.util.{Cache, FixSizedCache}
 import cn.bluejoe.regionfs.{Constants, FileId, GlobalConfig}
+import cn.bluejoe.util.{ByteBufferInputStream, Logging}
 
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
@@ -157,43 +156,34 @@ case class WriteInfo(offset: Long, length: Long, actualWritten: Long) {
 }
 
 class RegionBodyStore(conf: RegionConfig) {
-  val WRITE_BUFFER_SIZE = 10240
   //region file, one file for each region by far
   val fileBody = new File(conf.regionDir, "body")
   val fileBodyLength = new AtomicLong(fileBody.length())
 
   val readerChannel = new RandomAccessFile(fileBody, "r").getChannel
-  val appender = new FileOutputStream(fileBody, true)
+  val appenderChannel = new FileOutputStream(fileBody, true).getChannel
 
-  def write(source: () => InputStream, length: Long): WriteInfo = {
-    val is = source()
-    var n = 0
-    var written = 0L
-    while (n >= 0) {
-      //10K?
-      val bytes = new Array[Byte](WRITE_BUFFER_SIZE)
-      n = is.read(bytes)
-      if (n > 0) {
-        appender.write(bytes, 0, n)
-        written += n
-      }
+  def write(buf: ByteBuffer): WriteInfo = {
+    val length = buf.remaining()
+
+    appenderChannel.synchronized {
+      appenderChannel.write(Array(buf, ByteBuffer.wrap(Constants.REGION_FILE_BODY_EOF)))
     }
 
-    appender.write(Constants.REGION_FILE_BODY_EOF)
-    written += Constants.REGION_FILE_BODY_EOF.length
-
-    appender.flush()
+    val written = length + Constants.REGION_FILE_BODY_EOF.length
     WriteInfo(fileBodyLength.getAndAdd(written), length, written)
   }
 
   def close(): Unit = {
-    appender.close()
+    appenderChannel.close()
     readerChannel.close()
   }
 
   def read(offset: Long, length: Int): ByteBuffer = {
-    readerChannel.position(offset)
-    readerChannel.map(FileChannel.MapMode.READ_ONLY, offset, length);
+    readerChannel.synchronized {
+      readerChannel.position(offset)
+      readerChannel.map(FileChannel.MapMode.READ_ONLY, offset, length);
+    }
   }
 }
 
@@ -227,11 +217,12 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
     fmeta.iterator.map(meta => FileId.make(regionId, meta.localId) -> meta.length)
   }
 
-  def write(source: () => InputStream, length: Long): Long = {
-    val info = fbody.write(source, length)
+  def write(buf: ByteBuffer): Long = {
+    val info = fbody.write(buf)
     val crc32 =
       if (conf.globalConfig.enableCrc) {
-        computeCrc32(source)
+        val clone = buf.duplicate()
+        computeCrc32(() => new ByteBufferInputStream(clone))
       }
       else {
         0
@@ -240,8 +231,8 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
     //get local id
     idgen.consumeNextId((id: Long) => {
       fmeta.write(id, info.offset, info.length, crc32)
-      if (logger.isDebugEnabled)
-        logger.debug(s"[region-$regionId] written:localId=$id, length=${info.length}, actual=${info.actualWritten}")
+      if (logger.isTraceEnabled())
+        logger.trace(s"[region-$regionId] written:localId=$id, length=${info.length}, actual=${info.actualWritten}")
     })
   }
 
@@ -251,9 +242,9 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
     idgen.close()
   }
 
-  def readAsStream(localId: Long): CompleteStream = {
+  def read(localId: Long): ByteBuffer = {
     val meta = fmeta.read(localId)
-    CompleteStream.fromByteBuffer(fbody.read(meta.offset, meta.length.toInt))
+    fbody.read(meta.offset, meta.length.toInt)
   }
 }
 
@@ -287,7 +278,8 @@ class RegionManager(nodeId: Long, storeDir: File, globalConfig: GlobalConfig) ex
       id -> new Region(isReplica(id), id, RegionConfig(file, globalConfig))
     }
 
-  logger.debug(s"loaded local regions: ${regions.keySet}")
+  if (logger.isInfoEnabled())
+    logger.info(s"loaded local regions: ${regions.keySet}")
   regionIdSerial.set((List(0L) ++ regions.map(_._1 >> 16).toList).max);
 
   def createNew() = {
@@ -314,7 +306,8 @@ class RegionManager(nodeId: Long, storeDir: File, globalConfig: GlobalConfig) ex
       val freeId = new File(regionDir, "freeid")
       freeId.createNewFile()
 
-      logger.debug(s"created region #$regionId at: $regionDir")
+      if (logger.isTraceEnabled())
+        logger.trace(s"created region #$regionId at: $regionDir")
       new Region(isReplica(regionId), regionId, RegionConfig(regionDir, globalConfig))
     }
 

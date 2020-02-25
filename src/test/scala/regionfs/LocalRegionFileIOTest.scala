@@ -1,10 +1,11 @@
 package regionfs
 
 import java.io._
+import java.nio.ByteBuffer
 
-import cn.bluejoe.util.Profiler._
 import cn.bluejoe.regionfs.GlobalConfig
 import cn.bluejoe.regionfs.server.{Region, RegionConfig}
+import cn.bluejoe.util.Profiler._
 import org.apache.commons.io.IOUtils
 import org.junit.{Assert, Before, Test}
 
@@ -24,18 +25,21 @@ class LocalRegionFileIOTest extends FileTestBase {
       RegionConfig(new File("./testdata/nodes/node1/131072"),
         new GlobalConfig(1, -1, false)));
 
+    val bytes1 = IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/9999999")))
+    val buf = ByteBuffer.wrap(bytes1)
+
     val id = timing(true, 10) {
-      region.write(() => {
-        new FileInputStream(new File("./testdata/inputs/9999999"))
-      }, new File("./testdata/inputs/9999999").length())
+      val clone = buf.duplicate()
+      region.write(clone)
     }
 
-    val bytes = timing(true, 10) {
-      IOUtils.toByteArray(region.readAsStream(id).createInputStream())
+    val bytes2 = timing(true, 10) {
+      val buf = region.read(id)
+      val bytes = new Array[Byte](buf.remaining())
+      buf.get(bytes)
+      bytes
     }
 
-    Assert.assertArrayEquals(
-      IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/9999999"))),
-      bytes);
+    Assert.assertArrayEquals(bytes1, bytes2);
   }
 }

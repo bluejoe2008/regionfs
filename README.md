@@ -1,48 +1,55 @@
 # regionfs
-dfs for blob
+distributed file system for blob
 
 # how to use
 
-NOTE: make sure zookeeper cluster is running, suppose it has connecting str: `localhost:2181,localhost:2182,localhost:2183`
+NOTE: make sure zookeeper cluster is running, suppose it has connecting string: `localhost:2181,localhost:2182,localhost:2183`
 
-## start configserver
+## packaging
 
-1. prepare a text file
 ```
-#rfs.conf
-replicaNums=2
-```
-2. start configserver
-```
-bin/start-config-server.sh rfs.conf
+mvn package
 ```
 
-## start all nodes
+this will create `regionfs-<version>.jar` in `./target`
 
-1. deploy the regionfs distribution to several nodes, each includes a `conf/node.conf` file like that:
+## initializing rfs
+
+1. write a configuration file for rfs global settings `./conf/global.conf`
+
 ```
-#conf/node.conf
-zookeeper.address=localhost:2181,localhost:2182,localhost:2183
+zookeeper.address=localhost:2181
+replica.num=1
+#region.size.limit=1073741824
+blob.crc.enabled=false
+```
+
+2. start gloal config setting
+
+```
+bin/rfs init -conf ./conf/global.conf
+```
+
+## start one node
+
+1. write a configuration file for the node server `./conf/node.conf`
+
+```
+zookeeper.address=localhost:2181
 server.host=localhost
 server.port=1224
-data.storeDir=./testdata/nodes/node1
+data.storeDir=../data/node/
 node.id=1
 ```
 
 NOTE: `node.id` should be unique in cluster
 
-2. prepare a text file in one server
+2. start the node server
+
 ```
-#nodes
-node1
-node2
-node3
+bin/rfs node -conf ./conf/node.conf
 ```
 
-3. start/stop
-```
-sbin/regionfs node [-l host1,host2,...] <start|stop>
-```
+## start all nodes
 
-actually, this script will execute `sbin/<start|stop>-node conf/node.conf` on each node host.
 

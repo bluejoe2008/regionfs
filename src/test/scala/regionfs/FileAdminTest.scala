@@ -6,7 +6,7 @@ import org.junit.Test
 /**
   * Created by bluejoe on 2020/2/8.
   */
-class FileAdminTest {
+class FileAdminTest extends FileTestBase {
   val admin = new FsAdmin("localhost:2181")
 
   @Test

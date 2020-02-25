@@ -1,7 +1,11 @@
 package cn.bluejoe.regionfs.client
 
+import java.io.{FileInputStream, File}
+
+import cn.bluejoe.regionfs.util.ConfigurationEx
 import cn.bluejoe.util.IteratorUtils
 import cn.bluejoe.regionfs._
+import net.neoremind.kraps.rpc.RpcAddress
 
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
@@ -35,6 +39,6 @@ class FsAdmin(zks: String) extends FsClient(zks: String) {
 
 case class Stat(nodeStats: List[NodeStat]);
 
-case class NodeStat(nodeId: Long, address: NodeAddress, regionStats: List[RegionStat]);
+case class NodeStat(nodeId: Long, address: RpcAddress, regionStats: List[RegionStat]);
 
 case class RegionStat(regionId: Long, fileCount: Long, totalSize: Long);

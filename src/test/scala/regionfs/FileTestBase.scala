@@ -2,11 +2,12 @@ package regionfs
 
 import java.io.{ByteArrayInputStream, File, FileInputStream, FileOutputStream}
 
-import cn.bluejoe.util.Profiler
 import cn.bluejoe.regionfs.FileId
 import cn.bluejoe.regionfs.client.FsClient
+import cn.bluejoe.util.Profiler
 
-import scala.concurrent.Future
+import scala.concurrent.duration.Duration
+import scala.concurrent.{Await, Future}
 
 /**
   * Created by bluejoe on 2019/8/23.
@@ -22,9 +23,8 @@ class FileTestBase {
   val client = new FsClient("localhost:2181")
 
   def writeFile(src: File): FileId = {
-    val fid = client.writeFile(
-      new FileInputStream(src), src.length)
-    fid
+    Await.result(client.writeFile(
+      new FileInputStream(src), src.length), Duration.Inf)
   }
 
   def writeFile(text: String): FileId = {
@@ -32,13 +32,12 @@ class FileTestBase {
   }
 
   private def writeFile(bytes: Array[Byte]): FileId = {
-    val fid = client.writeFile(
-      new ByteArrayInputStream(bytes), bytes.length)
-    fid
+    Await.result(client.writeFile(
+      new ByteArrayInputStream(bytes), bytes.length), Duration.Inf)
   }
 
   private def writeFileAsync(bytes: Array[Byte]): Future[FileId] = {
-    val fid = client.writeFileAsync(
+    val fid = client.writeFile(
       new ByteArrayInputStream(bytes), bytes.length)
     fid
   }
@@ -48,7 +47,7 @@ class FileTestBase {
   }
 
   def writeFileAsync(src: File): Future[FileId] = {
-    val fid = client.writeFileAsync(
+    val fid = client.writeFile(
       new FileInputStream(src), src.length)
     fid
   }

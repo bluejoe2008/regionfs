@@ -16,6 +16,6 @@ object NodeServerForTest {
     Thread.sleep(1000)
   }
   catch {
-    case _ => null
+    case e:Throwable => null
   }
 }

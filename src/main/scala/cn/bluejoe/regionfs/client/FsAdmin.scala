@@ -1,10 +1,7 @@
 package cn.bluejoe.regionfs.client
 
-import java.io.{FileInputStream, File}
-
-import cn.bluejoe.regionfs.util.ConfigurationEx
-import cn.bluejoe.util.IteratorUtils
 import cn.bluejoe.regionfs._
+import cn.bluejoe.util.IteratorUtils
 import net.neoremind.kraps.rpc.RpcAddress
 
 import scala.concurrent.Await
@@ -16,11 +13,12 @@ import scala.concurrent.duration.Duration
 //an enhanced FsClient
 class FsAdmin(zks: String) extends FsClient(zks: String) {
   def stat(): Stat = {
-    Stat(
-      nodes.mapNodeClients.values.map(x =>
-        Await.result(x.endPointRef.ask[GetNodeStatResponse](GetNodeStatRequest()), Duration.Inf).stat
-      ).toList
-    )
+    Stat {
+      val futures = nodes.mapNodeClients.values.map(
+        _.endPointRef.ask[GetNodeStatResponse](GetNodeStatRequest()))
+
+      futures.map(x => Await.result(x, Duration.Inf).stat).toList
+    }
   }
 
   def listFiles(): Iterator[(FileId, Long)] = {

@@ -6,8 +6,8 @@ import java.util.Random
 
 import cn.bluejoe.hippo.{ChunkedStream, CompleteStream, HippoRpcHandler, ReceiveContext}
 import cn.bluejoe.regionfs._
-import cn.bluejoe.regionfs.client.{NodeStat, RegionStat}
-import cn.bluejoe.regionfs.util.{ConfigurationEx, ProcessUtils}
+import cn.bluejoe.regionfs.client._
+import cn.bluejoe.regionfs.util.{ConfigurationEx, ProcessUtils, ZooKeeperUtils}
 import cn.bluejoe.util.{ByteBufferInputStream, Logging}
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.{HippoRpcEnv, HippoRpcEnvFactory}
@@ -70,7 +70,8 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
   val address = env.address
   val addrString = s"${address.host}_${address.port}"
 
-  val zookeeper = createZookeeperClient()
+  val zookeeper = ZooKeeperUtils.createZookeeperClient(zks)
+
   val globalConfig = GlobalConfig.load(zookeeper)
   val localRegionManager = new RegionManager(nodeId, storeDir, globalConfig)
 
@@ -111,24 +112,6 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
     val fos = new FileOutputStream(lockFile);
     fos.write(pid.toString.getBytes())
     fos.close()
-  }
-
-  private def createZookeeperClient(): ZooKeeper = {
-    val zookeeper = new ZooKeeper(zks, 2000, new Watcher {
-      override def process(event: WatchedEvent): Unit = {
-      }
-    })
-
-    if (zookeeper.exists("/regionfs", false) == null)
-      zookeeper.create("/regionfs", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
-
-    if (zookeeper.exists("/regionfs/nodes", false) == null)
-      zookeeper.create("/regionfs/nodes", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
-
-    if (zookeeper.exists("/regionfs/regions", false) == null)
-      zookeeper.create("/regionfs/regions", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
-
-    zookeeper
   }
 
   private def registerLocalRegions(): Unit = {
@@ -282,20 +265,21 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
 }
 
-class RegionFsServersException(msg: String, cause: Throwable = null) extends RuntimeException(msg, cause) {
+class RegionFsServerException(msg: String, cause: Throwable = null) extends
+  RegionFsException(msg, cause) {
 }
 
 class InsufficientNodeServerException(num: Int) extends
-  RegionFsServersException(s"insufficient node server for replica: num>=$num") {
+  RegionFsServerException(s"insufficient node server for replica: num>=$num") {
 
 }
 
 class StoreLockedException(storeDir: File, pid: Int) extends
-  RegionFsServersException(s"store is locked by another node server: node server pid=${pid}, storeDir=${storeDir.getPath}") {
+  RegionFsServerException(s"store is locked by another node server: node server pid=${pid}, storeDir=${storeDir.getPath}") {
 
 }
 
 class StoreDirNotExistsException(storeDir: File) extends
-  RegionFsServersException(s"store dir does not exist: ${storeDir.getPath}") {
+  RegionFsServerException(s"store dir does not exist: ${storeDir.getPath}") {
 
 }

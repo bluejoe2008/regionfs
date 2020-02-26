@@ -17,7 +17,7 @@ object RegionFSCmd {
     ("help", "print usage info", null),
     ("stat", "stat all nodes", new StatShellCommandExecutor()),
     ("node", "start a node server", new StartNodeShellCommandExecutor()),
-    ("init", "initialize global setting", new ConfigShellCommandExecutor())
+    ("init", "initialize global setting", new InitShellCommandExecutor())
   )
 
   commands.filter(_._3 != null).foreach(x => x._3.init(Array("rfs", x._1)))
@@ -95,11 +95,11 @@ trait ShellCommandExecutor {
   }
 }
 
-class ConfigShellCommandExecutor extends ShellCommandExecutor {
+class InitShellCommandExecutor extends ShellCommandExecutor {
   override def buildOptions(options: Options): Unit = {
     options.addOption(Option.builder("conf")
       .argName("globalConfigFile")
-      .desc("conf file path of global setting, e.g regionfs.conf")
+      .desc("conf file path of global setting, e.g conf/global.conf")
       .hasArg
       .required(true)
       .build())
@@ -107,6 +107,7 @@ class ConfigShellCommandExecutor extends ShellCommandExecutor {
 
   override def run(commandLine: CommandLine): Unit = {
     new GlobalConfigConfigurer().config(new File(commandLine.getOptionValue("conf")))
+    println("cluster is successfully initialized.");
   }
 }
 
@@ -138,7 +139,7 @@ class StartNodeShellCommandExecutor extends ShellCommandExecutor {
   override def buildOptions(options: Options): Unit = {
     options.addOption(Option.builder("conf")
       .argName("nodeConfigFile")
-      .desc("conf file path of local node server, e.g node1.conf")
+      .desc("conf file path of local node server, e.g conf/node.conf")
       .hasArg
       .required(true)
       .build())

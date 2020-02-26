@@ -3,6 +3,7 @@ package cn.bluejoe.regionfs.client
 import java.io.InputStream
 
 import cn.bluejoe.regionfs._
+import cn.bluejoe.regionfs.util.ZooKeeperUtils
 import cn.bluejoe.util.Logging
 import io.netty.buffer.ByteBuf
 import net.neoremind.kraps.RpcConf
@@ -14,25 +15,15 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, Future}
 
-class RegionFsClientException(msg: String, cause: Throwable = null)
-  extends RuntimeException(msg, cause) {
-
-}
-
-class WriteFileException(msg: String, cause: Throwable = null)
-  extends RegionFsClientException(msg: String, cause) {
-
-}
-
 /**
   * a client to regionfs servers
   */
 class FsClient(zks: String) extends Logging {
-  val zk = new ZooKeeper(zks, 2000, null)
+  val zookeeper = ZooKeeperUtils.createZookeeperClient(zks)
 
   //get all nodes
-  val nodes = new NodeWatcher(zk, { _ => true })
-  val regionNodes = new RegionNodesWatcher(zk)
+  val nodes = new NodeWatcher(zookeeper, { _ => true })
+  val regionNodes = new RegionNodesWatcher(zookeeper)
   val selector = new RoundRobinSelector(nodes.clients.toList);
 
   def assertNodesNotEmpty() {
@@ -66,7 +57,7 @@ class FsClient(zks: String) extends Logging {
   def close = {
     nodes.stop()
     regionNodes.stop()
-    zk.close()
+    zookeeper.close()
   }
 }
 
@@ -139,4 +130,19 @@ class RoundRobinSelector(nodes: List[FsNodeClient]) extends FsNodeSelector {
       nodes.apply(index)
     }
   }
+}
+
+class RegionFsException(msg: String, cause: Throwable = null)
+  extends RuntimeException(msg, cause) {
+
+}
+
+class RegionFsClientException(msg: String, cause: Throwable = null)
+  extends RegionFsException(msg, cause) {
+
+}
+
+class WriteFileException(msg: String, cause: Throwable = null)
+  extends RegionFsClientException(msg: String, cause) {
+
 }

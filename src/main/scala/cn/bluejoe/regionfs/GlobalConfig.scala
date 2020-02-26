@@ -2,11 +2,12 @@ package cn.bluejoe.regionfs
 
 import java.io.{ByteArrayInputStream, File, FileInputStream}
 import java.util.Properties
-import cn.bluejoe.regionfs.server.RegionFsServersException
+
+import cn.bluejoe.regionfs.server.RegionFsServerException
 import cn.bluejoe.regionfs.util.ConfigurationEx
 import org.apache.commons.io.IOUtils
 import org.apache.zookeeper.ZooDefs.Ids
-import org.apache.zookeeper.{CreateMode, WatchedEvent, Watcher, ZooKeeper}
+import org.apache.zookeeper.{CreateMode, ZooKeeper}
 
 /**
   * Created by bluejoe on 2020/2/6.
@@ -42,7 +43,7 @@ object GlobalConfig {
 }
 
 class GlobalConfigPathNotFoundException(path: String) extends
-  RegionFsServersException(s"zookeeper path not exists: $path") {
+  RegionFsServerException(s"zookeeper path not exists: $path") {
 
 }
 
@@ -51,10 +52,16 @@ class GlobalConfigConfigurer {
     val conf = new ConfigurationEx(configFile)
 
     val zks = conf.get("zookeeper.address").asString
-    val zk = new ZooKeeper(zks, 2000, new Watcher {
-      override def process(event: WatchedEvent): Unit = {
-      }
-    })
+    val zk = new ZooKeeper(zks, 2000, null)
+
+    if (zk.exists("/regionfs", false) == null)
+      zk.create("/regionfs", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
+
+    if (zk.exists("/regionfs/nodes", false) == null)
+      zk.create("/regionfs/nodes", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
+
+    if (zk.exists("/regionfs/regions", false) == null)
+      zk.create("/regionfs/regions", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
 
     val fis = new FileInputStream(configFile)
     GlobalConfig.save(zk, IOUtils.toByteArray(fis))

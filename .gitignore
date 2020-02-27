@@ -3,4 +3,4 @@
 testdata/
 .idea/
 target/
-dist/
+/dist/

@@ -47,9 +47,15 @@ NOTE: `node.id` should be unique in cluster
 2. start the node server
 
 ```
-bin/rfs node -conf ./conf/node.conf
+bin/rfs start-local-node -conf ./conf/node.conf
 ```
 
 ## start all nodes
 
+## using FsClient
 
+```
+  val client = new FsClient("localhost:2181")
+  val id = Await.result(client.writeFile(
+      new FileInputStream(src), src.length), Duration.Inf)
+```

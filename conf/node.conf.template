@@ -1,5 +1,0 @@
-zookeeper.address=localhost:2181
-server.host=localhost
-server.port=1224
-data.storeDir=../data/node/
-node.id=1

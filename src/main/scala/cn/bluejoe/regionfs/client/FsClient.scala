@@ -27,7 +27,7 @@ class FsClient(zks: String) extends Logging {
 
   val selector = new RoundRobinSelector(nodes.mapNodeClients);
 
-  def assertNodesNotEmpty() {
+  private def assertNodesNotEmpty() {
     if (nodes.mapNodeClients.isEmpty) {
       throw new RegionFsClientException("no serving data nodes")
     }
@@ -48,12 +48,9 @@ class FsClient(zks: String) extends Logging {
 
   def readFile[T](fileId: FileId): InputStream = {
     assertNodesNotEmpty();
-
-    //FIXME: if the region is created just now, the delay of zkwatch will cause failure of regionNodes.map(fileId.regionId)
     val nodeId = (fileId.regionId >> 16).toInt;
     //regions.mapRegionNodes(fileId.regionId).apply(0)
     val nodeClient = nodes.mapNodeClients(nodeId)
-
     nodeClient.readFile(fileId)
   }
 

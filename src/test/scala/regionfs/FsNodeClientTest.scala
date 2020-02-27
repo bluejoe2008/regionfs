@@ -1,7 +1,6 @@
 package regionfs
 
 import java.io.{ByteArrayInputStream, File, FileInputStream}
-
 import cn.bluejoe.regionfs.GlobalConfig
 import cn.bluejoe.regionfs.client.FsNodeClient
 import cn.bluejoe.regionfs.server.RegionManager

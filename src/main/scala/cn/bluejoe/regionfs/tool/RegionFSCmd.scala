@@ -16,8 +16,9 @@ object RegionFSCmd {
   val commands = Array[(String, String, ShellCommandExecutor)](
     ("help", "print usage information", null),
     ("stat-all", "report statistics of all nodes", new StatShellCommandExecutor()),
+    ("greet", "notify a node server to print a message to be noticed", new GreetShellCommandExecutor()),
     ("stat-node", "report statistics of a node", new StatShellCommandExecutor()),
-    ("start-local-node", "start a node server", new StartNodeShellCommandExecutor()),
+    ("start-local-node", "start a local node server", new StartNodeShellCommandExecutor()),
     ("init", "initialize global setting", new InitShellCommandExecutor()),
     ("clean-all", "clean data on all nodes, or a node", new CleanAllShellCommandExecutor()),
     ("clean-node", "clean data on all nodes, or a node", new CleanNodeShellCommandExecutor()),
@@ -57,9 +58,9 @@ object RegionFSCmd {
     val maxlen = commands.map(_._1.length).max
     println("rfs <command> [args]")
     println("commands:")
-    commands.foreach { en =>
+    commands.sortBy(_._1).foreach { en =>
       val space = {
-        (1 to maxlen + 4 - en._1.length).map(" ").mkString("")
+        (1 to (maxlen + 4 - en._1.length)).map(_ => " ").mkString("")
       }
       println(s"\t${en._1}${space}${en._2}")
     }
@@ -144,6 +145,33 @@ class StatShellCommandExecutor extends ShellCommandExecutor {
   }
 }
 
+class GreetShellCommandExecutor extends ShellCommandExecutor {
+  override def buildOptions(options: Options): Unit = {
+    options.addOption(Option.builder("zk")
+      .argName("zkString")
+      .desc("zookeeper address, e.g localhost:2181")
+      .hasArg
+      .required(true)
+      .build())
+
+    options.addOption(Option.builder("node")
+      .argName("nodeid")
+      .desc("node id, e.g 1")
+      .hasArg
+      .required(true)
+      .build())
+  }
+
+  override def run(commandLine: CommandLine): Unit = {
+    val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
+    val (nodeId, addr) = admin.greet(commandLine.getOptionValue("node").toInt)
+    println(s"greeted node-${nodeId} on ${addr}.")
+
+    admin.close
+    FsNodeClient.finalize()
+  }
+}
+
 class StartNodeShellCommandExecutor extends ShellCommandExecutor {
   override def buildOptions(options: Options): Unit = {
     options.addOption(Option.builder("conf")
@@ -179,8 +207,9 @@ class ShutdownAllShellCommandExecutor extends ShellCommandExecutor {
 
   override def run(commandLine: CommandLine): Unit = {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
-    val addrs = admin.shutdownAllNodes()
-    addrs.foreach(x => println(s"shutdowning ${x}..."))
+    admin.shutdownAllNodes().foreach { x =>
+      println(s"shutdowning node-${x._1} on ${x._2}...")
+    }
   }
 }
 
@@ -193,7 +222,7 @@ class ShutdownNodeShellCommandExecutor extends ShellCommandExecutor {
       .required(true)
       .build())
 
-    options.addOption(Option.builder("id")
+    options.addOption(Option.builder("node")
       .argName("nodeid")
       .desc("node id, e.g 1")
       .hasArg
@@ -210,8 +239,8 @@ class ShutdownNodeShellCommandExecutor extends ShellCommandExecutor {
 
   override def run(commandLine: CommandLine): Unit = {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
-    val addr = admin.shutdownNode(commandLine.getOptionValue("id").toInt)
-    println(s"shutdowning $addr...")
+    val (nodeId, address) = admin.shutdownNode(commandLine.getOptionValue("node").toInt)
+    println(s"shutdowning node-$nodeId on address...")
   }
 }
 
@@ -248,7 +277,7 @@ class CleanNodeShellCommandExecutor extends ShellCommandExecutor {
       .required(true)
       .build())
 
-    options.addOption(Option.builder("id")
+    options.addOption(Option.builder("node")
       .argName("nodeid")
       .desc("node id, e.g 1")
       .hasArg
@@ -265,7 +294,7 @@ class CleanNodeShellCommandExecutor extends ShellCommandExecutor {
 
   override def run(commandLine: CommandLine): Unit = {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
-    val addr = admin.cleanNodeData(commandLine.getOptionValue("id").toInt)
+    val addr = admin.cleanNodeData(commandLine.getOptionValue("node").toInt)
     println(s"cleaned data on $addr...")
   }
 }

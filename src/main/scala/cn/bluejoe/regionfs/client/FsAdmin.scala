@@ -21,6 +21,11 @@ class FsAdmin(zks: String) extends FsClient(zks: String) {
     }
   }
 
+  def statNode(nodeId: Int): NodeStat = {
+    val future = nodes.mapNodeClients(nodeId).endPointRef.ask[GetNodeStatResponse](GetNodeStatRequest())
+    Await.result(future, Duration.Inf).stat
+  }
+
   def cleanAllData(): Array[RpcAddress] = {
     val futures = nodes.mapNodeClients.values.map(
       _.endPointRef.ask[CleanDataResponse](CleanDataRequest()))

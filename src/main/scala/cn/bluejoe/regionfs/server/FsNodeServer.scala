@@ -11,7 +11,7 @@ import cn.bluejoe.regionfs.util.{ConfigurationEx, ProcessUtils}
 import cn.bluejoe.util.{ByteBufferInputStream, Logging}
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.{HippoRpcEnv, HippoRpcEnvFactory}
-import net.neoremind.kraps.rpc.{RpcCallContext, RpcEndpoint, RpcEnvServerConfig}
+import net.neoremind.kraps.rpc.{RpcAddress, RpcCallContext, RpcEndpoint, RpcEnvServerConfig}
 import org.apache.commons.io.IOUtils
 import org.apache.zookeeper.ZooDefs.Ids
 import org.apache.zookeeper._
@@ -65,27 +65,22 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
   logger.debug(s"nodeId: ${nodeId}")
   logger.debug(s"storeDir: ${storeDir.getCanonicalFile.getAbsolutePath}")
 
-  val env = HippoRpcEnvFactory.create(
-    RpcEnvServerConfig(new RpcConf(), "regionfs-server", host, port))
-
-  val address = env.address
   val zookeeper = ZooKeeperClient.create(zks)
-
+  val (env, address) = createRpcEnv(zookeeper)
   val globalConfig = GlobalConfig.load(zookeeper)
   val localRegionManager = new RegionManager(nodeId, storeDir, globalConfig)
 
   //get neighbour nodes
-  val neighbourNodes = new UpdatingNodeList(zookeeper, nodeId != _)
+  val neighbourNodes = new UpdatingNodeList(zookeeper, nodeId != _).start()
   //get regions in neighbour nodes
-  val neighbourRegions = new UpdatingRegionList(zookeeper, nodeId != _)
+  val neighbourRegions = new UpdatingRegionList(zookeeper, nodeId != _).start()
+
   var alive: Boolean = true
   val endpoint = new FileRpcEndpoint(env)
   env.setupEndpoint("regionfs-service", endpoint)
   env.setRpcHandler(endpoint)
 
   def startup(): Unit = {
-    neighbourNodes.start()
-    neighbourRegions.start()
     writeLockFile(new File(storeDir, ".lock"))
 
     println(IOUtils.toString(this.getClass.getClassLoader.getResourceAsStream("logo.txt"), "utf-8"))
@@ -127,6 +122,20 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
     localRegionManager.regions.keys.foreach(regionId => {
       registerLocalRegion(regionId)
     })
+  }
+
+  private def createRpcEnv(zookeeper: ZooKeeper): (HippoRpcEnv, RpcAddress) = {
+    val env = HippoRpcEnvFactory.create(
+      RpcEnvServerConfig(new RpcConf(), "regionfs-server", host, port))
+
+    val address = env.address
+    val path = s"/regionfs/nodes/${nodeId}_${address.host}_${address.port}"
+    if (zookeeper.exists(path, ZooKeeperClient.NullWatcher) != null) {
+      env.shutdown();
+      throw new ExisitingNodeInZooKeeperExcetion(path);
+    }
+
+    env -> address;
   }
 
   private def registerLocalRegion(regionId: Long) = {
@@ -226,7 +235,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       }
 
       case GreetingRequest(msg: String) => {
-        println(s"\u001b[31;47;4m${msg}\u0007\u001b[0m")
+        println(s"node-${nodeId}($address): \u001b[31;47;4m${msg}\u0007\u001b[0m")
         context.reply(GreetingResponse(address))
       }
     }
@@ -304,5 +313,10 @@ class StoreLockedException(storeDir: File, pid: Int) extends
 
 class StoreDirNotExistsException(storeDir: File) extends
   RegionFsServerException(s"store dir does not exist: ${storeDir.getPath}") {
+
+}
+
+class ExisitingNodeInZooKeeperExcetion(path: String) extends
+  RegionFsServerException(s"find existing node in zookeeper: ${path}") {
 
 }

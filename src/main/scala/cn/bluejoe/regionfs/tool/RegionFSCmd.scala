@@ -15,15 +15,15 @@ import scala.collection.mutable.ArrayBuffer
 object RegionFSCmd {
   val commands = Array[(String, String, ShellCommandExecutor)](
     ("help", "print usage information", null),
-    ("stat-all", "report statistics of all nodes", new StatShellCommandExecutor()),
+    ("stat-all", "report statistics of all nodes", new StatAllShellCommandExecutor()),
     ("greet", "notify a node server to print a message to be noticed", new GreetShellCommandExecutor()),
-    ("stat-node", "report statistics of a node", new StatShellCommandExecutor()),
+    ("stat-node", "report statistics of a node", new StatNodeShellCommandExecutor()),
     ("start-local-node", "start a local node server", new StartNodeShellCommandExecutor()),
     ("init", "initialize global setting", new InitShellCommandExecutor()),
-    ("clean-all", "clean data on all nodes, or a node", new CleanAllShellCommandExecutor()),
-    ("clean-node", "clean data on all nodes, or a node", new CleanNodeShellCommandExecutor()),
-    ("shutdown-all", "shutdown all nodes, or a node", new ShutdownAllShellCommandExecutor()),
-    ("shutdown-node", "shutdown all nodes, or a node", new ShutdownNodeShellCommandExecutor())
+    ("clean-all", "clean data on a node", new CleanAllShellCommandExecutor()),
+    ("clean-node", "clean data on all nodes", new CleanNodeShellCommandExecutor()),
+    ("shutdown-all", "shutdown all nodes", new ShutdownAllShellCommandExecutor()),
+    ("shutdown-node", "shutdown a node", new ShutdownNodeShellCommandExecutor())
   )
 
   commands.filter(_._3 != null).foreach(x => x._3.init(Array("rfs", x._1)))
@@ -121,7 +121,7 @@ class InitShellCommandExecutor extends ShellCommandExecutor {
   }
 }
 
-class StatShellCommandExecutor extends ShellCommandExecutor {
+class StatAllShellCommandExecutor extends ShellCommandExecutor {
   override def buildOptions(options: Options): Unit = {
     options.addOption(Option.builder("zk")
       .argName("zkString")
@@ -138,6 +138,36 @@ class StatShellCommandExecutor extends ShellCommandExecutor {
       x.regionStats.foreach { y =>
         println(s"    ╰┈┈┈[region-${y.regionId}](file number=${y.fileCount}, total size=${y.totalSize})")
       }
+    }
+
+    admin.close
+    FsNodeClient.finalize()
+  }
+}
+
+class StatNodeShellCommandExecutor extends ShellCommandExecutor {
+  override def buildOptions(options: Options): Unit = {
+    options.addOption(Option.builder("zk")
+      .argName("zkString")
+      .desc("zookeeper address, e.g localhost:2181")
+      .hasArg
+      .required(true)
+      .build())
+
+    options.addOption(Option.builder("node")
+      .argName("nodeid")
+      .desc("node id, e.g 1")
+      .hasArg
+      .required(true)
+      .build())
+  }
+
+  override def run(commandLine: CommandLine): Unit = {
+    val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
+    val ns = admin.statNode(commandLine.getOptionValue("node").toInt);
+    println(s"[node-${ns.nodeId}](address=${ns.address})")
+    ns.regionStats.foreach { y =>
+      println(s"    ╰┈┈┈[region-${y.regionId}](file number=${y.fileCount}, total size=${y.totalSize})")
     }
 
     admin.close

@@ -1,6 +1,7 @@
 package cn.bluejoe.regionfs
 
 import cn.bluejoe.regionfs.client.NodeStat
+import net.neoremind.kraps.rpc.RpcAddress
 
 /**
   * Created by bluejoe on 2019/8/23.
@@ -10,6 +11,22 @@ case class CreateRegionRequest(regionId: Long) {
 }
 
 case class CreateRegionResponse(regionId: Long) {
+
+}
+
+case class ShutdownRequest() {
+
+}
+
+case class ShutdownResponse(address: RpcAddress) {
+
+}
+
+case class CleanDataRequest() {
+
+}
+
+case class CleanDataResponse(address: RpcAddress) {
 
 }
 

@@ -280,10 +280,11 @@ class RegionManager(nodeId: Long, storeDir: File, globalConfig: GlobalConfig) ex
 
   if (logger.isInfoEnabled())
     logger.info(s"loaded local regions: ${regions.keySet}")
+
   regionIdSerial.set((List(0L) ++ regions.map(_._1 >> 16).toList).max);
 
   def createNew() = {
-    _createNewRegion(nodeId << 16 + regionIdSerial.incrementAndGet());
+    _createNewRegion((nodeId << 16) + regionIdSerial.incrementAndGet());
   }
 
   def createNewReplica(regionId: Long) = {

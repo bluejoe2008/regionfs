@@ -1,16 +1,21 @@
-package cn.bluejoe.regionfs.util
+package cn.bluejoe.regionfs.client
 
-import cn.bluejoe.regionfs.client.{RegionFsException}
-import org.apache.zookeeper.ZooKeeper
+import org.apache.zookeeper.{WatchedEvent, Watcher, ZooKeeper}
 
 /**
   * Created by bluejoe on 2020/2/26.
   */
-object ZooKeeperUtils {
-  def createZookeeperClient(zks: String): ZooKeeper = {
+object ZooKeeperClient {
+  val NullWatcher = new Watcher {
+    override def process(event: WatchedEvent): Unit = {
+
+    }
+  }
+
+  def create(zks: String, sessionTimeout: Int = 2000): ZooKeeper = {
     val zookeeper =
       try {
-        new ZooKeeper(zks, 2000, null)
+        new ZooKeeper(zks, sessionTimeout, NullWatcher)
       }
       catch {
         case e: Throwable =>

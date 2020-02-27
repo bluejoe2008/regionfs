@@ -3,14 +3,13 @@ package cn.bluejoe.regionfs.client
 import java.io.InputStream
 
 import cn.bluejoe.regionfs._
-import cn.bluejoe.regionfs.util.ZooKeeperUtils
 import cn.bluejoe.util.Logging
 import io.netty.buffer.ByteBuf
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.{HippoRpcEnv, HippoRpcEnvFactory}
 import net.neoremind.kraps.rpc.{RpcAddress, RpcEnvClientConfig}
-import org.apache.zookeeper.ZooKeeper
 
+import scala.collection.mutable
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, Future}
@@ -19,15 +18,17 @@ import scala.concurrent.{Await, Future}
   * a client to regionfs servers
   */
 class FsClient(zks: String) extends Logging {
-  val zookeeper = ZooKeeperUtils.createZookeeperClient(zks)
+  val zookeeper = ZooKeeperClient.create(zks)
 
   //get all nodes
-  val nodes = new NodeWatcher(zookeeper, { _ => true })
-  val regionNodes = new RegionNodesWatcher(zookeeper)
-  val selector = new RoundRobinSelector(nodes.clients.toList);
+  val nodes = new UpdatingNodeList(zookeeper, { _ => true }).start()
+  //get all regions
+  val regions = new UpdatingRegionList(zookeeper, { _ => true }).start()
+
+  val selector = new RoundRobinSelector(nodes.mapNodeClients);
 
   def assertNodesNotEmpty() {
-    if (nodes.isEmpty) {
+    if (nodes.mapNodeClients.isEmpty) {
       throw new RegionFsClientException("no serving data nodes")
     }
   }
@@ -49,14 +50,16 @@ class FsClient(zks: String) extends Logging {
     assertNodesNotEmpty();
 
     //FIXME: if the region is created just now, the delay of zkwatch will cause failure of regionNodes.map(fileId.regionId)
-    val nodeAddress = regionNodes.map(fileId.regionId)
-    val nodeClient = nodes.map(nodeAddress)
+    val nodeId = (fileId.regionId >> 16).toInt;
+    //regions.mapRegionNodes(fileId.regionId).apply(0)
+    val nodeClient = nodes.mapNodeClients(nodeId)
+
     nodeClient.readFile(fileId)
   }
 
   def close = {
     nodes.stop()
-    regionNodes.stop()
+    regions.stop()
     zookeeper.close()
   }
 }
@@ -118,16 +121,15 @@ trait FsNodeSelector {
   def select(): FsNodeClient;
 }
 
-class RoundRobinSelector(nodes: List[FsNodeClient]) extends FsNodeSelector {
-  var index = -1;
+class RoundRobinSelector(nodes: mutable.Map[Int, FsNodeClient]) extends FsNodeSelector {
+  var iter = nodes.iterator;
 
   def select(): FsNodeClient = {
-    this.synchronized {
-      index += 1
-      if (index >= nodes.length) {
-        index = 0;
-      }
-      nodes.apply(index)
+    nodes.synchronized {
+      if (!iter.hasNext)
+        iter = nodes.iterator;
+
+      iter.next()._2
     }
   }
 }

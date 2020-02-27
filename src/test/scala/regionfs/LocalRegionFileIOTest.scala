@@ -21,8 +21,8 @@ class LocalRegionFileIOTest extends FileTestBase {
 
   @Test
   def testRegionIO(): Unit = {
-    val region = new Region(false, 131072,
-      RegionConfig(new File("./testdata/nodes/node1/131072"),
+    val region = new Region(false, 65537,
+      RegionConfig(new File("./testdata/nodes/node1/65537"),
         new GlobalConfig(1, -1, false)));
 
     val bytes1 = IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/9999999")))

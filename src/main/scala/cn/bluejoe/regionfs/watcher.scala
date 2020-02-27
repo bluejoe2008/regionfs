@@ -37,15 +37,17 @@ class ZooKeeperPathWatcher(zk: ZooKeeper) extends Logging {
       override def process(event: WatchedEvent): Unit = {
         val path = event.getPath
         if (path != null) {
-          val t: T = childPathParser(path.drop(path.length))
-
           event.getType match {
             case EventType.NodeCreated => {
+              val t: T = childPathParser(path.drop(path.length))
+
               if (filter(t))
                 onNodeCreated(t)
             }
 
             case EventType.NodeDeleted => {
+              val t: T = childPathParser(path.drop(path.length))
+
               if (filter(t))
                 onNodeDeleted(t)
             }

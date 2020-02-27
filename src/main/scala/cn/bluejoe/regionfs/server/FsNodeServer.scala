@@ -78,7 +78,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
   val neighbourNodes = new UpdatingNodeList(zookeeper, nodeId != _)
   //get regions in neighbour nodes
   val neighbourRegions = new UpdatingRegionList(zookeeper, nodeId != _)
-
+  var alive: Boolean = true
   val endpoint = new FileRpcEndpoint(env)
   env.setupEndpoint("regionfs-service", endpoint)
   env.setRpcHandler(endpoint)
@@ -101,12 +101,15 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
   }
 
   def shutdown(): Unit = {
-    neighbourNodes.stop()
-    neighbourRegions.stop()
+    if (alive) {
+      neighbourNodes.stop()
+      neighbourRegions.stop()
 
-    new File(storeDir, ".lock").delete();
-    env.shutdown()
-    println(s"shutdown node server on ${address}, nodeId=${nodeId}")
+      new File(storeDir, ".lock").delete();
+      env.shutdown()
+      println(s"shutdown node server on ${address}, nodeId=${nodeId}")
+      alive = false;
+    }
   }
 
   def cleanData(): Unit = {
@@ -220,6 +223,11 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       case CleanDataRequest() => {
         cleanData()
         context.reply(CleanDataResponse(address))
+      }
+
+      case GreetingRequest(msg: String) => {
+        println(s"\u001b[31;47;4m${msg}\u0007\u001b[0m")
+        context.reply(GreetingResponse(address))
       }
     }
 

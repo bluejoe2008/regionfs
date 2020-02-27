@@ -30,6 +30,14 @@ case class CleanDataResponse(address: RpcAddress) {
 
 }
 
+case class GreetingRequest(msg: String) {
+
+}
+
+case class GreetingResponse(address: RpcAddress) {
+
+}
+
 case class ListFileRequest() {
 
 }

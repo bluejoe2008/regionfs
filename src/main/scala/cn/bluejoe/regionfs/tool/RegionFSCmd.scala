@@ -14,10 +14,15 @@ import scala.collection.mutable.ArrayBuffer
   */
 object RegionFSCmd {
   val commands = Array[(String, String, ShellCommandExecutor)](
-    ("help", "print usage info", null),
-    ("stat", "stat all nodes", new StatShellCommandExecutor()),
-    ("node", "start a node server", new StartNodeShellCommandExecutor()),
-    ("init", "initialize global setting", new InitShellCommandExecutor())
+    ("help", "print usage information", null),
+    ("stat-all", "report statistics of all nodes", new StatShellCommandExecutor()),
+    ("stat-node", "report statistics of a node", new StatShellCommandExecutor()),
+    ("start-local-node", "start a node server", new StartNodeShellCommandExecutor()),
+    ("init", "initialize global setting", new InitShellCommandExecutor()),
+    ("clean-all", "clean data on all nodes, or a node", new CleanAllShellCommandExecutor()),
+    ("clean-node", "clean data on all nodes, or a node", new CleanNodeShellCommandExecutor()),
+    ("shutdown-all", "shutdown all nodes, or a node", new ShutdownAllShellCommandExecutor()),
+    ("shutdown-node", "shutdown all nodes, or a node", new ShutdownNodeShellCommandExecutor())
   )
 
   commands.filter(_._3 != null).foreach(x => x._3.init(Array("rfs", x._1)))
@@ -49,10 +54,14 @@ object RegionFSCmd {
   }
 
   private def printUsage(): Unit = {
+    val maxlen = commands.map(_._1.length).max
     println("rfs <command> [args]")
     println("commands:")
     commands.foreach { en =>
-      println(s"\t${en._1}\t${en._2}")
+      val space = {
+        (1 to maxlen + 4 - en._1.length).map(" ").mkString("")
+      }
+      println(s"\t${en._1}${space}${en._2}")
     }
   }
 }
@@ -148,5 +157,115 @@ class StartNodeShellCommandExecutor extends ShellCommandExecutor {
   override def run(commandLine: CommandLine): Unit = {
     val server = FsNodeServer.create(new File(commandLine.getOptionValue("conf")))
     server.startup()
+  }
+}
+
+class ShutdownAllShellCommandExecutor extends ShellCommandExecutor {
+  override def buildOptions(options: Options): Unit = {
+    options.addOption(Option.builder("zk")
+      .argName("zkString")
+      .desc("zookeeper address, e.g localhost:2181")
+      .hasArg
+      .required(true)
+      .build())
+
+    options.addOption(Option.builder("f")
+      .argName("force")
+      .desc("force this operation")
+      .hasArg(false)
+      .required(true)
+      .build())
+  }
+
+  override def run(commandLine: CommandLine): Unit = {
+    val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
+    val addrs = admin.shutdownAllNodes()
+    addrs.foreach(x => println(s"shutdowning ${x}..."))
+  }
+}
+
+class ShutdownNodeShellCommandExecutor extends ShellCommandExecutor {
+  override def buildOptions(options: Options): Unit = {
+    options.addOption(Option.builder("zk")
+      .argName("zkString")
+      .desc("zookeeper address, e.g localhost:2181")
+      .hasArg
+      .required(true)
+      .build())
+
+    options.addOption(Option.builder("id")
+      .argName("nodeid")
+      .desc("node id, e.g 1")
+      .hasArg
+      .required(true)
+      .build())
+
+    options.addOption(Option.builder("f")
+      .argName("force")
+      .desc("force this operation")
+      .hasArg(false)
+      .required(true)
+      .build())
+  }
+
+  override def run(commandLine: CommandLine): Unit = {
+    val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
+    val addr = admin.shutdownNode(commandLine.getOptionValue("id").toInt)
+    println(s"shutdowning $addr...")
+  }
+}
+
+class CleanAllShellCommandExecutor extends ShellCommandExecutor {
+  override def buildOptions(options: Options): Unit = {
+    options.addOption(Option.builder("zk")
+      .argName("zkString")
+      .desc("zookeeper address, e.g localhost:2181")
+      .hasArg
+      .required(true)
+      .build())
+
+    options.addOption(Option.builder("f")
+      .argName("force")
+      .desc("force this operation")
+      .hasArg(false)
+      .required(true)
+      .build())
+  }
+
+  override def run(commandLine: CommandLine): Unit = {
+    val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
+    val addrs = admin.cleanAllData()
+    addrs.foreach(addr => println(s"cleaned data on $addr..."))
+  }
+}
+
+class CleanNodeShellCommandExecutor extends ShellCommandExecutor {
+  override def buildOptions(options: Options): Unit = {
+    options.addOption(Option.builder("zk")
+      .argName("zkString")
+      .desc("zookeeper address, e.g localhost:2181")
+      .hasArg
+      .required(true)
+      .build())
+
+    options.addOption(Option.builder("id")
+      .argName("nodeid")
+      .desc("node id, e.g 1")
+      .hasArg
+      .required(true)
+      .build())
+
+    options.addOption(Option.builder("f")
+      .argName("force")
+      .desc("force this operation")
+      .hasArg(false)
+      .required(true)
+      .build())
+  }
+
+  override def run(commandLine: CommandLine): Unit = {
+    val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
+    val addr = admin.cleanNodeData(commandLine.getOptionValue("id").toInt)
+    println(s"cleaned data on $addr...")
   }
 }

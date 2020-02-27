@@ -10,12 +10,13 @@ import cn.bluejoe.regionfs.server.FsNodeServer
   */
 object NodeServerForTest {
   val configFile = new File("./node1.conf")
-  val server = try {
+  val maybeServer = try {
     //this server will not startup due to lock by annother process
-    FsNodeServer.create(configFile)
+    val server = FsNodeServer.create(configFile)
     Thread.sleep(1000)
+    Some(server)
   }
   catch {
-    case e:Throwable => null
+    case e: Throwable => None
   }
 }

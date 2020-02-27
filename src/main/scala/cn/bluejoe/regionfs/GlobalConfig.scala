@@ -3,6 +3,7 @@ package cn.bluejoe.regionfs
 import java.io.{ByteArrayInputStream, File, FileInputStream}
 import java.util.Properties
 
+import cn.bluejoe.regionfs.client.ZooKeeperClient
 import cn.bluejoe.regionfs.server.RegionFsServerException
 import cn.bluejoe.regionfs.util.ConfigurationEx
 import org.apache.commons.io.IOUtils
@@ -52,7 +53,7 @@ class GlobalConfigConfigurer {
     val conf = new ConfigurationEx(configFile)
 
     val zks = conf.get("zookeeper.address").asString
-    val zk = new ZooKeeper(zks, 2000, null)
+    val zk = ZooKeeperClient.create(zks)
 
     if (zk.exists("/regionfs", false) == null)
       zk.create("/regionfs", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)

@@ -21,6 +21,30 @@ class FsAdmin(zks: String) extends FsClient(zks: String) {
     }
   }
 
+  def cleanAllData(): Array[RpcAddress] = {
+    val futures = nodes.mapNodeClients.values.map(
+      _.endPointRef.ask[CleanDataResponse](CleanDataRequest()))
+
+    futures.map(x => Await.result(x, Duration.Inf).address).toArray
+  }
+
+  def cleanNodeData(nodeId: Int): RpcAddress = {
+    val future = nodes.mapNodeClients(nodeId).endPointRef.ask[CleanDataResponse](CleanDataRequest())
+    Await.result(future, Duration.Inf).address
+  }
+
+  def shutdownAllNodes(): Array[RpcAddress] = {
+    val futures = nodes.mapNodeClients.values.map(
+      _.endPointRef.ask[ShutdownResponse](ShutdownRequest()))
+
+    futures.map(x => Await.result(x, Duration.Inf).address).toArray
+  }
+
+  def shutdownNode(nodeId: Int): RpcAddress = {
+    val future = nodes.mapNodeClients(nodeId).endPointRef.ask[ShutdownResponse](ShutdownRequest())
+    Await.result(future, Duration.Inf).address
+  }
+
   def listFiles(): Iterator[(FileId, Long)] = {
     val iter = nodes.mapNodeClients.values.iterator
     IteratorUtils.concatIterators { (index) =>

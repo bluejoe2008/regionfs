@@ -56,7 +56,7 @@ class FileTestBase extends Logging {
 
   def writeFile(src: File): FileId = {
     Await.result(client.writeFile(
-      new FileInputStream(src), src.length), Duration.Inf)
+      new FileInputStream(src), src.length), Duration("4s"))
   }
 
   def writeFile(text: String): FileId = {
@@ -65,7 +65,7 @@ class FileTestBase extends Logging {
 
   private def writeFile(bytes: Array[Byte]): FileId = {
     Await.result(client.writeFile(
-      new ByteArrayInputStream(bytes), bytes.length), Duration.Inf)
+      new ByteArrayInputStream(bytes), bytes.length), Duration("4s"))
   }
 
   private def writeFileAsync(bytes: Array[Byte]): Future[FileId] = {

@@ -14,15 +14,6 @@ import scala.concurrent.duration.Duration
   */
 class FileReadWriteTest extends FileTestBase {
 
-  @Before
-  def makeFiles(): Unit = {
-    makeFile(new File("./testdata/inputs/999"), 999)
-    makeFile(new File("./testdata/inputs/9999"), 9999)
-    makeFile(new File("./testdata/inputs/99999"), 99999L)
-    makeFile(new File("./testdata/inputs/999999"), 999999L)
-    makeFile(new File("./testdata/inputs/9999999"), 9999999L)
-  }
-
   @Test
   def testWrite(): Unit = {
     timing(true) {
@@ -67,7 +58,7 @@ class FileReadWriteTest extends FileTestBase {
 
       println("read an remote file...")
       val bytes2 = timing(true, 10) {
-        IOUtils.toByteArray(client.readFile(id))
+        IOUtils.toByteArray(client.readFile(id, Duration("4s")))
       };
 
       Assert.assertArrayEquals(bytes1, bytes2)

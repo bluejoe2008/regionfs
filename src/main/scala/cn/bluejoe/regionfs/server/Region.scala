@@ -29,9 +29,8 @@ case class MetaData(localId: Long, offset: Long, length: Long, crc32: Long) {
 }
 
 class RegionMetaStore(conf: RegionConfig) {
-  val fileMetaFile = new File(conf.regionDir, "meta")
-  val writer = new RandomAccessFile(fileMetaFile, "rw");
-  val reader = new RandomAccessFile(fileMetaFile, "r");
+  lazy val fileMetaFile = new File(conf.regionDir, "meta")
+  lazy val fptr = new RandomAccessFile(fileMetaFile, "rw");
 
   val cache: Cache[Long, MetaData] = new FixSizedCache[Long, MetaData](1024);
 
@@ -44,8 +43,8 @@ class RegionMetaStore(conf: RegionConfig) {
 
   def read(localId: Long): MetaData = {
     cache.get(localId).getOrElse {
-      reader.seek(Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * localId)
-      reader.readFully(block)
+      fptr.seek(Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * localId)
+      fptr.readFully(block)
 
       val dis = new DataInputStream(new ByteArrayInputStream(block))
       val info = MetaData(dis.readLong(), dis.readLong(), dis.readLong(), dis.readLong())
@@ -65,8 +64,8 @@ class RegionMetaStore(conf: RegionConfig) {
     dos.writeLong(crc32)
     dos.writeLong(0) //reserved
 
-    writer.seek(Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * localId)
-    writer.write(block.toByteArray)
+    fptr.seek(Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * localId)
+    fptr.write(block.toByteArray)
     dos.close()
 
     cache.put(localId, MetaData(localId, offset, length, crc32))
@@ -75,14 +74,14 @@ class RegionMetaStore(conf: RegionConfig) {
   def count = fileMetaFile.length() / Constants.METADATA_ENTRY_LENGTH_WITH_PADDING;
 
   def close(): Unit = {
-    reader.close()
-    writer.close()
+    fptr.close()
+    fptr.close()
   }
 }
 
 class FreeIdStore(conf: RegionConfig) {
-  val freeIdFile = new File(conf.regionDir, "freeid")
-  val writer = new FileOutputStream(freeIdFile, false);
+  lazy val freeIdFile = new File(conf.regionDir, "freeid")
+  lazy val writer = new FileOutputStream(freeIdFile, false);
 
   val freeIds = {
     //FIXME: read all bytes!
@@ -137,7 +136,7 @@ class FreeIdStore(conf: RegionConfig) {
 class LocalIdGenerator(conf: RegionConfig, meta: RegionMetaStore) {
   //free id
   val counterLocalId = new AtomicLong(meta.count);
-  val freeId = new FreeIdStore(conf)
+  lazy val freeId = new FreeIdStore(conf)
 
   def consumeNextId(consume: (Long) => Unit): Long = {
     freeId.consumeNextId(consume).getOrElse {
@@ -159,9 +158,8 @@ class RegionBodyStore(conf: RegionConfig) {
   //region file, one file for each region by far
   val fileBody = new File(conf.regionDir, "body")
   val fileBodyLength = new AtomicLong(fileBody.length())
-
-  val readerChannel = new RandomAccessFile(fileBody, "r").getChannel
-  val appenderChannel = new FileOutputStream(fileBody, true).getChannel
+  lazy val readerChannel = new RandomAccessFile(fileBody, "r").getChannel
+  lazy val appenderChannel = new FileOutputStream(fileBody, true).getChannel
 
   def write(buf: ByteBuffer): WriteInfo = {
     val length = buf.remaining()
@@ -192,9 +190,9 @@ class RegionBodyStore(conf: RegionConfig) {
   */
 class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) extends Logging {
   //metadata file
-  val fbody = new RegionBodyStore(conf)
-  val fmeta = new RegionMetaStore(conf)
-  val idgen = new LocalIdGenerator(conf, fmeta)
+  lazy val fbody = new RegionBodyStore(conf)
+  lazy val fmeta = new RegionMetaStore(conf)
+  lazy val idgen = new LocalIdGenerator(conf, fmeta)
 
   def statFileCount(): Long = {
     fmeta.count - idgen.freeId.freeIds.size
@@ -254,7 +252,7 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
 //TODO: few live regions + most dead regions
 class RegionManager(nodeId: Long, storeDir: File, globalConfig: GlobalConfig) extends Logging {
   val regions = mutable.Map[Long, Region]()
-  val regionIdSerial = new AtomicLong(0)
+  lazy val regionIdSerial = new AtomicLong(0)
 
   def get(id: Long) = regions(id)
 

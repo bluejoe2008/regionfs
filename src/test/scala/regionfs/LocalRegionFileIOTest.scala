@@ -12,12 +12,6 @@ import org.junit.{Assert, Before, Test}
   * Created by bluejoe on 2020/2/11.
   */
 class LocalRegionFileIOTest extends FileTestBase {
-  @Before
-  def makeFiles(): Unit = {
-    makeFile(new File("./testdata/inputs/999"), 999L)
-    makeFile(new File("./testdata/inputs/9999999"), 9999999L)
-  }
-
   @Test
   def testRegionIO(): Unit = {
     val region = new Region(false, 65537,

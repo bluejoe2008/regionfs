@@ -85,7 +85,7 @@ class FsNodeClientTest extends FileTestBase {
 
       println("read an remote file...")
       val bytes2 = timing(true, 10) {
-        IOUtils.toByteArray(nodeClient.readFile(id))
+        IOUtils.toByteArray(nodeClient.readFile(id, Duration("4s")))
       };
 
       Assert.assertArrayEquals(bytes1, bytes2)

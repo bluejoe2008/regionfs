@@ -8,6 +8,7 @@ import cn.bluejoe.regionfs.server.FsNodeServer
 import org.apache.commons.cli._
 
 import scala.collection.mutable.ArrayBuffer
+import scala.concurrent.duration.Duration
 
 /**
   * Created by bluejoe on 2020/2/25.
@@ -133,7 +134,7 @@ class StatAllShellCommandExecutor extends ShellCommandExecutor {
 
   override def run(commandLine: CommandLine): Unit = {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
-    admin.stat().nodeStats.foreach { x =>
+    admin.stat(Duration("4s")).nodeStats.foreach { x =>
       println(s"[node-${x.nodeId}](address=${x.address})")
       x.regionStats.foreach { y =>
         println(s"    ╰┈┈┈[region-${y.regionId}](file number=${y.fileCount}, total size=${y.totalSize})")
@@ -164,7 +165,7 @@ class StatNodeShellCommandExecutor extends ShellCommandExecutor {
 
   override def run(commandLine: CommandLine): Unit = {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
-    val ns = admin.statNode(commandLine.getOptionValue("node").toInt);
+    val ns = admin.statNode(commandLine.getOptionValue("node").toInt, Duration("4s"));
     println(s"[node-${ns.nodeId}](address=${ns.address})")
     ns.regionStats.foreach { y =>
       println(s"    ╰┈┈┈[region-${y.regionId}](file number=${y.fileCount}, total size=${y.totalSize})")
@@ -194,7 +195,7 @@ class GreetShellCommandExecutor extends ShellCommandExecutor {
 
   override def run(commandLine: CommandLine): Unit = {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
-    val (nodeId, addr) = admin.greet(commandLine.getOptionValue("node").toInt)
+    val (nodeId, addr) = admin.greet(commandLine.getOptionValue("node").toInt, Duration("4s"))
     println(s"greeted node-${nodeId} on ${addr}.")
 
     admin.close
@@ -237,7 +238,7 @@ class ShutdownAllShellCommandExecutor extends ShellCommandExecutor {
 
   override def run(commandLine: CommandLine): Unit = {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
-    admin.shutdownAllNodes().foreach { x =>
+    admin.shutdownAllNodes(Duration("4s")).foreach { x =>
       println(s"shutdowning node-${x._1} on ${x._2}...")
     }
   }
@@ -269,7 +270,7 @@ class ShutdownNodeShellCommandExecutor extends ShellCommandExecutor {
 
   override def run(commandLine: CommandLine): Unit = {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
-    val (nodeId, address) = admin.shutdownNode(commandLine.getOptionValue("node").toInt)
+    val (nodeId, address) = admin.shutdownNode(commandLine.getOptionValue("node").toInt, Duration("4s"))
     println(s"shutdowning node-$nodeId on address...")
   }
 }
@@ -293,7 +294,7 @@ class CleanAllShellCommandExecutor extends ShellCommandExecutor {
 
   override def run(commandLine: CommandLine): Unit = {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
-    val addrs = admin.cleanAllData()
+    val addrs = admin.cleanAllData(Duration("4s"))
     addrs.foreach(addr => println(s"cleaned data on $addr..."))
   }
 }
@@ -324,7 +325,7 @@ class CleanNodeShellCommandExecutor extends ShellCommandExecutor {
 
   override def run(commandLine: CommandLine): Unit = {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
-    val addr = admin.cleanNodeData(commandLine.getOptionValue("node").toInt)
+    val addr = admin.cleanNodeData(commandLine.getOptionValue("node").toInt, Duration("4s"))
     println(s"cleaned data on $addr...")
   }
 }

@@ -11,8 +11,8 @@ import net.neoremind.kraps.rpc.{RpcAddress, RpcEnvClientConfig}
 
 import scala.collection.mutable
 import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Future
 import scala.concurrent.duration.Duration
-import scala.concurrent.{Await, Future}
 
 /**
   * a client to regionfs servers
@@ -33,12 +33,6 @@ class FsClient(zks: String) extends Logging {
     }
   }
 
-  def writeFiles(inputs: Iterable[(InputStream, Long)]): Iterable[FileId] = {
-    inputs.map(x =>
-      writeFile(x._1, x._2)).
-      map(Await.result(_, Duration.Inf))
-  }
-
   def writeFile(is: InputStream, totalLength: Long): Future[FileId] = {
     assertNodesNotEmpty();
 
@@ -46,12 +40,12 @@ class FsClient(zks: String) extends Logging {
     client.writeFile(is, totalLength)
   }
 
-  def readFile[T](fileId: FileId): InputStream = {
+  def readFile[T](fileId: FileId, rpcTimeout: Duration): InputStream = {
     assertNodesNotEmpty();
     val nodeId = (fileId.regionId >> 16).toInt;
     //regions.mapRegionNodes(fileId.regionId).apply(0)
     val nodeClient = nodes.mapNodeClients(nodeId)
-    nodeClient.readFile(fileId)
+    nodeClient.readFile(fileId, rpcTimeout)
   }
 
   def close = {
@@ -89,8 +83,7 @@ object FsNodeClient {
   * an FsNodeClient is an underline client used by FsClient
   * it sends raw messages (e.g. SendCompleteFileRequest) to NodeServer and handles responses
   */
-case class FsNodeClient(rpcEnv: HippoRpcEnv, val remoteAddress: RpcAddress) extends Logging {
-
+class FsNodeClient(rpcEnv: HippoRpcEnv, val remoteAddress: RpcAddress) extends Logging {
   val endPointRef = rpcEnv.setupEndpointRef(RpcAddress(remoteAddress.host, remoteAddress.port), "regionfs-service");
 
   def close(): Unit = {
@@ -98,19 +91,25 @@ case class FsNodeClient(rpcEnv: HippoRpcEnv, val remoteAddress: RpcAddress) exte
   }
 
   def writeFile(is: InputStream, totalLength: Long): Future[FileId] = {
-    endPointRef.askWithStream[SendFileResponse](SendFileRequest(None, totalLength), (buf: ByteBuf) => {
-      buf.writeBytes(is, totalLength.toInt)
-    }).map(_.fileId)
+    endPointRef.askWithStream[SendFileResponse](
+      SendFileRequest(None, totalLength),
+      (buf: ByteBuf) => {
+        buf.writeBytes(is, totalLength.toInt)
+      }).map(_.fileId)
   }
 
   def writeFileReplica(is: InputStream, totalLength: Long, regionId: Long): Future[FileId] = {
-    endPointRef.askWithStream[SendFileResponse](SendFileRequest(None, totalLength), (buf: ByteBuf) => {
-      buf.writeBytes(is, totalLength.toInt)
-    }).map(_.fileId)
+    endPointRef.askWithStream[SendFileResponse](
+      SendFileRequest(None, totalLength),
+      (buf: ByteBuf) => {
+        buf.writeBytes(is, totalLength.toInt)
+      }).map(_.fileId)
   }
 
-  def readFile[T](fileId: FileId): InputStream = {
-    endPointRef.getInputStream(ReadFileRequest(fileId.regionId, fileId.localId))
+  def readFile[T](fileId: FileId, rpcTimeout: Duration): InputStream = {
+    endPointRef.getInputStream(
+      ReadFileRequest(fileId.regionId, fileId.localId),
+      rpcTimeout)
   }
 }
 

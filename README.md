@@ -1,5 +1,13 @@
 # regionfs
 distributed file system for blob
+
+[![GitHub releases](https://img.shields.io/github/release/bluejoe2008/regionfs.svg)](https://github.com/bluejoe2008/regionfs/releases)
+[![GitHub downloads](https://img.shields.io/github/downloads/bluejoe2008/regionfs/total.svg)](https://github.com/bluejoe2008/regionfs/releases)
+[![GitHub issues](https://img.shields.io/github/issues/bluejoe2008/regionfs.svg)](https://github.com/bluejoe2008/regionfs/issues)
+[![GitHub forks](https://img.shields.io/github/forks/bluejoe2008/regionfs.svg)](https://github.com/bluejoe2008/regionfs/network)
+[![GitHub stars](https://img.shields.io/github/stars/bluejoe2008/regionfs.svg)](https://github.com/bluejoe2008/regionfs/stargazers)
+[![GitHub license](https://img.shields.io/github/license/bluejoe2008/regionfs.svg)](https://github.com/bluejoe2008/regionfs/blob/master/LICENSE)
+
 ```
     ____             _             ___________
    / __ \___  ____ _(_)___  ____  / ____/ ___/

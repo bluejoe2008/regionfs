@@ -214,7 +214,7 @@ class StartNodeShellCommandExecutor extends ShellCommandExecutor {
 
   override def run(commandLine: CommandLine): Unit = {
     val server = FsNodeServer.create(new File(commandLine.getOptionValue("conf")))
-    server.startup()
+    server.awaitTermination()
   }
 }
 

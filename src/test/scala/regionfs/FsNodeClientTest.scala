@@ -1,12 +1,13 @@
 package regionfs
 
 import java.io.{ByteArrayInputStream, File, FileInputStream}
+
 import cn.bluejoe.regionfs.GlobalConfig
 import cn.bluejoe.regionfs.client.FsNodeClient
 import cn.bluejoe.regionfs.server.RegionManager
 import cn.bluejoe.util.Profiler._
 import org.apache.commons.io.IOUtils
-import org.junit.{Assert, Before, Test}
+import org.junit.{After, Assert, Before, Test}
 
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
@@ -16,16 +17,17 @@ import scala.concurrent.duration.Duration
   */
 class FsNodeClientTest extends FileTestBase {
 
-  val nodeClient = FsNodeClient.connect("localhost:1224")
+  var nodeClient: FsNodeClient = null
   val rm = new RegionManager(1, new File("./testdata/nodes/node1"), GlobalConfig(1, -1, false));
 
   @Before
-  def makeFiles(): Unit = {
-    makeFile(new File("./testdata/inputs/999"), 999)
-    makeFile(new File("./testdata/inputs/9999"), 9999)
-    makeFile(new File("./testdata/inputs/99999"), 99999L)
-    makeFile(new File("./testdata/inputs/999999"), 999999L)
-    makeFile(new File("./testdata/inputs/9999999"), 9999999L)
+  def setup2(): Unit = {
+    nodeClient = FsNodeClient.connect("localhost:1224")
+  }
+
+  @After
+  def after2() = {
+    nodeClient.close()
   }
 
   @Test

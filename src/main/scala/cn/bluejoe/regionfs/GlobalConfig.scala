@@ -21,6 +21,7 @@ object GlobalConfig {
     if (zk.exists("/regionfs/config", null) == null) {
       throw new GlobalConfigPathNotFoundException("/regionfs/config");
     }
+
     val bytes = zk.getData("/regionfs/config", null, null)
     val bais = new ByteArrayInputStream(bytes);
     val props = new Properties()

@@ -14,7 +14,7 @@ object StartStandaloneNodeServer {
     }
     else {
       val server = FsNodeServer.create(new File(args(0)))
-      server.startup()
+      server.awaitTermination()
     }
   }
 }

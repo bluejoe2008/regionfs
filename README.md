@@ -52,6 +52,21 @@ bin/rfs start-local-node -conf ./conf/node.conf
 
 ## start all nodes
 
+## rfs commands
+
+rfs <command> [args]
+commands:
+	clean-all           clean data on a node
+	clean-node          clean data on all nodes
+	greet               notify a node server to print a message to be noticed
+	help                print usage information
+	init                initialize global setting
+	shutdown-all        shutdown all nodes
+	shutdown-node       shutdown a node
+	start-local-node    start a local node server
+	stat-all            report statistics of all nodes
+	stat-node           report statistics of a node
+
 ## using FsClient
 
 ```

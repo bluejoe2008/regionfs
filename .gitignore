@@ -4,3 +4,4 @@ testdata/
 .idea/
 target/
 /dist/
+dependency-reduced-pom.xml

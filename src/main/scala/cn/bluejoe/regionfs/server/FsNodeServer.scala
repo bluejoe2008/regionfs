@@ -79,10 +79,9 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
   val endpoint = new FileRpcEndpoint(env)
   env.setupEndpoint("regionfs-service", endpoint)
   env.setRpcHandler(endpoint)
+  writeLockFile(new File(storeDir, ".lock"))
 
-  def startup(): Unit = {
-    writeLockFile(new File(storeDir, ".lock"))
-
+  def awaitTermination(): Unit = {
     println(IOUtils.toString(this.getClass.getClassLoader.getResourceAsStream("logo.txt"), "utf-8"))
     println(s"starting node server on ${address}, nodeId=${nodeId}, storeDir=${storeDir.getAbsoluteFile.getCanonicalPath}")
 
@@ -102,6 +101,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
       new File(storeDir, ".lock").delete();
       env.shutdown()
+      zookeeper.close()
       println(s"shutdown node server on ${address}, nodeId=${nodeId}")
       alive = false;
     }

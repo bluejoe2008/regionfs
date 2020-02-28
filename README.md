@@ -54,6 +54,7 @@ bin/rfs start-local-node -conf ./conf/node.conf
 
 ## rfs commands
 
+```
 rfs <command> [args]
 commands:
 	clean-all           clean data on a node
@@ -66,6 +67,7 @@ commands:
 	start-local-node    start a local node server
 	stat-all            report statistics of all nodes
 	stat-node           report statistics of a node
+```
 
 ## using FsClient
 

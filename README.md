@@ -1,6 +1,23 @@
 # regionfs
 distributed file system for blob
 
+[![GitHub releases](https://img.shields.io/github/release/bluejoe2008/regionfs.svg)](https://github.com/bluejoe2008/regionfs/releases)
+[![GitHub downloads](https://img.shields.io/github/downloads/bluejoe2008/regionfs/total.svg)](https://github.com/bluejoe2008/regionfs/releases)
+[![GitHub issues](https://img.shields.io/github/issues/bluejoe2008/regionfs.svg)](https://github.com/bluejoe2008/regionfs/issues)
+[![GitHub forks](https://img.shields.io/github/forks/bluejoe2008/regionfs.svg)](https://github.com/bluejoe2008/regionfs/network)
+[![GitHub stars](https://img.shields.io/github/stars/bluejoe2008/regionfs.svg)](https://github.com/bluejoe2008/regionfs/stargazers)
+[![GitHub license](https://img.shields.io/github/license/bluejoe2008/regionfs.svg)](https://github.com/bluejoe2008/regionfs/blob/master/LICENSE)
+
+```
+    ____             _             ___________
+   / __ \___  ____ _(_)___  ____  / ____/ ___/
+  / /_/ / _ \/ __ `/ / __ \/ __ \/ /_   \__ \
+ / _, _/  __/ /_/ / / /_/ / / / / __/  ___/ /
+/_/ |_|\___/\__, /_/\____/_/ /_/_/    /____/
+           /____/
+
+```
+
 # how to use
 
 NOTE: make sure zookeeper cluster is running, suppose it has connecting string: `localhost:2181,localhost:2182,localhost:2183`
@@ -51,6 +68,23 @@ bin/rfs start-local-node -conf ./conf/node.conf
 ```
 
 ## start all nodes
+
+## rfs commands
+
+```
+rfs <command> [args]
+commands:
+	clean-all           clean data on a node
+	clean-node          clean data on all nodes
+	greet               notify a node server to print a message to be noticed
+	help                print usage information
+	init                initialize global setting
+	shutdown-all        shutdown all nodes
+	shutdown-node       shutdown a node
+	start-local-node    start a local node server
+	stat-all            report statistics of all nodes
+	stat-node           report statistics of a node
+```
 
 ## using FsClient
 

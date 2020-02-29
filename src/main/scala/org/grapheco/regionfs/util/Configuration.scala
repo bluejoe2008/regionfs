@@ -18,12 +18,12 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package cn.bluejoe.regionfs.util
+package org.grapheco.regionfs.util
 
 import java.io.{File, FileInputStream}
 import java.util.Properties
 
-import cn.bluejoe.util.Logging
+import org.grapheco.commons.util.Logging
 
 /**
   * Created by bluejoe on 2019/7/23.

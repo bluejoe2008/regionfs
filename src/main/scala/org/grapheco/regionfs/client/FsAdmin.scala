@@ -1,7 +1,7 @@
-package cn.bluejoe.regionfs.client
+package org.grapheco.regionfs.client
 
-import cn.bluejoe.regionfs._
-import cn.bluejoe.util.IteratorUtils
+import org.grapheco.commons.util.IteratorUtils
+import org.grapheco.regionfs._
 import net.neoremind.kraps.rpc.RpcAddress
 
 import scala.concurrent.Await

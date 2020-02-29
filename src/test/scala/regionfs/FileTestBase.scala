@@ -2,10 +2,10 @@ package regionfs
 
 import java.io.{ByteArrayInputStream, File, FileInputStream, FileOutputStream}
 
-import cn.bluejoe.regionfs.FileId
-import cn.bluejoe.regionfs.client.FsClient
-import cn.bluejoe.regionfs.server.FsNodeServer
-import cn.bluejoe.util.{Logging, Profiler}
+import org.grapheco.commons.util.{Profiler, Logging}
+import org.grapheco.regionfs.FileId
+import org.grapheco.regionfs.client.FsClient
+import org.grapheco.regionfs.server.FsNodeServer
 import org.junit.{After, Before}
 
 import scala.concurrent.duration.Duration

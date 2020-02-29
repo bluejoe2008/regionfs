@@ -1,4 +1,4 @@
-package cn.bluejoe.regionfs.util
+package org.grapheco.regionfs.util
 
 import java.lang.management.ManagementFactory
 

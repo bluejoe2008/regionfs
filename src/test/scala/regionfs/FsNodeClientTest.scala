@@ -2,10 +2,10 @@ package regionfs
 
 import java.io.{ByteArrayInputStream, File, FileInputStream}
 
-import cn.bluejoe.regionfs.GlobalConfig
-import cn.bluejoe.regionfs.client.FsNodeClient
-import cn.bluejoe.regionfs.server.RegionManager
-import cn.bluejoe.util.Profiler._
+import org.grapheco.regionfs.GlobalConfig
+import org.grapheco.regionfs.client.FsNodeClient
+import org.grapheco.regionfs.server.RegionManager
+import org.grapheco.commons.util.Profiler._
 import org.apache.commons.io.IOUtils
 import org.junit.{After, Assert, Before, Test}
 

@@ -1,11 +1,11 @@
-package cn.bluejoe.regionfs
+package org.grapheco.regionfs
 
 import java.io.{ByteArrayInputStream, File, FileInputStream}
 import java.util.Properties
 
-import cn.bluejoe.regionfs.client.ZooKeeperClient
-import cn.bluejoe.regionfs.server.RegionFsServerException
-import cn.bluejoe.regionfs.util.ConfigurationEx
+import org.grapheco.regionfs.client.ZooKeeperClient
+import org.grapheco.regionfs.server.RegionFsServerException
+import org.grapheco.regionfs.util.ConfigurationEx
 import org.apache.commons.io.IOUtils
 import org.apache.zookeeper.ZooDefs.Ids
 import org.apache.zookeeper.{CreateMode, ZooKeeper}

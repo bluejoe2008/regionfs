@@ -1,4 +1,4 @@
-package cn.bluejoe.regionfs
+package org.grapheco.regionfs
 
 import java.io.{ByteArrayOutputStream, DataOutputStream}
 

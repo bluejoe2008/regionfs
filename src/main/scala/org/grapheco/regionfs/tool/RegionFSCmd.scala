@@ -1,10 +1,10 @@
-package cn.bluejoe.regionfs.tool
+package org.grapheco.regionfs.tool
 
 import java.io.File
 
-import cn.bluejoe.regionfs.GlobalConfigConfigurer
-import cn.bluejoe.regionfs.client.{FsAdmin, FsNodeClient}
-import cn.bluejoe.regionfs.server.FsNodeServer
+import org.grapheco.regionfs.GlobalConfigConfigurer
+import org.grapheco.regionfs.client.{FsAdmin, FsNodeClient}
+import org.grapheco.regionfs.server.FsNodeServer
 import org.apache.commons.cli._
 
 import scala.collection.mutable.ArrayBuffer
@@ -29,7 +29,7 @@ object RegionFSCmd {
 
   commands.filter(_._3 != null).foreach(x => x._3.init(Array("rfs", x._1)))
 
-  //mvn exec:java -Dexec.mainClass="cn.bluejoe.regionfs.tool.RegionFSCmd" -Dexec.args="stat" -DskipTests
+  //mvn exec:java -Dexec.mainClass="org.grapheco.regionfs.tool.RegionFSCmd" -Dexec.args="stat" -DskipTests
   def main(args: Array[String]) {
     if (args.length < 1) {
       printError("no command designated");

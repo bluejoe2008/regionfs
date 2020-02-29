@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>cn.bluejoe</groupId>
+    <groupId>org.grapheco</groupId>
     <artifactId>regionfs</artifactId>
     <version>0.9</version>
     <dependencies>
@@ -29,7 +29,7 @@
             <version>1.0.0</version>
         </dependency>
         <dependency>
-            <groupId>cn.bluejoe</groupId>
+            <groupId>org.grapheco</groupId>
             <artifactId>hippo-rpc</artifactId>
             <version>0.1.0</version>
         </dependency>

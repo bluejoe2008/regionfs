@@ -2,9 +2,9 @@ package regionfs
 
 import java.io._
 import java.nio.ByteBuffer
-import cn.bluejoe.regionfs.GlobalConfig
-import cn.bluejoe.regionfs.server.{Region, RegionConfig}
-import cn.bluejoe.util.Profiler._
+import org.grapheco.regionfs.GlobalConfig
+import org.grapheco.regionfs.server.{Region, RegionConfig}
+import org.grapheco.commons.util.Profiler._
 import org.apache.commons.io.IOUtils
 import org.junit.{Assert, Before, Test}
 

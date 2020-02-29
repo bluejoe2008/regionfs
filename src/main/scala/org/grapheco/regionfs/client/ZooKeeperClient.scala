@@ -1,4 +1,4 @@
-package cn.bluejoe.regionfs.client
+package org.grapheco.regionfs.client
 
 import org.apache.zookeeper.{WatchedEvent, Watcher, ZooKeeper}
 

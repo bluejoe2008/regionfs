@@ -1,7 +1,7 @@
-package cn.bluejoe.regionfs
+package org.grapheco.regionfs
 
-import cn.bluejoe.regionfs.client.NodeStat
 import net.neoremind.kraps.rpc.RpcAddress
+import org.grapheco.regionfs.client.NodeStat
 
 /**
   * Created by bluejoe on 2019/8/23.

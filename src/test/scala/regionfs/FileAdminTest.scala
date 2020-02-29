@@ -1,6 +1,6 @@
 package regionfs
 
-import cn.bluejoe.regionfs.client.FsAdmin
+import org.grapheco.regionfs.client.FsAdmin
 import net.neoremind.kraps.rpc.RpcAddress
 import org.junit.{After, Assert, Before, Test}
 

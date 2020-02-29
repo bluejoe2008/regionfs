@@ -1,10 +1,10 @@
-package cn.bluejoe.regionfs
+package org.grapheco.regionfs
 
-import cn.bluejoe.regionfs.client.FsNodeClient
-import cn.bluejoe.util.Logging
 import net.neoremind.kraps.rpc.RpcAddress
 import org.apache.zookeeper.Watcher.Event.EventType
 import org.apache.zookeeper.{WatchedEvent, Watcher, ZooKeeper}
+import org.grapheco.commons.util.Logging
+import org.grapheco.regionfs.client.FsNodeClient
 
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.{JavaConversions, mutable}

@@ -1,9 +1,9 @@
-package cn.bluejoe.regionfs.client
+package org.grapheco.regionfs.client
 
 import java.io.InputStream
 
-import cn.bluejoe.regionfs._
-import cn.bluejoe.util.Logging
+import org.grapheco.commons.util.Logging
+import org.grapheco.regionfs._
 import io.netty.buffer.ByteBuf
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.{HippoRpcEnv, HippoRpcEnvFactory}

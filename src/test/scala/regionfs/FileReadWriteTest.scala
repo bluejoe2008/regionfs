@@ -2,7 +2,7 @@ package regionfs
 
 import java.io.{File, FileInputStream}
 
-import cn.bluejoe.util.Profiler._
+import org.grapheco.commons.util.Profiler._
 import org.apache.commons.io.IOUtils
 import org.junit.{Assert, Before, Test}
 

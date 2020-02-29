@@ -2,7 +2,7 @@ package regionfs
 
 import java.io.File
 
-import cn.bluejoe.regionfs.server.FsNodeServer
+import org.grapheco.regionfs.server.FsNodeServer
 
 /**
   * Created by bluejoe on 2020/2/24.

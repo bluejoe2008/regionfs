@@ -5,7 +5,7 @@ import java.util.Properties
 
 import org.grapheco.regionfs.client.ZooKeeperClient
 import org.grapheco.regionfs.server.RegionFsServerException
-import org.grapheco.regionfs.util.ConfigurationEx
+import org.grapheco.commons.util.ConfigurationEx
 import org.apache.commons.io.IOUtils
 import org.apache.zookeeper.ZooDefs.Ids
 import org.apache.zookeeper.{CreateMode, ZooKeeper}

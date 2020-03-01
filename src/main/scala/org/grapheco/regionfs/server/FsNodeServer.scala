@@ -8,7 +8,7 @@ import org.grapheco.commons.util.Logging
 import org.grapheco.hippo.{ChunkedStream, CompleteStream, HippoRpcHandler, ReceiveContext}
 import org.grapheco.regionfs._
 import org.grapheco.regionfs.client._
-import org.grapheco.regionfs.util.{ConfigurationEx, ProcessUtils}
+import org.grapheco.commons.util.{ConfigurationEx, ProcessUtils}
 import org.grapheco.hippo.util.{ByteBufferInputStream}
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.{HippoRpcEnv, HippoRpcEnvFactory}

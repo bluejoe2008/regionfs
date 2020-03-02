@@ -4,7 +4,7 @@ import net.neoremind.kraps.rpc.RpcAddress
 import org.apache.zookeeper.Watcher.Event.EventType
 import org.apache.zookeeper.{WatchedEvent, Watcher, ZooKeeper}
 import org.grapheco.commons.util.Logging
-import org.grapheco.regionfs.client.FsNodeClient
+import org.grapheco.regionfs.client.{FsNodeClient, FsNodeClientFactory}
 
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.{JavaConversions, mutable}
@@ -78,13 +78,11 @@ class ZooKeeperPathWatcher(zk: ZooKeeper) extends Logging {
   *    3_192.168.100.2_1224
   *    ...
   */
-class UpdatingNodeList(zk: ZooKeeper, nodeFilter: (Int => Boolean)) extends Logging {
+class UpdatingNodeList(clientFactory: FsNodeClientFactory, zk: ZooKeeper, nodeFilter: (Int => Boolean)) extends Logging {
   var watcher = new ZooKeeperPathWatcher(zk)
 
   def stop(): Unit = {
-    watcher.stop {
-      mapNodeClients.foreach(_._2.close())
-    }
+    watcher.stop()
   }
 
   //1->client1, 2->client2, ...
@@ -103,11 +101,11 @@ class UpdatingNodeList(zk: ZooKeeper, nodeFilter: (Int => Boolean)) extends Logg
       onStarted = (list: Iterable[(Int, RpcAddress)]) => {
         mapNodeClients ++= list.map {
           kv =>
-            kv._1 -> FsNodeClient.connect(kv._2)
+            kv._1 -> clientFactory.of(kv._2)
         }
       },
       onNodeCreated = (kv: (Int, RpcAddress)) => {
-        mapNodeClients += kv._1 -> (FsNodeClient.connect(kv._2))
+        mapNodeClients += kv._1 -> (clientFactory.of(kv._2))
       },
       onNodeDeleted = (kv: (Int, RpcAddress)) => {
         mapNodeClients -= kv._1
@@ -127,7 +125,7 @@ class UpdatingNodeList(zk: ZooKeeper, nodeFilter: (Int => Boolean)) extends Logg
   *    2_65536
   *    ...
   */
-class UpdatingRegionList(zk: ZooKeeper, nodeFilter: (Int) => Boolean) extends Logging {
+class UpdatingRegionList(clientFactory: FsNodeClientFactory, zk: ZooKeeper, nodeFilter: (Int) => Boolean) extends Logging {
 
   //32768->(1,2), 32769->(1), ...
   val mapRegionNodes = mutable.Map[Long, ArrayBuffer[Int]]()

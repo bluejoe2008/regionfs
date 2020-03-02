@@ -1,14 +1,33 @@
 package org.grapheco.regionfs
 
-import java.io.{ByteArrayOutputStream, DataOutputStream}
+import java.io.{ByteArrayInputStream, ByteArrayOutputStream, DataInputStream, DataOutputStream}
+
+import org.apache.commons.codec.binary.Base64
 
 /**
   * Created by bluejoe on 2019/8/22.
   */
 
 object FileId {
+  val base64 = new Base64();
+
   def make(regionId: Long, localId: Long): FileId = {
     new FileId(regionId, localId)
+  }
+
+  def toBase64String(id: FileId): String = {
+    val baos = new ByteArrayOutputStream();
+    val dos = new DataOutputStream(baos);
+    dos.writeLong(id.regionId);
+    dos.writeLong(id.localId);
+
+    base64.encodeAsString(baos.toByteArray)
+  }
+
+  def fromBase64String(text: String): FileId = {
+    val bytes = base64.decode(text)
+    val dis = new DataInputStream(new ByteArrayInputStream(bytes))
+    make(dis.readLong(), dis.readLong())
   }
 }
 
@@ -20,22 +39,5 @@ object FileId {
   * localId is an unique id in a region, often be an integer index
   */
 case class FileId(regionId: Long, localId: Long) extends Serializable {
-
-  /**
-    * print this FileId as a string
-    */
-  def asHexString(): String = {
-    val baos = new ByteArrayOutputStream()
-    val dos = new DataOutputStream(baos)
-    dos.writeLong(regionId)
-    dos.writeLong(localId)
-
-    baos.toByteArray.map((x: Byte) => {
-      val s = (x & 0xff).toInt.toHexString.takeRight(2)
-      if (s.length < 2)
-        "0" + s
-      else
-        s
-    }).mkString
-  }
+  def getBase64String() = FileId.toBase64String(this)
 }

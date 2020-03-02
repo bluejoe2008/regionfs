@@ -2,11 +2,11 @@ package regionfs
 
 import java.io.{ByteArrayInputStream, File, FileInputStream}
 
+import org.apache.commons.io.IOUtils
+import org.grapheco.commons.util.Profiler._
 import org.grapheco.regionfs.GlobalConfig
 import org.grapheco.regionfs.client.FsNodeClient
 import org.grapheco.regionfs.server.RegionManager
-import org.grapheco.commons.util.Profiler._
-import org.apache.commons.io.IOUtils
 import org.junit.{After, Assert, Before, Test}
 
 import scala.concurrent.Await
@@ -22,12 +22,11 @@ class FsNodeClientTest extends FileTestBase {
 
   @Before
   def setup2(): Unit = {
-    nodeClient = FsNodeClient.connect("localhost:1224")
+    nodeClient = client.clientFactory.of("localhost:1224")
   }
 
   @After
   def after2() = {
-    nodeClient.close()
   }
 
   @Test
@@ -43,8 +42,8 @@ class FsNodeClientTest extends FileTestBase {
       }
 
       //read local region
-      val region = rm.get(id.regionId)
-      val buf = region.read(id.localId)
+      val region = rm.get(id.regionId).get
+      val buf = region.read(id.localId).get
       val bytes = new Array[Byte](buf.remaining())
       buf.get(bytes)
       Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(new File(s"./testdata/inputs/$i"))), bytes)

@@ -2,9 +2,9 @@ package regionfs
 
 import java.io.{ByteArrayInputStream, File, FileInputStream, FileOutputStream}
 
-import org.grapheco.commons.util.{Profiler, Logging}
+import org.grapheco.commons.util.{Logging, Profiler}
 import org.grapheco.regionfs.FileId
-import org.grapheco.regionfs.client.FsClient
+import org.grapheco.regionfs.client.{FsClient, FsNodeClient}
 import org.grapheco.regionfs.server.FsNodeServer
 import org.junit.{After, Before}
 

@@ -2,9 +2,9 @@ package regionfs
 
 import java.io.{File, FileInputStream}
 
-import org.grapheco.commons.util.Profiler._
 import org.apache.commons.io.IOUtils
-import org.junit.{Assert, Before, Test}
+import org.grapheco.commons.util.Profiler._
+import org.junit.{Assert, Test}
 
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
@@ -38,6 +38,24 @@ class FileReadWriteTest extends FileTestBase {
       println(s"writing $i bytes...")
       timing(true) {
         (1 to 10).map(_ => super.writeFileAsync(new File(s"./testdata/inputs/$i"))).map(Await.result(_, Duration.Inf))
+      }
+    }
+  }
+
+  @Test
+  def testDelete(): Unit = {
+    val src: File = new File(s"./testdata/inputs/999")
+    val id = super.writeFile(src);
+    IOUtils.toByteArray(client.readFile(id, Duration("4s")))
+    Await.result(client.deleteFile(id), Duration.Inf)
+    try {
+      IOUtils.toByteArray(client.readFile(id, Duration("4s")))
+      Assert.assertTrue(false)
+    }
+    catch {
+      case e: Throwable => {
+        //e.printStackTrace()
+        Assert.assertTrue(true)
       }
     }
   }

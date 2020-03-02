@@ -4,18 +4,17 @@ import java.io._
 import java.nio.ByteBuffer
 import java.util.Random
 
-import org.grapheco.commons.util.Logging
-import org.grapheco.hippo.{ChunkedStream, CompleteStream, HippoRpcHandler, ReceiveContext}
-import org.grapheco.regionfs._
-import org.grapheco.regionfs.client._
-import org.grapheco.commons.util.{ConfigurationEx, ProcessUtils}
-import org.grapheco.hippo.util.{ByteBufferInputStream}
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.{HippoRpcEnv, HippoRpcEnvFactory}
 import net.neoremind.kraps.rpc.{RpcAddress, RpcCallContext, RpcEndpoint, RpcEnvServerConfig}
 import org.apache.commons.io.IOUtils
 import org.apache.zookeeper.ZooDefs.Ids
 import org.apache.zookeeper._
+import org.grapheco.commons.util.{ConfigurationEx, Logging, ProcessUtils}
+import org.grapheco.hippo.util.ByteBufferInputStream
+import org.grapheco.hippo.{ChunkedStream, CompleteStream, HippoRpcHandler, ReceiveContext}
+import org.grapheco.regionfs._
+import org.grapheco.regionfs.client._
 
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Await
@@ -70,11 +69,12 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
   val (env, address) = createRpcEnv(zookeeper)
   val globalConfig = GlobalConfig.load(zookeeper)
   val localRegionManager = new RegionManager(nodeId, storeDir, globalConfig)
+  val clientFactory = new FsNodeClientFactory();
 
   //get neighbour nodes
-  val neighbourNodes = new UpdatingNodeList(zookeeper, nodeId != _).start()
+  val neighbourNodes = new UpdatingNodeList(clientFactory, zookeeper, nodeId != _).start()
   //get regions in neighbour nodes
-  val neighbourRegions = new UpdatingRegionList(zookeeper, nodeId != _).start()
+  val neighbourRegions = new UpdatingRegionList(clientFactory, zookeeper, nodeId != _).start()
 
   var alive: Boolean = true
   val endpoint = new FileRpcEndpoint(env)
@@ -97,6 +97,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
   def shutdown(): Unit = {
     if (alive) {
+      clientFactory.close()
       neighbourNodes.stop()
       neighbourRegions.stop()
 
@@ -235,6 +236,22 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         context.reply(CleanDataResponse(address))
       }
 
+      case DeleteFileRequest(regionId: Long, localId: Long) => {
+        val maybeRegion = localRegionManager.get(regionId)
+        if (maybeRegion.isEmpty) {
+          throw new WrongRegionIdException(regionId);
+        }
+
+        try {
+          maybeRegion.get.delete(localId)
+          context.reply(DeleteFileResponse(true, null))
+        }
+        catch {
+          case e: Throwable =>
+            context.reply(DeleteFileResponse(false, e.getMessage))
+        }
+      }
+
       case GreetingRequest(msg: String) => {
         println(s"node-${nodeId}($address): \u001b[31;47;4m${msg}\u0007\u001b[0m")
         context.reply(GreetingResponse(address))
@@ -247,8 +264,17 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
     override def openCompleteStream(): PartialFunction[Any, CompleteStream] = {
       case ReadFileRequest(regionId: Long, localId: Long) => {
-        val region = localRegionManager.get(regionId)
-        CompleteStream.fromByteBuffer(region.read(localId))
+        val maybeRegion = localRegionManager.get(regionId)
+        if (maybeRegion.isEmpty) {
+          throw new WrongRegionIdException(regionId);
+        }
+
+        val maybeBuffer = maybeRegion.get.read(localId)
+        if (maybeBuffer.isEmpty) {
+          throw new WrongLocalIdException(regionId, localId);
+        }
+
+        CompleteStream.fromByteBuffer(maybeBuffer.get)
       }
     }
 
@@ -285,7 +311,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             region.regionId -> localId
           }
           else {
-            val region = localRegionManager.get(maybeRegionId.get)
+            val region = localRegionManager.get(maybeRegionId.get).get
             val localId = region.write(extraInput)
 
             region.regionId -> localId
@@ -319,5 +345,15 @@ class StoreDirNotExistsException(storeDir: File) extends
 
 class ExisitingNodeInZooKeeperExcetion(path: String) extends
   RegionFsServerException(s"find existing node in zookeeper: ${path}") {
+
+}
+
+class WrongLocalIdException(regionId: Long, localId: Long) extends
+  RegionFsServerException(s"file #${localId} not exist in region #${regionId}") {
+
+}
+
+class WrongRegionIdException(regionId: Long) extends
+  RegionFsServerException(s"region not exist: ${regionId}") {
 
 }

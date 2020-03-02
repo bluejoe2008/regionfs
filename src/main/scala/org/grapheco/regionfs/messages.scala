@@ -58,6 +58,14 @@ case class ReadFileRequest(regionId: Long, localId: Long) {
 
 }
 
+case class DeleteFileRequest(regionId: Long, localId: Long) {
+
+}
+
+case class DeleteFileResponse(success: Boolean, error: String) {
+
+}
+
 case class GetNodeStatRequest() {
 
 }

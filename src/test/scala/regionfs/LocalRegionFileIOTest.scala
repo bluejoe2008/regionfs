@@ -27,7 +27,7 @@ class LocalRegionFileIOTest extends FileTestBase {
     }
 
     val bytes2 = timing(true, 10) {
-      val buf = region.read(id)
+      val buf = region.read(id).get
       val bytes = new Array[Byte](buf.remaining())
       buf.get(bytes)
       bytes

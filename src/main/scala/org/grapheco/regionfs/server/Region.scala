@@ -10,6 +10,7 @@ import org.grapheco.commons.util.Logging
 import org.grapheco.hippo.util.ByteBufferInputStream
 import org.grapheco.regionfs.util.{Cache, FixSizedCache}
 import org.grapheco.regionfs.{Constants, FileId, GlobalConfig}
+
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.Breaks._
@@ -32,25 +33,39 @@ class RegionMetaStore(conf: RegionConfig) {
   lazy val fileMetaFile = new File(conf.regionDir, "meta")
   lazy val fptr = new RandomAccessFile(fileMetaFile, "rw");
 
-  val cache: Cache[Long, MetaData] = new FixSizedCache[Long, MetaData](1024);
+  val cache: Cache[Long, Option[MetaData]] = new FixSizedCache[Long, Option[MetaData]](1024);
 
   def iterator(): Iterator[MetaData] = {
-    (0 to count.toInt - 1).iterator.map(read(_))
+    (0 to count.toInt - 1).iterator.map(read(_).get)
   }
 
   //local id as offset
   val block = new Array[Byte](Constants.METADATA_ENTRY_LENGTH_WITH_PADDING);
 
-  def read(localId: Long): MetaData = {
+  def markDeleted(localId: Long): Unit = {
+    fptr.seek(Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * localId + 4 * 8)
+    fptr.writeByte(1)
+    cache.put(localId, None)
+  }
+
+  def read(localId: Long): Option[MetaData] = {
     cache.get(localId).getOrElse {
       fptr.seek(Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * localId)
       fptr.readFully(block)
 
       val dis = new DataInputStream(new ByteArrayInputStream(block))
       val info = MetaData(dis.readLong(), dis.readLong(), dis.readLong(), dis.readLong())
-
+      val entry =
+        if (dis.readByte() != 0) {
+          None
+        }
+        else {
+          Some(info)
+        }
       dis.close()
-      info
+
+      cache.put(localId, entry)
+      entry
     }
   }
 
@@ -68,7 +83,7 @@ class RegionMetaStore(conf: RegionConfig) {
     fptr.write(block.toByteArray)
     dos.close()
 
-    cache.put(localId, MetaData(localId, offset, length, crc32))
+    cache.put(localId, Some(MetaData(localId, offset, length, crc32)))
   }
 
   def count = fileMetaFile.length() / Constants.METADATA_ENTRY_LENGTH_WITH_PADDING;
@@ -240,21 +255,24 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
     idgen.close()
   }
 
-  def read(localId: Long): ByteBuffer = {
-    val meta = fmeta.read(localId)
-    fbody.read(meta.offset, meta.length.toInt)
+  def read(localId: Long): Option[ByteBuffer] = {
+    val maybeMeta = fmeta.read(localId)
+    maybeMeta.map(meta => fbody.read(meta.offset, meta.length.toInt))
+  }
+
+  def delete(localId: Long): Unit = {
+    fmeta.markDeleted(localId)
   }
 }
 
 /**
   * RegionManager manages local regions stored in storeDir
   */
-//TODO: few live regions + most dead regions
 class RegionManager(nodeId: Long, storeDir: File, globalConfig: GlobalConfig) extends Logging {
   val regions = mutable.Map[Long, Region]()
   lazy val regionIdSerial = new AtomicLong(0)
 
-  def get(id: Long) = regions(id)
+  def get(id: Long): Option[Region] = regions.get(id)
 
   private def isReplica(id: Long): Boolean = (id >> 16) != nodeId;
   /*

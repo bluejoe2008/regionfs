@@ -1,13 +1,15 @@
 package org.grapheco.regionfs.tool
 
-import java.io.File
+import java.io.{File, FileInputStream, FileOutputStream, InputStream}
 
-import org.grapheco.regionfs.GlobalConfigConfigurer
-import org.grapheco.regionfs.client.{FsAdmin, FsNodeClient}
-import org.grapheco.regionfs.server.FsNodeServer
 import org.apache.commons.cli._
+import org.apache.commons.io.IOUtils
+import org.grapheco.regionfs.client.FsAdmin
+import org.grapheco.regionfs.server.FsNodeServer
+import org.grapheco.regionfs.{FileId, GlobalConfigConfigurer}
 
 import scala.collection.mutable.ArrayBuffer
+import scala.concurrent.Await
 import scala.concurrent.duration.Duration
 
 /**
@@ -24,7 +26,10 @@ object RegionFSCmd {
     ("clean-all", "clean data on a node", new CleanAllShellCommandExecutor()),
     ("clean-node", "clean data on all nodes", new CleanNodeShellCommandExecutor()),
     ("shutdown-all", "shutdown all nodes", new ShutdownAllShellCommandExecutor()),
-    ("shutdown-node", "shutdown a node", new ShutdownNodeShellCommandExecutor())
+    ("shutdown-node", "shutdown a node", new ShutdownNodeShellCommandExecutor()),
+    ("put", "put local files into regionfs", new PutFilesShellCommandExecutor()),
+    ("get", "get remote files", new GetFilesShellCommandExecutor()),
+    ("delete", "delete remote files", new DeleteFilesShellCommandExecutor())
   )
 
   commands.filter(_._3 != null).foreach(x => x._3.init(Array("rfs", x._1)))
@@ -142,7 +147,6 @@ class StatAllShellCommandExecutor extends ShellCommandExecutor {
     }
 
     admin.close
-    FsNodeClient.finalize()
   }
 }
 
@@ -172,7 +176,6 @@ class StatNodeShellCommandExecutor extends ShellCommandExecutor {
     }
 
     admin.close
-    FsNodeClient.finalize()
   }
 }
 
@@ -199,7 +202,6 @@ class GreetShellCommandExecutor extends ShellCommandExecutor {
     println(s"greeted node-${nodeId} on ${addr}.")
 
     admin.close
-    FsNodeClient.finalize()
   }
 }
 
@@ -327,5 +329,145 @@ class CleanNodeShellCommandExecutor extends ShellCommandExecutor {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
     val addr = admin.cleanNodeData(commandLine.getOptionValue("node").toInt, Duration("4s"))
     println(s"cleaned data on $addr...")
+  }
+}
+
+class PutFilesShellCommandExecutor extends ShellCommandExecutor {
+  override def buildOptions(options: Options): Unit = {
+    options.addOption(Option.builder("zk")
+      .argName("zkString")
+      .desc("zookeeper address, e.g localhost:2181")
+      .hasArg
+      .required(true)
+      .build())
+  }
+
+  override def run(commandLine: CommandLine): Unit = {
+    val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
+    val args = commandLine.getArgs;
+    if (args.length == 0) {
+      throw new ParseException(s"file path is required");
+    }
+
+    val wrongs = args.map(new File(_)).find(!_.exists())
+    if (!wrongs.isEmpty) {
+      throw new ParseException(s"wrong file path: ${wrongs.map(_.getCanonicalFile.getAbsolutePath).mkString(",")}");
+    }
+
+    println(s"putting ${args.length} file(s):");
+
+    for (path <- args) {
+      val file = new File(path)
+      val is = new FileInputStream(file)
+      val id = Await.result(admin.writeFile(is, file.length), Duration("4s"))
+      is.close()
+
+      println(s"\t${file.getAbsoluteFile.getCanonicalPath} -> ${FileId.toBase64String(id)}")
+    }
+  }
+}
+
+class DeleteFilesShellCommandExecutor extends ShellCommandExecutor {
+  override def buildOptions(options: Options): Unit = {
+    options.addOption(Option.builder("zk")
+      .argName("zkString")
+      .desc("zookeeper address, e.g localhost:2181")
+      .hasArg
+      .required(true)
+      .build())
+  }
+
+  override def run(commandLine: CommandLine): Unit = {
+    val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
+    val args = commandLine.getArgs;
+    if (args.length == 0) {
+      throw new ParseException(s"file id is required");
+    }
+
+    println(s"deleting ${args.length} file(s):");
+
+    for (arg <- args) {
+      val id = FileId.fromBase64String(arg)
+      Await.result(admin.deleteFile(id), Duration("4s"));
+      println(s"${arg}");
+    }
+  }
+}
+
+class GetFilesShellCommandExecutor extends ShellCommandExecutor {
+  override def buildOptions(options: Options): Unit = {
+    options.addOption(Option.builder("zk")
+      .argName("zkString")
+      .desc("zookeeper address, e.g localhost:2181")
+      .hasArg
+      .required(true)
+      .build())
+
+    options.addOption(Option.builder("dir")
+      .argName("localdir")
+      .desc("local directory for saving file")
+      .hasArg
+      .required(false)
+      .build())
+  }
+
+  trait FileOutput {
+    def write(label: String, id: FileId, is: InputStream);
+
+    def done();
+  }
+
+  override def run(commandLine: CommandLine): Unit = {
+    val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
+    val args = commandLine.getArgs;
+    if (args.length == 0) {
+      throw new ParseException(s"file id is required");
+    }
+
+    val output: FileOutput =
+      if (commandLine.hasOption("dir")) {
+        val dir = new File(commandLine.getOptionValue("dir"))
+        if (!dir.exists()) {
+          throw new ParseException(s"wrong file dir: ${dir.getCanonicalFile.getAbsolutePath}");
+        }
+
+        new FileOutput {
+          override def write(label: String, id: FileId, is: InputStream): Unit = {
+            val file = new File(dir, label)
+            val os = new FileOutputStream(file);
+            IOUtils.copy(is, os)
+            os.close()
+            println(s"\t${label}->${file.getAbsoluteFile.getCanonicalPath}")
+          }
+
+          override def done(): Unit = {
+
+          }
+        }
+      }
+      else {
+        new FileOutput {
+          override def write(label: String, id: FileId, is: InputStream): Unit = {
+            println(s"\r\n==============<<<$label>>>===============\r\n")
+            val os = System.out
+            IOUtils.copy(is, os)
+          }
+
+          override def done(): Unit = {
+
+          }
+        }
+      }
+
+    println(s"getting ${args.length} file(s):");
+
+    for (arg <- args) {
+      val id = FileId.fromBase64String(arg)
+      val is = admin.readFile(id, Duration("4s"))
+      output.write(arg, id, is)
+      is.close()
+    }
+
+    output.done()
   }
 }

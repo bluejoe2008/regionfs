@@ -1,8 +1,8 @@
 package org.grapheco.regionfs.client
 
+import net.neoremind.kraps.rpc.RpcAddress
 import org.grapheco.commons.util.IteratorUtils
 import org.grapheco.regionfs._
-import net.neoremind.kraps.rpc.RpcAddress
 
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
@@ -11,8 +11,7 @@ import scala.concurrent.duration.Duration
   * Created by bluejoe on 2019/8/31.
   */
 //an enhanced FsClient
-class FsAdmin(zks: String)
-  extends FsClient(zks: String) {
+class FsAdmin(zks: String) extends FsClient(zks: String) {
   def stat(rpcTimeout: Duration): Stat = {
     Stat {
       val futures = nodes.mapNodeClients.values.map(
@@ -27,7 +26,7 @@ class FsAdmin(zks: String)
     Await.result(future, rpcTimeout).stat
   }
 
-  def cleanAllData( rpcTimeout: Duration): Array[RpcAddress] = {
+  def cleanAllData(rpcTimeout: Duration): Array[RpcAddress] = {
     val futures = nodes.mapNodeClients.values.map(
       _.endPointRef.ask[CleanDataResponse](CleanDataRequest()))
 
@@ -39,7 +38,7 @@ class FsAdmin(zks: String)
     Await.result(future, Duration.Inf).address
   }
 
-  def shutdownAllNodes( rpcTimeout: Duration): Array[(Int, RpcAddress)] = {
+  def shutdownAllNodes(rpcTimeout: Duration): Array[(Int, RpcAddress)] = {
     val res = nodes.mapNodeClients.map(x => x._1 -> x._2.remoteAddress)
 
     nodes.mapNodeClients.values.map(
@@ -50,7 +49,7 @@ class FsAdmin(zks: String)
 
   def shutdownNode(nodeId: Int, rpcTimeout: Duration): (Int, RpcAddress) = {
     val client = nodes.mapNodeClients(nodeId)
-    client.endPointRef.ask[ShutdownResponse](ShutdownRequest(),rpcTimeout)
+    client.endPointRef.ask[ShutdownResponse](ShutdownRequest(), rpcTimeout)
     nodeId -> client.remoteAddress
   }
 
@@ -59,7 +58,7 @@ class FsAdmin(zks: String)
     nodeId -> Await.result(future, rpcTimeout).address
   }
 
-  def listFiles( rpcTimeout: Duration): Iterator[(FileId, Long)] = {
+  def listFiles(rpcTimeout: Duration): Iterator[(FileId, Long)] = {
     val iter = nodes.mapNodeClients.values.iterator
     IteratorUtils.concatIterators { (index) =>
       if (iter.hasNext) {

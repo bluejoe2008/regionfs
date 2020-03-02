@@ -88,8 +88,20 @@ commands:
 
 ## using FsClient
 
+add repository in `pom.xml`:
+
+```
+<dependency>
+  <groupId>org.grapheco</groupId>
+  <artifactId>regionfs</artifactId>
+  <version>0.9-SNAPSHOT</version>
+</dependency>
+```
+
 ```
   val client = new FsClient("localhost:2181")
   val id = Await.result(client.writeFile(
       new FileInputStream(src), src.length), Duration.Inf)
 ```
+
+more examples, see https://github.com/bluejoe2008/regionfs/blob/non-kraps/src/test/scala/regionfs/FileReadWriteTest.scala

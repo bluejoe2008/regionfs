@@ -76,9 +76,12 @@ rfs <command> [args]
 commands:
 	clean-all           clean data on a node
 	clean-node          clean data on all nodes
+	config              configure global setting
+	delete              delete remote files
+	get                 get remote files
 	greet               notify a node server to print a message to be noticed
 	help                print usage information
-	init                initialize global setting
+	put                 put local files into regionfs
 	shutdown-all        shutdown all nodes
 	shutdown-node       shutdown a node
 	start-local-node    start a local node server

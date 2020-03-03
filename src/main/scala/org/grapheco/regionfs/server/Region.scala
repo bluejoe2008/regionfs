@@ -4,11 +4,9 @@ import java.io._
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.util.concurrent.atomic.AtomicLong
-import java.util.zip.{CRC32, CheckedInputStream}
 
 import org.grapheco.commons.util.Logging
-import org.grapheco.hippo.util.ByteBufferInputStream
-import org.grapheco.regionfs.util.{Cache, FixSizedCache}
+import org.grapheco.regionfs.util.{Cache, CrcUtils, FixSizedCache}
 import org.grapheco.regionfs.{Constants, FileId, GlobalConfig}
 
 import scala.collection.mutable
@@ -165,10 +163,6 @@ class LocalIdGenerator(conf: RegionConfig, meta: RegionMetaStore) {
   }
 }
 
-case class WriteInfo(offset: Long, length: Long, actualWritten: Long) {
-
-}
-
 class RegionBodyStore(conf: RegionConfig) {
   //region file, one file for each region by far
   val fileBody = new File(conf.regionDir, "body")
@@ -176,7 +170,10 @@ class RegionBodyStore(conf: RegionConfig) {
   lazy val readerChannel = new RandomAccessFile(fileBody, "r").getChannel
   lazy val appenderChannel = new FileOutputStream(fileBody, true).getChannel
 
-  def write(buf: ByteBuffer): WriteInfo = {
+  /**
+    * @return (offset: Long, length: Long, actualWritten: Long)
+    */
+  def write(buf: ByteBuffer, crc: Long): (Long, Long, Long) = {
     val length = buf.remaining()
 
     appenderChannel.synchronized {
@@ -184,7 +181,16 @@ class RegionBodyStore(conf: RegionConfig) {
     }
 
     val written = length + Constants.REGION_FILE_BODY_EOF.length
-    WriteInfo(fileBodyLength.getAndAdd(written), length, written)
+    val offset = fileBodyLength.getAndAdd(written)
+
+    if (conf.globalConfig.enableCrc) {
+      val buf = read(offset, length)
+      if (crc != CrcUtils.computeCrc32(buf)) {
+        throw new WriteTimeMismatchedCheckSumException();
+      }
+    }
+
+    (offset, length, written)
   }
 
   def close(): Unit = {
@@ -213,39 +219,28 @@ class Region(val replica: Boolean, val regionId: Long, conf: RegionConfig) exten
     fmeta.count - idgen.freeId.freeIds.size
   }
 
-  private def computeCrc32(getInputStream: () => InputStream): Long = {
-    //get crc32
-    val crc32 = new CRC32()
-    val cis = new CheckedInputStream(getInputStream(), crc32)
-    while (cis.read() != -1) {
-    }
-    val crc32Value = crc32.getValue
-    cis.close()
-    crc32Value
-  }
-
   def statTotalSize() = fbody.fileBodyLength.get()
 
   def listFiles(): Iterator[(FileId, Long)] = {
     fmeta.iterator.map(meta => FileId.make(regionId, meta.localId) -> meta.length)
   }
 
-  def write(buf: ByteBuffer): Long = {
-    val info = fbody.write(buf)
+  def write(buf: ByteBuffer, crc: Long): Long = {
     val crc32 =
       if (conf.globalConfig.enableCrc) {
-        val clone = buf.duplicate()
-        computeCrc32(() => new ByteBufferInputStream(clone))
+        crc
       }
       else {
         0
       }
 
+    val (offset: Long, length: Long, actualWritten: Long) = fbody.write(buf, crc32)
+
     //get local id
     idgen.consumeNextId((id: Long) => {
-      fmeta.write(id, info.offset, info.length, crc32)
+      fmeta.write(id, offset, length, crc32)
       if (logger.isTraceEnabled())
-        logger.trace(s"[region-$regionId] written:localId=$id, length=${info.length}, actual=${info.actualWritten}")
+        logger.trace(s"[region-$regionId] written:localId=$id, length=${length}, actual=${actualWritten}")
     })
   }
 
@@ -331,4 +326,8 @@ class RegionManager(nodeId: Long, storeDir: File, globalConfig: GlobalConfig) ex
     regions += (regionId -> region)
     region
   }
+}
+
+class WriteTimeMismatchedCheckSumException extends RegionFsServerException("mismatched checksum exception on write time") {
+
 }

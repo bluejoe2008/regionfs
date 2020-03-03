@@ -1,6 +1,6 @@
 package org.grapheco.regionfs.client
 
-import java.io.{File, FileInputStream, InputStream}
+import java.io.InputStream
 import java.nio.ByteBuffer
 
 import io.netty.buffer.ByteBuf
@@ -12,6 +12,7 @@ import org.grapheco.regionfs._
 import org.grapheco.regionfs.util.CrcUtils
 
 import scala.collection.mutable
+import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.concurrent.duration.Duration
@@ -25,14 +26,38 @@ class FsClient(zks: String) extends Logging {
   val clientFactory = new FsNodeClientFactory(globalConfig);
 
   //get all nodes
-  val nodes = new UpdatingNodeList(clientFactory, zookeeper, { _ => true }).start()
-  //get all regions
-  val regions = new UpdatingRegionList(clientFactory, zookeeper, { _ => true }).start()
+  val mapNodeClients = mutable.Map[Int, FsNodeClient]()
+  val ring = new Ring[Int]()
+  val nodesWatcher = new NodeWatcher(zookeeper) {
+    def onCreated(t: (Int, RpcAddress)): Unit = {
+      mapNodeClients += t._1 -> (clientFactory.of(t._2))
+      ring += t._1
+    }
 
-  val selector = new RoundRobinSelector(nodes.mapNodeClients);
+    def onDelete(t: (Int, RpcAddress)): Unit = {
+      mapNodeClients -= t._1
+      ring -= t._1
+    }
+  }.startWatching()
+
+  //get all regions
+  //32768->(1,2), 32769->(1), ...
+  val mapRegionNodes = mutable.Map[Long, ArrayBuffer[Int]]()
+  val regionsWatcher = new RegionWatcher(zookeeper) {
+    def onCreated(t: (Long, Int)): Unit = {
+      mapRegionNodes.getOrElse(t._1, ArrayBuffer()) += t._2
+    }
+
+    def onDelete(t: (Long, Int)): Unit = {
+      mapRegionNodes -= t._1
+      mapRegionNodes(t._1) -= t._2
+    }
+  }.startWatching()
+
+  val writerSelector = new RoundRobinSelector(ring, mapNodeClients);
 
   private def assertNodesNotEmpty() {
-    if (nodes.mapNodeClients.isEmpty) {
+    if (mapNodeClients.isEmpty) {
       throw new RegionFsClientException("no serving data nodes")
     }
   }
@@ -40,7 +65,7 @@ class FsClient(zks: String) extends Logging {
   def writeFile(content: ByteBuffer): Future[FileId] = {
     assertNodesNotEmpty();
 
-    val client = selector.select()
+    val client = writerSelector.select()
     client.writeFile(content)
   }
 
@@ -51,9 +76,19 @@ class FsClient(zks: String) extends Logging {
 
   private def getSafeClient[T](fileId: FileId): FsNodeClient = {
     assertNodesNotEmpty();
+    //val nodeId = (fileId.regionId >> 16).toInt;
+    val nodeId = mapRegionNodes(fileId.regionId).apply(0)
+    val maybeClient = mapNodeClients.get(nodeId);
+    if (maybeClient.isEmpty)
+      throw new WrongFileIdException(fileId);
+
+    maybeClient.get
+  }
+
+  private def getMasterClient[T](fileId: FileId): FsNodeClient = {
+    assertNodesNotEmpty();
     val nodeId = (fileId.regionId >> 16).toInt;
-    //regions.mapRegionNodes(fileId.regionId).apply(0)
-    val maybeClient = nodes.mapNodeClients.get(nodeId);
+    val maybeClient = mapNodeClients.get(nodeId);
     if (maybeClient.isEmpty)
       throw new WrongFileIdException(fileId);
 
@@ -61,13 +96,13 @@ class FsClient(zks: String) extends Logging {
   }
 
   def deleteFile[T](fileId: FileId): Future[Boolean] = {
-    val client = getSafeClient(fileId)
+    val client = getMasterClient(fileId)
     client.deleteFile(fileId)
   }
 
   def close = {
-    nodes.stop()
-    regions.stop()
+    nodesWatcher.stop()
+    regionsWatcher.stop()
     clientFactory.close()
     zookeeper.close()
   }
@@ -158,15 +193,10 @@ trait FsNodeSelector {
   def select(): FsNodeClient;
 }
 
-class RoundRobinSelector(nodes: mutable.Map[Int, FsNodeClient]) extends FsNodeSelector {
-  var iter = nodes.iterator;
-
+class RoundRobinSelector(nodes: Ring[Int], map: mutable.Map[Int, FsNodeClient]) extends FsNodeSelector {
   def select(): FsNodeClient = {
     nodes.synchronized {
-      if (!iter.hasNext)
-        iter = nodes.iterator;
-
-      iter.next()._2
+      map(nodes !)
     }
   }
 }

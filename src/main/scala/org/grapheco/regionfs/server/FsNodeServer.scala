@@ -16,6 +16,7 @@ import org.grapheco.regionfs._
 import org.grapheco.regionfs.client._
 import org.grapheco.regionfs.util.CrcUtils
 
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
@@ -72,9 +73,37 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
   val clientFactory = new FsNodeClientFactory(globalConfig);
 
   //get neighbour nodes
-  val neighbourNodes = new UpdatingNodeList(clientFactory, zookeeper, nodeId != _).start()
+  val mapNodeClients = mutable.Map[Int, FsNodeClient]()
+  val neighbourNodesWatcher = new NodeWatcher(zookeeper) {
+    def onCreated(t: (Int, RpcAddress)): Unit = {
+      mapNodeClients += t._1 -> (clientFactory.of(t._2))
+    }
+
+    def onDelete(t: (Int, RpcAddress)): Unit = {
+      mapNodeClients -= t._1
+    }
+
+    override def accepts(t: (Int, RpcAddress)): Boolean = nodeId != t._1
+  }.startWatching()
+
   //get regions in neighbour nodes
-  val neighbourRegions = new UpdatingRegionList(clientFactory, zookeeper, nodeId != _).start()
+  //32768->(1,2), 32769->(1), ...
+  val mapRegionNodes = mutable.Map[Long, ArrayBuffer[Int]]()
+  val mapNodeRegionCount = mutable.Map[Int, Int]()
+  val neighbourRegionsWatcher = new RegionWatcher(zookeeper) {
+    def onCreated(t: (Long, Int)): Unit = {
+      mapNodeRegionCount.update(t._2, mapNodeRegionCount.getOrElse(t._2, 0) + 1)
+      mapRegionNodes.getOrElse(t._1, ArrayBuffer()) += t._2
+    }
+
+    def onDelete(t: (Long, Int)): Unit = {
+      mapRegionNodes -= t._1
+      mapNodeRegionCount.update(t._2, mapNodeRegionCount(t._2) - 1)
+      mapRegionNodes(t._1) -= t._2
+    }
+
+    override def accepts(t: (Long, Int)): Boolean = nodeId != t._1
+  } startWatching()
 
   var alive: Boolean = true
   val endpoint = new FileRpcEndpoint(env)
@@ -98,8 +127,8 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
   def shutdown(): Unit = {
     if (alive) {
       clientFactory.close()
-      neighbourNodes.stop()
-      neighbourRegions.stop()
+      neighbourNodesWatcher.stop()
+      neighbourRegionsWatcher.stop()
 
       new File(storeDir, ".lock").delete();
       env.shutdown()
@@ -170,7 +199,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       //notify neighbours
       //find thinnest neighbour which has least regions
       if (globalConfig.replicaNum > 1) {
-        if (neighbourRegions.mapRegionNodes.size < globalConfig.replicaNum - 1)
+        if (mapRegionNodes.size < globalConfig.replicaNum - 1)
           throw new InsufficientNodeServerException(globalConfig.replicaNum);
 
         val thinNeighbourClient = chooseThinNeighbour()
@@ -186,8 +215,8 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
     }
 
     private def chooseThinNeighbour(): FsNodeClient = {
-      val thinNodeId = neighbourRegions.mapNodeRegionCount.min._1
-      neighbourNodes.mapNodeClients(thinNodeId)
+      val thinNodeId = mapNodeRegionCount.min._1
+      mapNodeClients(thinNodeId)
     }
 
     private def chooseRegionForWrite(): Region = {
@@ -204,9 +233,9 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
     private def getNeighboursWhoHasRegion(regionId: Long): Iterable[FsNodeClient] = {
       //a region may be stored in multiple nodes
-      neighbourRegions.mapRegionNodes.get(regionId).map(
+      mapRegionNodes.get(regionId).map(
         (x: ArrayBuffer[Int]) => {
-          x.map(neighbourNodes.mapNodeClients.apply(_))
+          x.map(mapNodeClients.apply(_))
         }).getOrElse(None)
     }
 

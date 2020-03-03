@@ -11,10 +11,10 @@ import org.apache.commons.io.IOUtils
 import org.apache.zookeeper.ZooDefs.Ids
 import org.apache.zookeeper._
 import org.grapheco.commons.util.{ConfigurationEx, Logging, ProcessUtils}
-import org.grapheco.hippo.util.ByteBufferInputStream
 import org.grapheco.hippo.{ChunkedStream, CompleteStream, HippoRpcHandler, ReceiveContext}
 import org.grapheco.regionfs._
 import org.grapheco.regionfs.client._
+import org.grapheco.regionfs.util.CrcUtils
 
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Await
@@ -69,7 +69,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
   val (env, address) = createRpcEnv(zookeeper)
   val globalConfig = GlobalConfig.load(zookeeper)
   val localRegionManager = new RegionManager(nodeId, storeDir, globalConfig)
-  val clientFactory = new FsNodeClientFactory();
+  val clientFactory = new FsNodeClientFactory(globalConfig);
 
   //get neighbour nodes
   val neighbourNodes = new UpdatingNodeList(clientFactory, zookeeper, nodeId != _).start()
@@ -289,35 +289,18 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
     }
 
     override def receiveWithStream(extraInput: ByteBuffer, context: ReceiveContext): PartialFunction[Any, Unit] = {
-      case SendFileRequest(maybeRegionId: Option[Long], totalLength: Long) =>
-        val (regionId, localId) = {
-          //primary node
-          if (!maybeRegionId.isDefined) {
-            val region = chooseRegionForWrite()
-            val regionId = region.regionId
-            val clone = extraInput.duplicate()
-            val localId = region.write(extraInput)
-            val neighbours = getNeighboursWhoHasRegion(regionId)
-            //ask neigbours
-            val futures = neighbours.map(_.writeFileReplica(
-              new ByteBufferInputStream(clone.duplicate()),
-              totalLength,
-              regionId))
+      case SendFileRequest(totalLength: Long, crc32: Long) =>
+        //primary node
+        val region = chooseRegionForWrite()
+        val regionId = region.regionId
+        val clone = extraInput.duplicate()
 
-            //wait all neigbours' replies
-            futures.map(future =>
-              Await.result(future, Duration.Inf))
-
-            region.regionId -> localId
-          }
-          else {
-            val region = localRegionManager.get(maybeRegionId.get).get
-            val localId = region.write(extraInput)
-
-            region.regionId -> localId
-          }
+        if (globalConfig.enableCrc && CrcUtils.computeCrc32(clone) != crc32) {
+          throw new ReceiveTimeMismatchedCheckSumException();
         }
 
+        val localId = region.write(extraInput, crc32)
+        //TODO: replica
         context.reply(SendFileResponse(FileId.make(regionId, localId)))
     }
   }
@@ -355,5 +338,10 @@ class WrongLocalIdException(regionId: Long, localId: Long) extends
 
 class WrongRegionIdException(regionId: Long) extends
   RegionFsServerException(s"region not exist: ${regionId}") {
+
+}
+
+class ReceiveTimeMismatchedCheckSumException extends
+  RegionFsServerException(s"mismatched checksum exception on receive time") {
 
 }

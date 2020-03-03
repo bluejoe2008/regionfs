@@ -1,13 +1,14 @@
 package regionfs
 
-import java.io.{ByteArrayInputStream, File, FileInputStream, FileOutputStream}
+import java.io.{File, FileOutputStream}
+import java.nio.ByteBuffer
 
 import org.grapheco.commons.util.{Logging, Profiler}
 import org.grapheco.regionfs.FileId
-import org.grapheco.regionfs.client.{FsClient, FsNodeClient}
+import org.grapheco.regionfs.client.FsClient
 import org.grapheco.regionfs.server.FsNodeServer
 import org.junit.{After, Before}
-
+import org.grapheco.regionfs.util.ByteBufferConversions._
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, Future}
 
@@ -55,8 +56,7 @@ class FileTestBase extends Logging {
   }
 
   def writeFile(src: File): FileId = {
-    Await.result(client.writeFile(
-      new FileInputStream(src), src.length), Duration("4s"))
+    Await.result(client.writeFile(src), Duration("4s"))
   }
 
   def writeFile(text: String): FileId = {
@@ -64,13 +64,11 @@ class FileTestBase extends Logging {
   }
 
   private def writeFile(bytes: Array[Byte]): FileId = {
-    Await.result(client.writeFile(
-      new ByteArrayInputStream(bytes), bytes.length), Duration("4s"))
+    Await.result(client.writeFile(ByteBuffer.wrap(bytes)), Duration("4s"))
   }
 
   private def writeFileAsync(bytes: Array[Byte]): Future[FileId] = {
-    val fid = client.writeFile(
-      new ByteArrayInputStream(bytes), bytes.length)
+    val fid = client.writeFile(ByteBuffer.wrap(bytes))
     fid
   }
 
@@ -79,8 +77,7 @@ class FileTestBase extends Logging {
   }
 
   def writeFileAsync(src: File): Future[FileId] = {
-    val fid = client.writeFile(
-      new FileInputStream(src), src.length)
+    val fid = client.writeFile(src)
     fid
   }
 

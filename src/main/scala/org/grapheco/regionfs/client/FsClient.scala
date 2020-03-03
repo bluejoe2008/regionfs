@@ -1,6 +1,7 @@
 package org.grapheco.regionfs.client
 
-import java.io.InputStream
+import java.io.{File, FileInputStream, InputStream}
+import java.nio.ByteBuffer
 
 import io.netty.buffer.ByteBuf
 import net.neoremind.kraps.RpcConf
@@ -8,6 +9,7 @@ import net.neoremind.kraps.rpc.netty.{HippoEndpointRef, HippoRpcEnv, HippoRpcEnv
 import net.neoremind.kraps.rpc.{RpcAddress, RpcEnvClientConfig}
 import org.grapheco.commons.util.Logging
 import org.grapheco.regionfs._
+import org.grapheco.regionfs.util.CrcUtils
 
 import scala.collection.mutable
 import scala.concurrent.ExecutionContext.Implicits.global
@@ -19,7 +21,8 @@ import scala.concurrent.duration.Duration
   */
 class FsClient(zks: String) extends Logging {
   val zookeeper = ZooKeeperClient.create(zks)
-  val clientFactory = new FsNodeClientFactory();
+  val globalConfig = GlobalConfig.load(zookeeper)
+  val clientFactory = new FsNodeClientFactory(globalConfig);
 
   //get all nodes
   val nodes = new UpdatingNodeList(clientFactory, zookeeper, { _ => true }).start()
@@ -34,11 +37,11 @@ class FsClient(zks: String) extends Logging {
     }
   }
 
-  def writeFile(is: InputStream, totalLength: Long): Future[FileId] = {
+  def writeFile(content: ByteBuffer): Future[FileId] = {
     assertNodesNotEmpty();
 
     val client = selector.select()
-    client.writeFile(is, totalLength)
+    client.writeFile(content)
   }
 
   def readFile[T](fileId: FileId, rpcTimeout: Duration): InputStream = {
@@ -73,7 +76,7 @@ class FsClient(zks: String) extends Logging {
 /**
   * FsNodeClient factory
   */
-class FsNodeClientFactory() {
+class FsNodeClientFactory(globalConfig: GlobalConfig) {
   val refs = mutable.Map[RpcAddress, HippoEndpointRef]();
 
   val rpcEnv: HippoRpcEnv = {
@@ -88,7 +91,7 @@ class FsNodeClientFactory() {
         rpcEnv.setupEndpointRef(RpcAddress(remoteAddress.host, remoteAddress.port), "regionfs-service"));
     }
 
-    new FsNodeClient(endPointRef, remoteAddress)
+    new FsNodeClient(globalConfig: GlobalConfig, endPointRef, remoteAddress)
   }
 
   def of(remoteAddress: String): FsNodeClient = {
@@ -107,26 +110,21 @@ class FsNodeClientFactory() {
   * an FsNodeClient is an underline client used by FsClient
   * it sends raw messages (e.g. SendCompleteFileRequest) to NodeServer and handles responses
   */
-class FsNodeClient(val endPointRef: HippoEndpointRef, val remoteAddress: RpcAddress) extends Logging {
-  def writeFile(is: InputStream, totalLength: Long): Future[FileId] = {
+class FsNodeClient(globalConfig: GlobalConfig, val endPointRef: HippoEndpointRef, val remoteAddress: RpcAddress) extends Logging {
+  def writeFile(content: ByteBuffer): Future[FileId] = {
     try {
-      endPointRef.askWithStream[SendFileResponse](
-        SendFileRequest(None, totalLength),
-        (buf: ByteBuf) => {
-          buf.writeBytes(is, totalLength.toInt)
-        }).map(_.fileId)
-    }
-    catch {
-      case e: Throwable => throw new ServerRaisedException(e)
-    }
-  }
+      val crc32 =
+        if (globalConfig.enableCrc) {
+          CrcUtils.computeCrc32(content.duplicate())
+        }
+        else {
+          0
+        }
 
-  def writeFileReplica(is: InputStream, totalLength: Long, regionId: Long): Future[FileId] = {
-    try {
       endPointRef.askWithStream[SendFileResponse](
-        SendFileRequest(None, totalLength),
+        SendFileRequest(content.remaining(), crc32),
         (buf: ByteBuf) => {
-          buf.writeBytes(is, totalLength.toInt)
+          buf.writeBytes(content)
         }).map(_.fileId)
     }
     catch {

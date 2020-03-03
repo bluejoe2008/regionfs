@@ -47,7 +47,11 @@ class FileReadWriteTest extends FileTestBase {
     val src: File = new File(s"./testdata/inputs/999")
     val id = super.writeFile(src);
     IOUtils.toByteArray(client.readFile(id, Duration("4s")))
-    Await.result(client.deleteFile(id), Duration.Inf)
+
+    timing(true) {
+      Await.result(client.deleteFile(id), Duration.Inf)
+    }
+
     try {
       IOUtils.toByteArray(client.readFile(id, Duration("4s")))
       Assert.assertTrue(false)

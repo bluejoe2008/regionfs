@@ -2,11 +2,12 @@ package regionfs
 
 import java.io._
 import java.nio.ByteBuffer
+
+import org.apache.commons.io.IOUtils
+import org.grapheco.commons.util.Profiler._
 import org.grapheco.regionfs.GlobalConfig
 import org.grapheco.regionfs.server.{Region, RegionConfig}
-import org.grapheco.commons.util.Profiler._
-import org.apache.commons.io.IOUtils
-import org.junit.{Assert, Before, Test}
+import org.junit.{Assert, Test}
 
 /**
   * Created by bluejoe on 2020/2/11.
@@ -23,7 +24,7 @@ class LocalRegionFileIOTest extends FileTestBase {
 
     val id = timing(true, 10) {
       val clone = buf.duplicate()
-      region.write(clone)
+      region.write(clone, 0)
     }
 
     val bytes2 = timing(true, 10) {

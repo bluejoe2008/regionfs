@@ -49,8 +49,8 @@ class GlobalConfigPathNotFoundException(path: String) extends
 
 }
 
-class GlobalConfigConfigurer {
-  def config(configFile: File): Unit = {
+class GlobalConfigWriter {
+  def write(configFile: File): Unit = {
     val conf = new ConfigurationEx(configFile)
 
     val zks = conf.get("zookeeper.address").asString

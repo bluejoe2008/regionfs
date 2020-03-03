@@ -1,12 +1,13 @@
 package regionfs
 
 import java.io.{ByteArrayInputStream, File, FileInputStream}
-
+import java.nio.ByteBuffer
 import org.apache.commons.io.IOUtils
 import org.grapheco.commons.util.Profiler._
 import org.grapheco.regionfs.GlobalConfig
 import org.grapheco.regionfs.client.FsNodeClient
 import org.grapheco.regionfs.server.RegionManager
+import org.grapheco.regionfs.util.ByteBufferConversions._
 import org.junit.{After, Assert, Before, Test}
 
 import scala.concurrent.Await
@@ -38,7 +39,7 @@ class FsNodeClientTest extends FileTestBase {
     for (i <- Array(999, 9999, 99999, 999999, 9999999)) {
       println(s"writing $i bytes...")
       val id = timing(true, 10) {
-        Await.result(nodeClient.writeFile(new FileInputStream(new File(s"./testdata/inputs/$i")), i), Duration.Inf);
+        Await.result(nodeClient.writeFile(new File(s"./testdata/inputs/$i")), Duration.Inf);
       }
 
       //read local region
@@ -54,15 +55,14 @@ class FsNodeClientTest extends FileTestBase {
   def testWriteAsync(): Unit = {
     timing(true) {
       (1 to 10).map(_ => nodeClient.writeFile(
-        new ByteArrayInputStream("hello, world".getBytes()), "hello, world".getBytes().length.toInt
-      )).map(Await.result(_, Duration.Inf))
+        ByteBuffer.wrap("hello, world".getBytes()))).map(Await.result(_, Duration.Inf))
     }
 
     for (i <- Array(999, 9999, 99999, 999999, 9999999)) {
       println(s"writing $i bytes...")
       timing(true) {
         (1 to 10).map(_ => nodeClient.writeFile(
-          new FileInputStream(new File(s"./testdata/inputs/$i")), i
+          new File(s"./testdata/inputs/$i")
         )).map(Await.result(_, Duration.Inf))
       }
     }
@@ -72,7 +72,7 @@ class FsNodeClientTest extends FileTestBase {
   def testRead(): Unit = {
     for (i <- Array(999, 9999, 99999, 999999, 9999999)) {
       val src: File = new File(s"./testdata/inputs/$i")
-      val id = Await.result(nodeClient.writeFile(new FileInputStream(src), i), Duration.Inf);
+      val id = Await.result(nodeClient.writeFile(src), Duration.Inf);
 
       println("=================================")
       println(s"file size: ${src.length()}");

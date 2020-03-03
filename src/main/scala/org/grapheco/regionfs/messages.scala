@@ -46,7 +46,7 @@ case class ListFileResponseDetail(result: (FileId, Long)) {
 
 }
 
-case class SendFileRequest(maybeRegionId: Option[Long], totalLength: Long) {
+case class SendFileRequest( totalLength: Long, crc32: Long) {
 
 }
 

@@ -1,13 +1,13 @@
 package org.grapheco.regionfs.tool
 
-import java.io.{File, FileInputStream, FileOutputStream, InputStream}
+import java.io.{File, FileOutputStream, InputStream}
 
 import org.apache.commons.cli._
 import org.apache.commons.io.IOUtils
 import org.grapheco.regionfs.client.FsAdmin
 import org.grapheco.regionfs.server.FsNodeServer
-import org.grapheco.regionfs.{FileId, GlobalConfigConfigurer}
-
+import org.grapheco.regionfs.{FileId, GlobalConfigWriter}
+import org.grapheco.regionfs.util.ByteBufferConversions._
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
@@ -22,7 +22,7 @@ object RegionFSCmd {
     ("greet", "notify a node server to print a message to be noticed", new GreetShellCommandExecutor()),
     ("stat-node", "report statistics of a node", new StatNodeShellCommandExecutor()),
     ("start-local-node", "start a local node server", new StartNodeShellCommandExecutor()),
-    ("init", "initialize global setting", new InitShellCommandExecutor()),
+    ("config", "configure global setting", new ConfigShellCommandExecutor()),
     ("clean-all", "clean data on a node", new CleanAllShellCommandExecutor()),
     ("clean-node", "clean data on all nodes", new CleanNodeShellCommandExecutor()),
     ("shutdown-all", "shutdown all nodes", new ShutdownAllShellCommandExecutor()),
@@ -111,7 +111,7 @@ trait ShellCommandExecutor {
   }
 }
 
-class InitShellCommandExecutor extends ShellCommandExecutor {
+class ConfigShellCommandExecutor extends ShellCommandExecutor {
   override def buildOptions(options: Options): Unit = {
     options.addOption(Option.builder("conf")
       .argName("globalConfigFile")
@@ -122,8 +122,8 @@ class InitShellCommandExecutor extends ShellCommandExecutor {
   }
 
   override def run(commandLine: CommandLine): Unit = {
-    new GlobalConfigConfigurer().config(new File(commandLine.getOptionValue("conf")))
-    println("cluster is successfully initialized.");
+    new GlobalConfigWriter().write(new File(commandLine.getOptionValue("conf")))
+    println("cluster is successfully configured.");
   }
 }
 
@@ -358,10 +358,8 @@ class PutFilesShellCommandExecutor extends ShellCommandExecutor {
 
     for (path <- args) {
       val file = new File(path)
-      val is = new FileInputStream(file)
-      val id = Await.result(admin.writeFile(is, file.length), Duration("4s"))
-      is.close()
 
+      val id = Await.result(admin.writeFile(file), Duration("4s"))
       println(s"\t${file.getAbsoluteFile.getCanonicalPath} -> ${FileId.toBase64String(id)}")
     }
   }

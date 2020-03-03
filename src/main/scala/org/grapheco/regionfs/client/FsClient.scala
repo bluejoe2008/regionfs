@@ -45,7 +45,7 @@ class FsClient(zks: String) extends Logging {
   val mapRegionNodes = mutable.Map[Long, ArrayBuffer[Int]]()
   val regionsWatcher = new RegionWatcher(zookeeper) {
     def onCreated(t: (Long, Int)): Unit = {
-      mapRegionNodes.getOrElse(t._1, ArrayBuffer()) += t._2
+      mapRegionNodes.getOrElseUpdate(t._1, ArrayBuffer()) += t._2
     }
 
     def onDelete(t: (Long, Int)): Unit = {

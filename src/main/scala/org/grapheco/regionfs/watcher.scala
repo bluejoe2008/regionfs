@@ -4,30 +4,30 @@ import net.neoremind.kraps.rpc.RpcAddress
 import org.apache.zookeeper.Watcher.Event.EventType
 import org.apache.zookeeper.{WatchedEvent, Watcher, ZooKeeper}
 import org.grapheco.commons.util.Logging
-import org.grapheco.regionfs.client.{FsNodeClient, FsNodeClientFactory}
 
+import scala.collection.JavaConversions
 import scala.collection.mutable.ArrayBuffer
-import scala.collection.{JavaConversions, mutable}
 
 /**
   * Created by bluejoe on 2019/9/3.
   */
-
-class ZooKeeperPathWatcher(zk: ZooKeeper) extends Logging {
+abstract class ZooKeeperPathWatcher[T](zk: ZooKeeper, path: String) extends Logging {
   var watchingFlag = true
+
+  def parseChildPath(path: String): T
+
+  def accepts(t: T): Boolean
+
+  def onCreated(t: T);
+
+  def onDelete(t: T);
 
   def stop(onStop: => Unit): Unit = {
     watchingFlag = false
     onStop
   }
 
-  def startWatching[T](
-                        path: String,
-                        childPathParser: (String) => T,
-                        filter: (T) => Boolean,
-                        onStarted: (Iterable[T]) => Unit,
-                        onNodeCreated: (T) => Unit,
-                        onNodeDeleted: (T) => Unit) {
+  def startWatching(): this.type = {
     val watcher = new Watcher {
       private def keepWatching() = {
         if (watchingFlag)
@@ -39,17 +39,17 @@ class ZooKeeperPathWatcher(zk: ZooKeeper) extends Logging {
         if (path != null) {
           event.getType match {
             case EventType.NodeCreated => {
-              val t: T = childPathParser(path.drop(path.length))
+              val t: T = parseChildPath(path.drop(path.length))
 
-              if (filter(t))
-                onNodeCreated(t)
+              if (accepts(t))
+                onCreated(t)
             }
 
             case EventType.NodeDeleted => {
-              val t: T = childPathParser(path.drop(path.length))
+              val t: T = parseChildPath(path.drop(path.length))
 
-              if (filter(t))
-                onNodeDeleted(t)
+              if (accepts(t))
+                onDelete(t)
             }
 
             case _ => {
@@ -64,7 +64,10 @@ class ZooKeeperPathWatcher(zk: ZooKeeper) extends Logging {
     }
 
     val res = zk.getChildren(path, watcher)
-    onStarted(JavaConversions.collectionAsScalaIterable(res).map(childPathParser).filter(filter))
+    JavaConversions.collectionAsScalaIterable(res).map(parseChildPath).filter(accepts).foreach(t =>
+      onCreated(t))
+
+    this
   }
 }
 
@@ -78,41 +81,13 @@ class ZooKeeperPathWatcher(zk: ZooKeeper) extends Logging {
   *    3_192.168.100.2_1224
   *    ...
   */
-class UpdatingNodeList(clientFactory: FsNodeClientFactory, zk: ZooKeeper, nodeFilter: (Int => Boolean)) extends Logging {
-  var watcher = new ZooKeeperPathWatcher(zk)
-
-  def stop(): Unit = {
-    watcher.stop()
+abstract class NodeWatcher(zk: ZooKeeper) extends ZooKeeperPathWatcher[(Int, RpcAddress)](zk, "/regionfs/nodes") with Logging {
+  def parseChildPath(path: String): (Int, RpcAddress) = {
+    val splits = path.split("_")
+    splits(0).toInt -> (RpcAddress(splits(1), splits(2).toInt))
   }
 
-  //1->client1, 2->client2, ...
-  //client will be automatically created
-  val mapNodeClients = mutable.Map[Int, FsNodeClient]()
-
-  def start(): UpdatingNodeList = {
-    watcher.startWatching[(Int, RpcAddress)](s"/regionfs/nodes",
-      childPathParser = (path: String) => {
-        val splits = path.split("_")
-        splits(0).toInt -> (RpcAddress(splits(1), splits(2).toInt))
-      },
-      filter = (kv: (Int, RpcAddress)) => {
-        nodeFilter(kv._1)
-      },
-      onStarted = (list: Iterable[(Int, RpcAddress)]) => {
-        mapNodeClients ++= list.map {
-          kv =>
-            kv._1 -> clientFactory.of(kv._2)
-        }
-      },
-      onNodeCreated = (kv: (Int, RpcAddress)) => {
-        mapNodeClients += kv._1 -> (clientFactory.of(kv._2))
-      },
-      onNodeDeleted = (kv: (Int, RpcAddress)) => {
-        mapNodeClients -= kv._1
-      })
-
-    this;
-  }
+  def accepts(t: (Int, RpcAddress)): Boolean = true
 }
 
 /**
@@ -125,45 +100,39 @@ class UpdatingNodeList(clientFactory: FsNodeClientFactory, zk: ZooKeeper, nodeFi
   *    2_65536
   *    ...
   */
-class UpdatingRegionList(clientFactory: FsNodeClientFactory, zk: ZooKeeper, nodeFilter: (Int) => Boolean) extends Logging {
-
-  //32768->(1,2), 32769->(1), ...
-  val mapRegionNodes = mutable.Map[Long, ArrayBuffer[Int]]()
-  val mapNodeRegionCount = mutable.Map[Int, Int]()
-
-  var watcher = new ZooKeeperPathWatcher(zk)
-
-  def stop(): Unit = {
-    watcher.stop()
+abstract class RegionWatcher(zk: ZooKeeper) extends ZooKeeperPathWatcher[(Long, Int)](zk, "/regionfs/regions") with Logging {
+  def parseChildPath(path: String): (Long, Int) = {
+    val splits = path.split("_")
+    splits(1).toLong -> splits(0).toInt
   }
 
-  def start(): UpdatingRegionList = {
-    watcher.startWatching[(Long, Int)](s"/regionfs/regions",
-      childPathParser = (path: String) => {
-        val splits = path.split("_")
-        splits(1).toLong -> splits(0).toInt
-      },
-      filter = (kv: (Long, Int)) => {
-        nodeFilter(kv._2)
-      },
-      onStarted = (list: Iterable[(Long, Int)]) => {
-        //32768->1, 32769->1
-        mapRegionNodes ++= (
-          list.groupBy(_._1).map(x =>
-            x._1 -> (ArrayBuffer() ++ x._2.map(_._2)))
-          )
-        mapNodeRegionCount ++= list.groupBy(_._2).map(x => x._1 -> x._2.size)
-      },
-      onNodeCreated = (kv: (Long, Int)) => {
-        mapNodeRegionCount.update(kv._2, mapNodeRegionCount.getOrElse(kv._2, 0) + 1)
-        mapRegionNodes.getOrElse(kv._1, ArrayBuffer()) += kv._2
-      },
-      onNodeDeleted = (kv: (Long, Int)) => {
-        mapRegionNodes -= kv._1
-        mapNodeRegionCount.update(kv._2, mapNodeRegionCount(kv._2) - 1)
-        mapRegionNodes(kv._1) -= kv._2
-      })
+  def accepts(t: (Long, Int)): Boolean = true
+}
 
-    this;
+class Ring[T]() {
+  private val _buffer = ArrayBuffer[T]();
+  private var pos = 0;
+
+  def -=(t: T) = {
+    val idx = _buffer.indexOf(t)
+    if (idx != -1) {
+      if (idx < pos) {
+        pos -= 1
+      }
+    }
+  }
+
+  def +=(t: T) = {
+    _buffer += t
+  }
+
+  def !(): T = {
+    if (pos == _buffer.size)
+      pos = 0;
+
+    val t = _buffer(pos)
+    pos += 1
+
+    t
   }
 }

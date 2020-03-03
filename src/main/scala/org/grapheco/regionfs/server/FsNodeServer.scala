@@ -93,7 +93,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
   val neighbourRegionsWatcher = new RegionWatcher(zookeeper) {
     def onCreated(t: (Long, Int)): Unit = {
       mapNodeRegionCount.update(t._2, mapNodeRegionCount.getOrElse(t._2, 0) + 1)
-      mapRegionNodes.getOrElse(t._1, ArrayBuffer()) += t._2
+      mapRegionNodes.getOrElseUpdate(t._1, ArrayBuffer()) += t._2
     }
 
     def onDelete(t: (Long, Int)): Unit = {

@@ -89,7 +89,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
   //get regions in neighbour nodes
   //32768->(1,2), 32769->(1), ...
   val mapRegionNodes = mutable.Map[Long, ArrayBuffer[Int]]()
-  val mapNodeRegionCount = mutable.Map[Int, Int]()
+  val mapNodeRegionCount = mutable.ListMap[Int, Int]()
   val neighbourRegionsWatcher = new RegionWatcher(zookeeper) {
     def onCreated(t: (Long, Int)): Unit = {
       mapNodeRegionCount.update(t._2, mapNodeRegionCount.getOrElse(t._2, 0) + 1)
@@ -202,11 +202,12 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         if (mapRegionNodes.size < globalConfig.replicaNum - 1)
           throw new InsufficientNodeServerException(globalConfig.replicaNum);
 
-        val thinNeighbourClient = chooseThinNeighbour()
+        val thinNodeIds = mapNodeRegionCount.toList.sortBy(_._2).takeRight(globalConfig.replicaNum - 1)
+        val futures = thinNodeIds.map(x => mapNodeClients(x._1).endPointRef.ask[CreateRegionResponse](
+          CreateRegionRequest(regionId)))
 
         //hello, pls create a new region with id=regionId
-        Await.result(thinNeighbourClient.endPointRef.ask[CreateRegionResponse](
-          CreateRegionRequest(regionId)), Duration.Inf)
+        futures.foreach(Await.result(_, Duration.Inf))
       }
 
       //ok, now I register this region
@@ -214,16 +215,13 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       region
     }
 
-    private def chooseThinNeighbour(): FsNodeClient = {
-      val thinNodeId = mapNodeRegionCount.min._1
-      mapNodeClients(thinNodeId)
-    }
-
     private def chooseRegionForWrite(): Region = {
       localRegionManager.synchronized {
         //counterOffset=size of region
         //TODO: sort on idle
-        localRegionManager.regions.values.toArray.sortBy(_.statTotalSize).headOption.
+        localRegionManager.regions.values.toArray.
+          filter(_.statTotalSize <= globalConfig.regionSizeLimit).
+          sortBy(_.statTotalSize).headOption.
           getOrElse({
             //no enough regions
             createNewRegion()

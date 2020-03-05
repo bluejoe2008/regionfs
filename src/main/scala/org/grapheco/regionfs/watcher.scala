@@ -1,5 +1,7 @@
 package org.grapheco.regionfs
 
+import java.io.{ByteArrayInputStream, DataInputStream}
+
 import net.neoremind.kraps.rpc.RpcAddress
 import org.apache.zookeeper.Watcher.Event.EventType
 import org.apache.zookeeper.{WatchedEvent, Watcher, ZooKeeper}
@@ -11,7 +13,7 @@ import scala.collection.mutable.ArrayBuffer
 /**
   * Created by bluejoe on 2019/9/3.
   */
-abstract class ZooKeeperPathWatcher[T](zk: ZooKeeper, path: String) extends Logging {
+abstract class ZooKeeperChildrenPathWatcher[T](zk: ZooKeeper, path: String) extends Logging {
   var watchingFlag = true
 
   def parseChildPath(path: String): T
@@ -31,25 +33,29 @@ abstract class ZooKeeperPathWatcher[T](zk: ZooKeeper, path: String) extends Logg
     val watcher = new Watcher {
       private def keepWatching() = {
         if (watchingFlag)
-          zk.getChildren(path, this.asInstanceOf[Watcher])
+          zk.getChildren(path, this)
       }
 
       override def process(event: WatchedEvent): Unit = {
-        val path = event.getPath
-        if (path != null) {
+        val cpath = event.getPath
+        if (cpath != null) {
           event.getType match {
             case EventType.NodeCreated => {
-              val t: T = parseChildPath(path.drop(path.length))
+              val t: T = parseChildPath(cpath.drop(cpath.length))
 
               if (accepts(t))
                 onCreated(t)
             }
 
             case EventType.NodeDeleted => {
-              val t: T = parseChildPath(path.drop(path.length))
+              val t: T = parseChildPath(cpath.drop(cpath.length))
 
               if (accepts(t))
                 onDelete(t)
+            }
+
+            case EventType.NodeDataChanged => {
+
             }
 
             case _ => {
@@ -71,6 +77,7 @@ abstract class ZooKeeperPathWatcher[T](zk: ZooKeeper, path: String) extends Logg
   }
 }
 
+
 /**
   * watches on nodes registered in zookeeper
   * filters node list by parameter filter
@@ -81,7 +88,7 @@ abstract class ZooKeeperPathWatcher[T](zk: ZooKeeper, path: String) extends Logg
   *    3_192.168.100.2_1224
   *    ...
   */
-abstract class NodeWatcher(zk: ZooKeeper) extends ZooKeeperPathWatcher[(Int, RpcAddress)](zk, "/regionfs/nodes") with Logging {
+abstract class NodeWatcher(zk: ZooKeeper) extends ZooKeeperChildrenPathWatcher[(Int, RpcAddress)](zk, "/regionfs/nodes") with Logging {
   def parseChildPath(path: String): (Int, RpcAddress) = {
     val splits = path.split("_")
     splits(0).toInt -> (RpcAddress(splits(1), splits(2).toInt))
@@ -100,7 +107,7 @@ abstract class NodeWatcher(zk: ZooKeeper) extends ZooKeeperPathWatcher[(Int, Rpc
   *    2_65536
   *    ...
   */
-abstract class RegionWatcher(zk: ZooKeeper) extends ZooKeeperPathWatcher[(Long, Int)](zk, "/regionfs/regions") with Logging {
+abstract class RegionWatcher(zk: ZooKeeper) extends ZooKeeperChildrenPathWatcher[(Long, Int)](zk, "/regionfs/regions") with Logging {
   def parseChildPath(path: String): (Long, Int) = {
     val splits = path.split("_")
     splits(1).toLong -> splits(0).toInt
@@ -136,3 +143,54 @@ class Ring[T]() {
     t
   }
 }
+
+abstract class ZooKeeperPathDataWatcher[T](zk: ZooKeeper, path: String) extends Logging {
+  var watchingFlag = true
+
+  def parseData(data: Array[Byte]): T
+
+  def onDataChanged(t: T);
+
+  def stop(onStop: => Unit): Unit = {
+    watchingFlag = false
+    onStop
+  }
+
+  def startWatching(): this.type = {
+    val watcher = new Watcher {
+      override def process(event: WatchedEvent): Unit = {
+        val epath = event.getPath
+        if (epath != null) {
+          val bytes = zk.getData(path, if (watchingFlag) {
+            this
+          } else {
+            null
+          }, null)
+
+          (event.getType) match {
+            case EventType.NodeDataChanged => {
+              onDataChanged(parseData(bytes))
+            }
+
+            case _ => {
+              zk.getData(path, false, null);
+            }
+          }
+        }
+      }
+    }
+
+    val bytes = zk.getData(path, watcher, null)
+    onDataChanged(parseData(bytes))
+
+    this
+  }
+}
+
+abstract class MasterRegionWatcher(zk: ZooKeeper, regionId: Long)
+  extends ZooKeeperPathDataWatcher[Long](zk, s"${regionId >> 16}_${regionId}") {
+  def parseData(data: Array[Byte]): Long = {
+    new DataInputStream(new ByteArrayInputStream(data)).readLong()
+  }
+}
+

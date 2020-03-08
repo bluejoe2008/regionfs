@@ -1,12 +1,11 @@
 package regionfs
 
-import java.io.{ByteArrayInputStream, File, FileInputStream}
+import java.io.{File, FileInputStream}
 import java.nio.ByteBuffer
+
 import org.apache.commons.io.IOUtils
 import org.grapheco.commons.util.Profiler._
-import org.grapheco.regionfs.GlobalConfig
 import org.grapheco.regionfs.client.FsNodeClient
-import org.grapheco.regionfs.server.RegionManager
 import org.grapheco.regionfs.util.ByteBufferConversions._
 import org.junit.{After, Assert, Before, Test}
 
@@ -19,7 +18,6 @@ import scala.concurrent.duration.Duration
 class FsNodeClientTest extends FileTestBase {
 
   var nodeClient: FsNodeClient = null
-  val rm = new RegionManager(1, new File("./testdata/nodes/node1"), GlobalConfig.empty, nullRegionEventListener);
 
   @Before
   def setup2(): Unit = {
@@ -32,6 +30,7 @@ class FsNodeClientTest extends FileTestBase {
 
   @Test
   def testWrite(): Unit = {
+
     timing(true) {
       super.writeFile("hello, world")
     }
@@ -41,13 +40,6 @@ class FsNodeClientTest extends FileTestBase {
       val id = timing(true, 10) {
         Await.result(nodeClient.writeFile(new File(s"./testdata/inputs/$i")), Duration.Inf);
       }
-
-      //read local region
-      val region = rm.get(id.regionId).get
-      val buf = region.read(id.localId).get
-      val bytes = new Array[Byte](buf.remaining())
-      buf.get(bytes)
-      Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(new File(s"./testdata/inputs/$i"))), bytes)
     }
   }
 

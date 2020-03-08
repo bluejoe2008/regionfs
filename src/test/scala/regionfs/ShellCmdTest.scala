@@ -6,7 +6,7 @@ import org.junit.Test
 /**
   * Created by bluejoe on 2020/2/8.
   */
-class ShellCmdTest extends FileTestBase {
+class ShellCmdTest extends FileTestBase with MultiNode {
 
   @Test
   def testStat(): Unit = {

@@ -12,7 +12,6 @@ import org.grapheco.regionfs._
 import org.grapheco.regionfs.util.CrcUtils
 
 import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.concurrent.duration.Duration
@@ -30,28 +29,22 @@ class FsClient(zks: String) extends Logging {
   val ring = new Ring[Int]()
   val nodesWatcher = new NodeWatcher(zookeeper)
     with ChildNodePathAware[(Int, RpcAddress)] {
-    override def onCreated(t: (Int, RpcAddress)): Unit = {
-      allNodeWithClients += t._1 -> (clientFactory.of(t._2))
-      ring += t._1
-    }
+    override def onChanged(batch: Iterable[(Int, RpcAddress)]): Unit = {
+      allNodeWithClients.clear()
+      allNodeWithClients ++= batch.map(t => t._1 -> (clientFactory.of(t._2)))
 
-    override def onDelete(t: (Int, RpcAddress)): Unit = {
-      allNodeWithClients -= t._1
-      ring -= t._1
+      ring.clear()
+      ring ++= allNodeWithClients.keys
     }
   }.startWatching()
 
   //get all regions
   //32768->(1,2), 32769->(1), ...
-  val allRegionWithNodes = mutable.Map[Long, ArrayBuffer[Int]]()
+  val allRegionWithNodes = mutable.Map[Long, Iterable[Int]]()
   val regionsWatcher = new RegionWatcher(zookeeper) with ChildNodePathAware[(Long, Int)] {
-    override def onCreated(t: (Long, Int)): Unit = {
-      allRegionWithNodes.getOrElseUpdate(t._1, ArrayBuffer()) += t._2
-    }
-
-    override def onDelete(t: (Long, Int)): Unit = {
-      allRegionWithNodes -= t._1
-      allRegionWithNodes(t._1) -= t._2
+    override def onChanged(batch: Iterable[(Long, Int)]): Unit = {
+      allRegionWithNodes.clear()
+      allRegionWithNodes ++= batch.groupBy(_._1).map(x => x._1 -> x._2.map(_._2))
     }
   }.startWatching()
 
@@ -78,7 +71,7 @@ class FsClient(zks: String) extends Logging {
   private def getSafeClient[T](fileId: FileId): FsNodeClient = {
     assertNodesNotEmpty();
     //TODO: may not be noticed immediately
-    val nodeId: Int = allRegionWithNodes.get(fileId.regionId).map(_.apply(0)).getOrElse((fileId.regionId >> 16).toInt)
+    val nodeId: Int = allRegionWithNodes.get(fileId.regionId).map(_.head).getOrElse((fileId.regionId >> 16).toInt)
     val maybeClient = allNodeWithClients.get(nodeId);
     if (maybeClient.isEmpty)
       throw new WrongFileIdException(fileId);

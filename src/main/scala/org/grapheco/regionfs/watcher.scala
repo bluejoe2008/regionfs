@@ -17,9 +17,7 @@ trait ChildNodeDataAware[T] {
 }
 
 trait ChildNodePathAware[T] {
-  def onCreated(t: T);
-
-  def onDelete(t: T);
+  def onChanged(batch: Iterable[T]);
 }
 
 abstract class ZooKeeperChildrenPathWatcher[T](zk: ZooKeeper, path: String) extends Logging {
@@ -36,35 +34,22 @@ abstract class ZooKeeperChildrenPathWatcher[T](zk: ZooKeeper, path: String) exte
 
   def startWatching(): this.type = {
     val watcher = new Watcher {
-      private def keepWatching() = {
-        if (watchingFlag)
-          zk.getChildren(path, this)
-      }
-
       override def process(event: WatchedEvent): Unit = {
         val cpath = event.getPath
         if (cpath != null) {
           (this, event.getType) match {
-            case (cla: ChildNodePathAware[T], EventType.NodeCreated) => {
+            case (cla: ChildNodePathAware[T], EventType.NodeChildrenChanged) => {
               if (logger.isTraceEnabled()) {
-                logger.trace(s"node created: ${cpath}")
+                logger.trace(s"NodeChildrenChanged: ${cpath}")
               }
 
-              val t: T = parseChildPath(cpath.drop(cpath.length))
+              val cpaths = zk.getChildren(path, if (watchingFlag) {
+                this
+              } else {
+                null
+              })
 
-              if (accepts(t))
-                cla.onCreated(t)
-            }
-
-            case (cla: ChildNodePathAware[T], EventType.NodeDeleted) => {
-              if (logger.isTraceEnabled()) {
-                logger.trace(s"node deleted: ${cpath}")
-              }
-
-              val t: T = parseChildPath(cpath.drop(cpath.length))
-
-              if (accepts(t))
-                cla.onDelete(t)
+              cla.onChanged(JavaConversions.collectionAsScalaIterable(cpaths).map(parseChildPath).filter(accepts))
             }
 
             case (cla: ChildNodeDataAware[T], EventType.NodeDataChanged) => {
@@ -77,6 +62,12 @@ abstract class ZooKeeperChildrenPathWatcher[T](zk: ZooKeeper, path: String) exte
 
               if (accepts(t))
                 cla.onDataModified(t, data);
+
+              zk.getChildren(path, if (watchingFlag) {
+                this
+              } else {
+                null
+              })
             }
 
             case _ => {
@@ -86,16 +77,14 @@ abstract class ZooKeeperChildrenPathWatcher[T](zk: ZooKeeper, path: String) exte
 
         //keep watching
         //this call renews the getChildren() Events
-        keepWatching
       }
     }
 
-    val res = zk.getChildren(path, watcher)
+    val cpaths = zk.getChildren(path, watcher)
 
     this match {
       case cla: ChildNodePathAware[T] =>
-        JavaConversions.collectionAsScalaIterable(res).map(parseChildPath).filter(accepts).foreach(t =>
-          cla.onCreated(t))
+        cla.onChanged(JavaConversions.collectionAsScalaIterable(cpaths).map(parseChildPath).filter(accepts))
     }
 
     this
@@ -149,17 +138,13 @@ class Ring[T]() {
   private val _buffer = ArrayBuffer[T]();
   private var pos = 0;
 
-  def -=(t: T) = {
-    val idx = _buffer.indexOf(t)
-    if (idx != -1) {
-      if (idx < pos) {
-        pos -= 1
-      }
-    }
+  def clear(): Unit = {
+    _buffer.clear()
+    pos = 0
   }
 
-  def +=(t: T) = {
-    _buffer += t
+  def ++=(t: Iterable[T]) = {
+    _buffer ++= t
   }
 
   def !(): T = {

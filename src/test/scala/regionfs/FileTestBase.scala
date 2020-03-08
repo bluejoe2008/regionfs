@@ -3,7 +3,6 @@ package regionfs
 import java.io.{File, FileOutputStream}
 import java.nio.ByteBuffer
 
-import org.apache.commons.io.FileUtils
 import org.grapheco.commons.util.{Logging, Profiler}
 import org.grapheco.regionfs.client.FsClient
 import org.grapheco.regionfs.server.{FsNodeServer, RegionEvent, RegionEventListener}
@@ -32,7 +31,6 @@ class FileTestBase extends SingleNode with Logging {
   def setup() {
     Profiler.enableTiming = true
     new GlobalConfigWriter().write(GLOBAL_SETTING);
-    FileUtils.deleteDirectory(new File("./testdata/nodes"));
 
     //this server will not startup due to lock by annother process
     val confs = SERVER_NODE_ID.map(x => {

@@ -22,42 +22,43 @@ import scala.concurrent.duration.Duration
   */
 class FsClient(zks: String) extends Logging {
   val zookeeper = ZooKeeperClient.create(zks)
-  val globalConfig = GlobalConfig.load(zookeeper)
+  val globalConfig = zookeeper.loadGlobalConfig()
   val clientFactory = new FsNodeClientFactory(globalConfig);
 
   //get all nodes
-  val mapNodeClients = mutable.Map[Int, FsNodeClient]()
+  val allNodeWithClients = mutable.Map[Int, FsNodeClient]()
   val ring = new Ring[Int]()
-  val nodesWatcher = new NodeWatcher(zookeeper) {
-    def onCreated(t: (Int, RpcAddress)): Unit = {
-      mapNodeClients += t._1 -> (clientFactory.of(t._2))
+  val nodesWatcher = new NodeWatcher(zookeeper)
+    with ChildNodePathAware[(Int, RpcAddress)] {
+    override def onCreated(t: (Int, RpcAddress)): Unit = {
+      allNodeWithClients += t._1 -> (clientFactory.of(t._2))
       ring += t._1
     }
 
-    def onDelete(t: (Int, RpcAddress)): Unit = {
-      mapNodeClients -= t._1
+    override def onDelete(t: (Int, RpcAddress)): Unit = {
+      allNodeWithClients -= t._1
       ring -= t._1
     }
   }.startWatching()
 
   //get all regions
   //32768->(1,2), 32769->(1), ...
-  val mapRegionNodes = mutable.Map[Long, ArrayBuffer[Int]]()
-  val regionsWatcher = new RegionWatcher(zookeeper) {
-    def onCreated(t: (Long, Int)): Unit = {
-      mapRegionNodes.getOrElseUpdate(t._1, ArrayBuffer()) += t._2
+  val allRegionWithNodes = mutable.Map[Long, ArrayBuffer[Int]]()
+  val regionsWatcher = new RegionWatcher(zookeeper) with ChildNodePathAware[(Long, Int)] {
+    override def onCreated(t: (Long, Int)): Unit = {
+      allRegionWithNodes.getOrElseUpdate(t._1, ArrayBuffer()) += t._2
     }
 
-    def onDelete(t: (Long, Int)): Unit = {
-      mapRegionNodes -= t._1
-      mapRegionNodes(t._1) -= t._2
+    override def onDelete(t: (Long, Int)): Unit = {
+      allRegionWithNodes -= t._1
+      allRegionWithNodes(t._1) -= t._2
     }
   }.startWatching()
 
-  val writerSelector = new RoundRobinSelector(ring, mapNodeClients);
+  val writerSelector = new RoundRobinSelector(ring, allNodeWithClients);
 
   private def assertNodesNotEmpty() {
-    if (mapNodeClients.isEmpty) {
+    if (allNodeWithClients.isEmpty) {
       throw new RegionFsClientException("no serving data nodes")
     }
   }
@@ -76,9 +77,9 @@ class FsClient(zks: String) extends Logging {
 
   private def getSafeClient[T](fileId: FileId): FsNodeClient = {
     assertNodesNotEmpty();
-    //val nodeId = (fileId.regionId >> 16).toInt;
-    val nodeId = mapRegionNodes(fileId.regionId).apply(0)
-    val maybeClient = mapNodeClients.get(nodeId);
+    //TODO: may not be noticed immediately
+    val nodeId: Int = allRegionWithNodes.get(fileId.regionId).map(_.apply(0)).getOrElse((fileId.regionId >> 16).toInt)
+    val maybeClient = allNodeWithClients.get(nodeId);
     if (maybeClient.isEmpty)
       throw new WrongFileIdException(fileId);
 
@@ -88,7 +89,7 @@ class FsClient(zks: String) extends Logging {
   private def getMasterClient[T](fileId: FileId): FsNodeClient = {
     assertNodesNotEmpty();
     val nodeId = (fileId.regionId >> 16).toInt;
-    val maybeClient = mapNodeClients.get(nodeId);
+    val maybeClient = allNodeWithClients.get(nodeId);
     if (maybeClient.isEmpty)
       throw new WrongFileIdException(fileId);
 
@@ -146,8 +147,17 @@ class FsNodeClientFactory(globalConfig: GlobalConfig) {
   * it sends raw messages (e.g. SendCompleteFileRequest) to NodeServer and handles responses
   */
 class FsNodeClient(globalConfig: GlobalConfig, val endPointRef: HippoEndpointRef, val remoteAddress: RpcAddress) extends Logging {
-  def writeFile(content: ByteBuffer): Future[FileId] = {
+  private def safeCall[T](body: => T): T = {
     try {
+      body
+    }
+    catch {
+      case e: Throwable => throw new ServerRaisedException(e)
+    }
+  }
+
+  def writeFile(content: ByteBuffer): Future[FileId] = {
+    safeCall {
       val crc32 =
         if (globalConfig.enableCrc) {
           CrcUtils.computeCrc32(content.duplicate())
@@ -162,29 +172,28 @@ class FsNodeClient(globalConfig: GlobalConfig, val endPointRef: HippoEndpointRef
           buf.writeBytes(content)
         }).map(_.fileId)
     }
-    catch {
-      case e: Throwable => throw new ServerRaisedException(e)
-    }
   }
 
   def deleteFile(fileId: FileId): Future[Boolean] = {
-    try {
+    safeCall {
       endPointRef.ask[DeleteFileResponse](
         DeleteFileRequest(fileId.regionId, fileId.localId)).map(_.success)
-    }
-    catch {
-      case e: Throwable => throw new ServerRaisedException(e)
     }
   }
 
   def readFile[T](fileId: FileId, rpcTimeout: Duration): InputStream = {
-    try {
+    safeCall {
       endPointRef.getInputStream(
         ReadFileRequest(fileId.regionId, fileId.localId),
         rpcTimeout)
     }
-    catch {
-      case e: Throwable => throw new ServerRaisedException(e)
+  }
+
+  def getPatchInputStream(regionId: Long, revision: Long, rpcTimeout: Duration): InputStream = {
+    safeCall {
+      endPointRef.getInputStream(
+        GetRegionPatchRequest(regionId, revision),
+        rpcTimeout)
     }
   }
 }

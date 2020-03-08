@@ -1,11 +1,10 @@
 package org.grapheco.regionfs
 
-import java.io.{ByteArrayInputStream, DataInputStream}
-
 import net.neoremind.kraps.rpc.RpcAddress
 import org.apache.zookeeper.Watcher.Event.EventType
 import org.apache.zookeeper.{WatchedEvent, Watcher, ZooKeeper}
 import org.grapheco.commons.util.Logging
+import org.grapheco.regionfs.client.ZooKeeperClient
 
 import scala.collection.JavaConversions
 import scala.collection.mutable.ArrayBuffer
@@ -13,16 +12,22 @@ import scala.collection.mutable.ArrayBuffer
 /**
   * Created by bluejoe on 2019/9/3.
   */
+trait ChildNodeDataAware[T] {
+  def onDataModified(t: T, data: Array[Byte]): Unit
+}
+
+trait ChildNodePathAware[T] {
+  def onCreated(t: T);
+
+  def onDelete(t: T);
+}
+
 abstract class ZooKeeperChildrenPathWatcher[T](zk: ZooKeeper, path: String) extends Logging {
   var watchingFlag = true
 
   def parseChildPath(path: String): T
 
-  def accepts(t: T): Boolean
-
-  def onCreated(t: T);
-
-  def onDelete(t: T);
+  def accepts(t: T): Boolean = true
 
   def stop(onStop: => Unit): Unit = {
     watchingFlag = false
@@ -39,23 +44,39 @@ abstract class ZooKeeperChildrenPathWatcher[T](zk: ZooKeeper, path: String) exte
       override def process(event: WatchedEvent): Unit = {
         val cpath = event.getPath
         if (cpath != null) {
-          event.getType match {
-            case EventType.NodeCreated => {
+          (this, event.getType) match {
+            case (cla: ChildNodePathAware[T], EventType.NodeCreated) => {
+              if (logger.isTraceEnabled()) {
+                logger.trace(s"node created: ${cpath}")
+              }
+
               val t: T = parseChildPath(cpath.drop(cpath.length))
 
               if (accepts(t))
-                onCreated(t)
+                cla.onCreated(t)
             }
 
-            case EventType.NodeDeleted => {
+            case (cla: ChildNodePathAware[T], EventType.NodeDeleted) => {
+              if (logger.isTraceEnabled()) {
+                logger.trace(s"node deleted: ${cpath}")
+              }
+
               val t: T = parseChildPath(cpath.drop(cpath.length))
 
               if (accepts(t))
-                onDelete(t)
+                cla.onDelete(t)
             }
 
-            case EventType.NodeDataChanged => {
+            case (cla: ChildNodeDataAware[T], EventType.NodeDataChanged) => {
+              if (logger.isTraceEnabled()) {
+                logger.trace(s"node data modified: ${cpath}")
+              }
 
+              val t: T = parseChildPath(cpath.drop(cpath.length))
+              val data = zk.getData(cpath, false, null);
+
+              if (accepts(t))
+                cla.onDataModified(t, data);
             }
 
             case _ => {
@@ -70,8 +91,12 @@ abstract class ZooKeeperChildrenPathWatcher[T](zk: ZooKeeper, path: String) exte
     }
 
     val res = zk.getChildren(path, watcher)
-    JavaConversions.collectionAsScalaIterable(res).map(parseChildPath).filter(accepts).foreach(t =>
-      onCreated(t))
+
+    this match {
+      case cla: ChildNodePathAware[T] =>
+        JavaConversions.collectionAsScalaIterable(res).map(parseChildPath).filter(accepts).foreach(t =>
+          cla.onCreated(t))
+    }
 
     this
   }
@@ -88,13 +113,15 @@ abstract class ZooKeeperChildrenPathWatcher[T](zk: ZooKeeper, path: String) exte
   *    3_192.168.100.2_1224
   *    ...
   */
-abstract class NodeWatcher(zk: ZooKeeper) extends ZooKeeperChildrenPathWatcher[(Int, RpcAddress)](zk, "/regionfs/nodes") with Logging {
+abstract class NodeWatcher(zk: ZooKeeperClient)
+  extends ZooKeeperChildrenPathWatcher[(Int, RpcAddress)](zk.zookeeper, "/regionfs/nodes")
+    with Logging {
   def parseChildPath(path: String): (Int, RpcAddress) = {
     val splits = path.split("_")
     splits(0).toInt -> (RpcAddress(splits(1), splits(2).toInt))
   }
 
-  def accepts(t: (Int, RpcAddress)): Boolean = true
+  override def accepts(t: (Int, RpcAddress)): Boolean = true
 }
 
 /**
@@ -107,13 +134,15 @@ abstract class NodeWatcher(zk: ZooKeeper) extends ZooKeeperChildrenPathWatcher[(
   *    2_65536
   *    ...
   */
-abstract class RegionWatcher(zk: ZooKeeper) extends ZooKeeperChildrenPathWatcher[(Long, Int)](zk, "/regionfs/regions") with Logging {
+abstract class RegionWatcher(zk: ZooKeeperClient)
+  extends ZooKeeperChildrenPathWatcher[(Long, Int)](zk.zookeeper, "/regionfs/regions")
+    with Logging {
   def parseChildPath(path: String): (Long, Int) = {
     val splits = path.split("_")
     splits(1).toLong -> splits(0).toInt
   }
 
-  def accepts(t: (Long, Int)): Boolean = true
+  override def accepts(t: (Long, Int)): Boolean = true
 }
 
 class Ring[T]() {
@@ -143,54 +172,3 @@ class Ring[T]() {
     t
   }
 }
-
-abstract class ZooKeeperPathDataWatcher[T](zk: ZooKeeper, path: String) extends Logging {
-  var watchingFlag = true
-
-  def parseData(data: Array[Byte]): T
-
-  def onDataChanged(t: T);
-
-  def stop(onStop: => Unit): Unit = {
-    watchingFlag = false
-    onStop
-  }
-
-  def startWatching(): this.type = {
-    val watcher = new Watcher {
-      override def process(event: WatchedEvent): Unit = {
-        val epath = event.getPath
-        if (epath != null) {
-          val bytes = zk.getData(path, if (watchingFlag) {
-            this
-          } else {
-            null
-          }, null)
-
-          (event.getType) match {
-            case EventType.NodeDataChanged => {
-              onDataChanged(parseData(bytes))
-            }
-
-            case _ => {
-              zk.getData(path, false, null);
-            }
-          }
-        }
-      }
-    }
-
-    val bytes = zk.getData(path, watcher, null)
-    onDataChanged(parseData(bytes))
-
-    this
-  }
-}
-
-abstract class MasterRegionWatcher(zk: ZooKeeper, regionId: Long)
-  extends ZooKeeperPathDataWatcher[Long](zk, s"${regionId >> 16}_${regionId}") {
-  def parseData(data: Array[Byte]): Long = {
-    new DataInputStream(new ByteArrayInputStream(data)).readLong()
-  }
-}
-

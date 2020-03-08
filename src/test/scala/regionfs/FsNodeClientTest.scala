@@ -19,7 +19,7 @@ import scala.concurrent.duration.Duration
 class FsNodeClientTest extends FileTestBase {
 
   var nodeClient: FsNodeClient = null
-  val rm = new RegionManager(1, new File("./testdata/nodes/node1"), GlobalConfig(1, -1, false));
+  val rm = new RegionManager(1, new File("./testdata/nodes/node1"), GlobalConfig.empty, nullRegionEventListener);
 
   @Before
   def setup2(): Unit = {

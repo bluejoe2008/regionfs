@@ -2,14 +2,13 @@ package org.grapheco.regionfs.server
 
 import java.io._
 import java.nio.ByteBuffer
-import java.util.Random
+import java.util.concurrent.atomic.AtomicInteger
 
+import io.netty.buffer.Unpooled
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.{HippoRpcEnv, HippoRpcEnvFactory}
 import net.neoremind.kraps.rpc.{RpcAddress, RpcCallContext, RpcEndpoint, RpcEnvServerConfig}
 import org.apache.commons.io.IOUtils
-import org.apache.zookeeper.ZooDefs.Ids
-import org.apache.zookeeper._
 import org.grapheco.commons.util.{ConfigurationEx, Logging, ProcessUtils}
 import org.grapheco.hippo.{ChunkedStream, CompleteStream, HippoRpcHandler, ReceiveContext}
 import org.grapheco.regionfs._
@@ -31,9 +30,8 @@ object FsNodeServer {
   /**
     * create a FsNodeServer with a configuration file, e.g. node1.conf
     */
-  def create(configFile: File): FsNodeServer = {
-    val conf = new ConfigurationEx(configFile)
-    val storeDir = conf.get("data.storeDir").asFile(configFile.getParentFile).
+  private def create(conf: ConfigurationEx, baseDir: File): FsNodeServer = {
+    val storeDir = conf.get("data.storeDir").asFile(baseDir).
       getCanonicalFile.getAbsoluteFile
 
     if (!storeDir.exists())
@@ -57,6 +55,14 @@ object FsNodeServer {
       conf.get("server.port").withDefault(1224).asInt
     )
   }
+
+  def create(props: Map[String, String], baseDir: File = null): FsNodeServer = {
+    create(new ConfigurationEx(props), baseDir)
+  }
+
+  def create(configFile: File): FsNodeServer = {
+    create(new ConfigurationEx(configFile), configFile.getParentFile)
+  }
 }
 
 /**
@@ -68,42 +74,59 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
   val zookeeper = ZooKeeperClient.create(zks)
   val (env, address) = createRpcEnv(zookeeper)
-  val globalConfig = GlobalConfig.load(zookeeper)
-  val localRegionManager = new RegionManager(nodeId, storeDir, globalConfig)
-  val clientFactory = new FsNodeClientFactory(globalConfig);
+  val globalConfig = zookeeper.loadGlobalConfig()
 
+  val localRegionManager = new RegionManager(nodeId, storeDir, globalConfig, new RegionEventListener {
+    override def handleRegionEvent(event: RegionEvent): Unit = {
+      event match {
+        case CreateRegionEvent(region) => {
+          //registered
+        }
+
+        case WriteRegionEvent(region) => {
+          zookeeper.writeRegionData(nodeId, region)
+        }
+      }
+    }
+  })
+
+  val clientFactory = new FsNodeClientFactory(globalConfig);
   //get neighbour nodes
-  val mapNodeClients = mutable.Map[Int, FsNodeClient]()
-  val neighbourNodesWatcher = new NodeWatcher(zookeeper) {
-    def onCreated(t: (Int, RpcAddress)): Unit = {
-      mapNodeClients += t._1 -> (clientFactory.of(t._2))
+  val neighbourNodeWithClients = mutable.Map[Int, FsNodeClient]()
+  val neighbourNodesWatcher = new NodeWatcher(zookeeper)
+    with ChildNodePathAware[(Int, RpcAddress)] {
+    override def onCreated(t: (Int, RpcAddress)): Unit = {
+      neighbourNodeWithClients += t._1 -> (clientFactory.of(t._2))
     }
 
-    def onDelete(t: (Int, RpcAddress)): Unit = {
-      mapNodeClients -= t._1
+    override def onDelete(t: (Int, RpcAddress)): Unit = {
+      neighbourNodeWithClients -= t._1
     }
 
     override def accepts(t: (Int, RpcAddress)): Boolean = nodeId != t._1
   }.startWatching()
 
+  val primaryRegionWatcher = new PrimaryRegionWatcher(zookeeper, globalConfig, localRegionManager, neighbourNodeWithClients).start;
   //get regions in neighbour nodes
   //32768->(1,2), 32769->(1), ...
-  val mapRegionNodes = mutable.Map[Long, ArrayBuffer[Int]]()
-  val mapNodeRegionCount = mutable.ListMap[Int, Int]()
-  val neighbourRegionsWatcher = new RegionWatcher(zookeeper) {
-    def onCreated(t: (Long, Int)): Unit = {
-      mapNodeRegionCount.update(t._2, mapNodeRegionCount.getOrElse(t._2, 0) + 1)
-      mapRegionNodes.getOrElseUpdate(t._1, ArrayBuffer()) += t._2
+  val neighbourRegionWithNodes = mutable.Map[Long, ArrayBuffer[Int]]()
+  val neighbourNodeWithRegionCount = mutable.ListMap[Int, Int]()
+  val neighbourRegionsWatcher = new RegionWatcher(zookeeper)
+    with ChildNodePathAware[(Long, Int)] {
+    override def onCreated(t: (Long, Int)): Unit = {
+      neighbourNodeWithRegionCount.update(t._2, neighbourNodeWithRegionCount.getOrElse(t._2, 0) + 1)
+      neighbourRegionWithNodes.getOrElseUpdate(t._1, ArrayBuffer()) += t._2
     }
 
-    def onDelete(t: (Long, Int)): Unit = {
-      mapRegionNodes -= t._1
-      mapNodeRegionCount.update(t._2, mapNodeRegionCount(t._2) - 1)
-      mapRegionNodes(t._1) -= t._2
+    override def onDelete(t: (Long, Int)): Unit = {
+      neighbourRegionWithNodes -= t._1
+      neighbourNodeWithRegionCount.update(t._2, neighbourNodeWithRegionCount(t._2) - 1)
+      neighbourRegionWithNodes(t._1) -= t._2
     }
 
     override def accepts(t: (Long, Int)): Boolean = nodeId != t._1
-  } startWatching()
+
+  }.startWatching()
 
   var alive: Boolean = true
   val endpoint = new FileRpcEndpoint(env)
@@ -129,6 +152,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       clientFactory.close()
       neighbourNodesWatcher.stop()
       neighbourRegionsWatcher.stop()
+      primaryRegionWatcher.stop()
 
       new File(storeDir, ".lock").delete();
       env.shutdown()
@@ -139,7 +163,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
   }
 
   def cleanData(): Unit = {
-    //TODO
+    throw new NotImplementedError();
   }
 
   private def writeLockFile(lockFile: File): Unit = {
@@ -149,33 +173,16 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
     fos.close()
   }
 
-  private def registerLocalRegions(): Unit = {
-    localRegionManager.regions.keys.foreach(regionId => {
-      registerLocalRegion(regionId)
-    })
-  }
-
-  private def createRpcEnv(zookeeper: ZooKeeper): (HippoRpcEnv, RpcAddress) = {
+  private def createRpcEnv(zookeeper: ZooKeeperClient): (HippoRpcEnv, RpcAddress) = {
     val env = HippoRpcEnvFactory.create(
       RpcEnvServerConfig(new RpcConf(), "regionfs-server", host, port))
 
     val address = env.address
     val path = s"/regionfs/nodes/${nodeId}_${address.host}_${address.port}"
-    if (zookeeper.exists(path, ZooKeeperClient.NullWatcher) != null) {
-      env.shutdown();
-      throw new ExisitingNodeInZooKeeperExcetion(path);
+    zookeeper.assertPathNotExists(path) {
+      env.shutdown()
     }
-
     env -> address;
-  }
-
-  private def registerLocalRegion(regionId: Long) = {
-    zookeeper.create(s"/regionfs/regions/${nodeId}_$regionId", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
-  }
-
-  private def registerLocalNode() = {
-    zookeeper.create(s"/regionfs/nodes/${nodeId}_${address.host}_${address.port}", "".getBytes,
-      Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL)
   }
 
   class FileRpcEndpoint(override val rpcEnv: HippoRpcEnv)
@@ -183,13 +190,13 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       with HippoRpcHandler
       with Logging {
 
-    val rand = new Random();
+    val traffic = new AtomicInteger(0);
 
     //NOTE: register only on started up
     override def onStart(): Unit = {
       //register this node and regions
-      registerLocalNode()
-      registerLocalRegions()
+      zookeeper.createNodeNode(nodeId, address);
+      localRegionManager.regions.foreach(x => zookeeper.createRegionNode(nodeId, x._2))
     }
 
     private def createNewRegion(): Region = {
@@ -199,11 +206,11 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       //notify neighbours
       //find thinnest neighbour which has least regions
       if (globalConfig.replicaNum > 1) {
-        if (mapRegionNodes.size < globalConfig.replicaNum - 1)
-          throw new InsufficientNodeServerException(globalConfig.replicaNum);
+        if (neighbourNodeWithClients.size < globalConfig.replicaNum)
+          throw new InsufficientNodeServerException(neighbourNodeWithClients.size, globalConfig.replicaNum);
 
-        val thinNodeIds = mapNodeRegionCount.toList.sortBy(_._2).takeRight(globalConfig.replicaNum - 1)
-        val futures = thinNodeIds.map(x => mapNodeClients(x._1).endPointRef.ask[CreateRegionResponse](
+        val thinNodeIds = neighbourNodeWithRegionCount.toList.sortBy(_._2).takeRight(globalConfig.replicaNum)
+        val futures = thinNodeIds.map(x => neighbourNodeWithClients(x._1).endPointRef.ask[CreateRegionResponse](
           CreateRegionRequest(regionId)))
 
         //hello, pls create a new region with id=regionId
@@ -211,17 +218,16 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       }
 
       //ok, now I register this region
-      registerLocalRegion(regionId)
+      zookeeper.createRegionNode(nodeId, region)
       region
     }
 
     private def chooseRegionForWrite(): Region = {
       localRegionManager.synchronized {
         //counterOffset=size of region
-        //TODO: sort on idle
         localRegionManager.regions.values.toArray.
-          filter(_.statTotalSize <= globalConfig.regionSizeLimit).
-          sortBy(_.statTotalSize).headOption.
+          filter(_.length <= globalConfig.regionSizeLimit).
+          sortBy(_.length).headOption.
           getOrElse({
             //no enough regions
             createNewRegion()
@@ -229,27 +235,60 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       }
     }
 
-    private def getNeighboursWhoHasRegion(regionId: Long): Iterable[FsNodeClient] = {
-      //a region may be stored in multiple nodes
-      mapRegionNodes.get(regionId).map(
-        (x: ArrayBuffer[Int]) => {
-          x.map(mapNodeClients.apply(_))
-        }).getOrElse(None)
+    override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
+      case x: Any => {
+        traffic.incrementAndGet()
+        val t = receiveAndReplyInternal(context).apply(x)
+        traffic.decrementAndGet()
+        t
+      }
     }
 
-    override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
+    override def onStop(): Unit = {
+      logger.info("stop endpoint")
+    }
+
+    override def openCompleteStream(): PartialFunction[Any, CompleteStream] = {
+      case x: Any => {
+        traffic.incrementAndGet()
+        val t = openCompleteStreamInternal.apply(x)
+        traffic.decrementAndGet()
+        t
+      }
+    }
+
+    override def openChunkedStream(): PartialFunction[Any, ChunkedStream] = {
+      case x: Any => {
+        traffic.incrementAndGet()
+        val t = openChunkedStreamInternal.apply(x)
+        traffic.decrementAndGet()
+        t
+      }
+    }
+
+    override def receiveWithStream(extraInput: ByteBuffer, context: ReceiveContext): PartialFunction[Any, Unit] = {
+      case x: Any => {
+        traffic.incrementAndGet()
+        val t = receiveWithStreamInternal(extraInput, context).apply(x)
+        traffic.decrementAndGet()
+        t
+      }
+    }
+
+    private def receiveAndReplyInternal(context: RpcCallContext): PartialFunction[Any, Unit] = {
       case GetNodeStatRequest() => {
         val nodeStat = NodeStat(nodeId, address,
           localRegionManager.regions.map { kv =>
-            RegionStat(kv._1, kv._2.statFileCount(), kv._2.statTotalSize())
+            RegionStat(kv._1, kv._2.statFileCount(), kv._2.length)
           }.toList)
 
         context.reply(GetNodeStatResponse(nodeStat))
       }
 
+      //create region as replica
       case CreateRegionRequest(regionId: Long) => {
-        localRegionManager.createNewReplica(regionId)
-        registerLocalRegion(regionId)
+        val region = localRegionManager.createNewReplica(regionId)
+        zookeeper.createRegionNode(nodeId, region)
         context.reply(CreateRegionResponse(regionId))
       }
 
@@ -271,6 +310,13 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
         try {
           maybeRegion.get.delete(localId)
+          //notify neigbours
+          //TODO: filter(ownsNewVersion)
+          val futures = neighbourRegionWithNodes(regionId).filter(_ => true).map(neighbourNodeWithClients(_).endPointRef.ask[CreateRegionResponse](
+            DeleteFileRequest(regionId, localId)))
+
+          //TODO: if fail?
+          futures.foreach(Await.result(_, Duration("4s")))
           context.reply(DeleteFileResponse(true, null))
         }
         catch {
@@ -285,13 +331,10 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       }
     }
 
-    override def onStop(): Unit = {
-      logger.info("stop endpoint")
-    }
-
-    override def openCompleteStream(): PartialFunction[Any, CompleteStream] = {
+    private def openCompleteStreamInternal(): PartialFunction[Any, CompleteStream] = {
       case ReadFileRequest(regionId: Long, localId: Long) => {
         val maybeRegion = localRegionManager.get(regionId)
+
         if (maybeRegion.isEmpty) {
           throw new WrongRegionIdException(regionId);
         }
@@ -303,9 +346,24 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
         CompleteStream.fromByteBuffer(maybeBuffer.get)
       }
+
+      case GetRegionPatchRequest(regionId: Long, since: Long) => {
+        val maybeRegion = localRegionManager.get(regionId)
+        if (maybeRegion.isEmpty) {
+          throw new WrongRegionIdException(regionId);
+        }
+
+        if (traffic.get() > Constants.MAX_BUSY_TRAFFIC) {
+          CompleteStream.fromByteBuffer(Unpooled.buffer(1024).writeByte(Constants.MARK_GET_REGION_PATCH_SERVER_IS_BUSY))
+        }
+        else {
+          val buf = maybeRegion.get.buildPatch(since)
+          CompleteStream.fromByteBuffer(buf)
+        }
+      }
     }
 
-    override def openChunkedStream(): PartialFunction[Any, ChunkedStream] = {
+    private def openChunkedStreamInternal(): PartialFunction[Any, ChunkedStream] = {
       case ListFileRequest() =>
         ChunkedStream.pooled[ListFileResponseDetail](1024, (pool) => {
           localRegionManager.regions.values.foreach { x =>
@@ -315,9 +373,9 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         })
     }
 
-    override def receiveWithStream(extraInput: ByteBuffer, context: ReceiveContext): PartialFunction[Any, Unit] = {
+    private def receiveWithStreamInternal(extraInput: ByteBuffer, context: ReceiveContext): PartialFunction[Any, Unit] = {
       case SendFileRequest(totalLength: Long, crc32: Long) =>
-        //primary node
+        //primary region
         val region = chooseRegionForWrite()
         val regionId = region.regionId
         val clone = extraInput.duplicate()
@@ -327,7 +385,6 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         }
 
         val localId = region.write(extraInput, crc32)
-        //TODO: replica
         context.reply(SendFileResponse(FileId.make(regionId, localId)))
     }
   }
@@ -338,8 +395,8 @@ class RegionFsServerException(msg: String, cause: Throwable = null) extends
   RegionFsException(msg, cause) {
 }
 
-class InsufficientNodeServerException(num: Int) extends
-  RegionFsServerException(s"insufficient node server for replica: num>=$num") {
+class InsufficientNodeServerException(actual: Int, required: Int) extends
+  RegionFsServerException(s"insufficient node server for replica: actual: ${actual}, required: ${required}") {
 
 }
 
@@ -371,4 +428,41 @@ class WrongRegionIdException(regionId: Long) extends
 class ReceiveTimeMismatchedCheckSumException extends
   RegionFsServerException(s"mismatched checksum exception on receive time") {
 
+}
+
+class PrimaryRegionWatcher(zookeeper: ZooKeeperClient,
+                           conf: GlobalConfig,
+                           localRegionManager: RegionManager, mapNodeClients: mutable.Map[Int, FsNodeClient])
+  extends Logging {
+  val thread: Thread = new Thread(new Runnable() {
+    override def run(): Unit = {
+      Thread.sleep(conf.regionVersionCheckInterval)
+      localRegionManager.regions.values.filter(!_.isPrimary).foreach {
+        (region) => {
+          val regionId = region.regionId
+          val primaryRegionData = zookeeper.readRegionData(regionId)
+          if (primaryRegionData.revision > region.revision) {
+            if (logger.isTraceEnabled())
+              logger.trace(s"found new version of region-${regionId}");
+
+            val is = mapNodeClients((regionId >> 16).toInt).getPatchInputStream(
+              regionId, region.revision, Duration("10s"))
+            region.applyPatch(is);
+            is.close();
+
+            localRegionManager.reload(region)
+          }
+        }
+      }
+    }
+  });
+
+  def start(): PrimaryRegionWatcher = {
+    thread.start();
+    this;
+  }
+
+  def stop(): Unit = {
+    thread.stop()
+  }
 }

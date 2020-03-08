@@ -6,7 +6,8 @@ import java.nio.ByteBuffer
 import org.apache.commons.io.IOUtils
 import org.grapheco.commons.util.Profiler._
 import org.grapheco.regionfs.GlobalConfig
-import org.grapheco.regionfs.server.{Region, RegionConfig}
+import org.grapheco.regionfs.server.RegionManager
+import org.grapheco.regionfs.util.CrcUtils
 import org.junit.{Assert, Test}
 
 /**
@@ -15,16 +16,22 @@ import org.junit.{Assert, Test}
 class LocalRegionFileIOTest extends FileTestBase {
   @Test
   def testRegionIO(): Unit = {
-    val region = new Region(false, 65537,
-      RegionConfig(new File("./testdata/nodes/node1/65537"),
-        new GlobalConfig(1, -1, false)));
+    val rm = new RegionManager(1, new File("./testdata/nodes/node1"),
+      GlobalConfig.empty, nullRegionEventListener);
+
+    val region = rm.createNew()
+
+    Assert.assertEquals(65537, region.regionId)
+    Assert.assertEquals(true, region.isPrimary)
+    Assert.assertEquals(0, region.revision)
+    Assert.assertEquals(0, region.length)
 
     val bytes1 = IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/9999999")))
     val buf = ByteBuffer.wrap(bytes1)
 
     val id = timing(true, 10) {
       val clone = buf.duplicate()
-      region.write(clone, 0)
+      region.write(clone, CrcUtils.computeCrc32(buf.duplicate()))
     }
 
     val bytes2 = timing(true, 10) {

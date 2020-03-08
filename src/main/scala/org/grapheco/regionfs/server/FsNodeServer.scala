@@ -16,7 +16,6 @@ import org.grapheco.regionfs.client._
 import org.grapheco.regionfs.util.CrcUtils
 
 import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
 
@@ -92,15 +91,14 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
   val clientFactory = new FsNodeClientFactory(globalConfig);
   //get neighbour nodes
-  val neighbourNodeWithClients = mutable.Map[Int, FsNodeClient]()
+  var neighbourNodeWithClients = Map[Int, FsNodeClient]()
   val neighbourNodesWatcher = new NodeWatcher(zookeeper)
     with ChildNodePathAware[(Int, RpcAddress)] {
-    override def onCreated(t: (Int, RpcAddress)): Unit = {
-      neighbourNodeWithClients += t._1 -> (clientFactory.of(t._2))
-    }
-
-    override def onDelete(t: (Int, RpcAddress)): Unit = {
-      neighbourNodeWithClients -= t._1
+    override def onChanged(batch: Iterable[(Int, RpcAddress)]): Unit = {
+      val map = batch.map(t => t._1 -> (clientFactory.of(t._2))).toMap
+      this.synchronized {
+        neighbourNodeWithClients = map
+      }
     }
 
     override def accepts(t: (Int, RpcAddress)): Boolean = nodeId != t._1
@@ -109,19 +107,18 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
   val primaryRegionWatcher = new PrimaryRegionWatcher(zookeeper, globalConfig, localRegionManager, neighbourNodeWithClients).start;
   //get regions in neighbour nodes
   //32768->(1,2), 32769->(1), ...
-  val neighbourRegionWithNodes = mutable.Map[Long, ArrayBuffer[Int]]()
-  val neighbourNodeWithRegionCount = mutable.ListMap[Int, Int]()
+  var neighbourRegionWithNodes = Map[Long, Iterable[Int]]()
+  var neighbourNodeWithRegionCount = mutable.ListMap[Int, Int]()
   val neighbourRegionsWatcher = new RegionWatcher(zookeeper)
     with ChildNodePathAware[(Long, Int)] {
-    override def onCreated(t: (Long, Int)): Unit = {
-      neighbourNodeWithRegionCount.update(t._2, neighbourNodeWithRegionCount.getOrElse(t._2, 0) + 1)
-      neighbourRegionWithNodes.getOrElseUpdate(t._1, ArrayBuffer()) += t._2
-    }
-
-    override def onDelete(t: (Long, Int)): Unit = {
-      neighbourRegionWithNodes -= t._1
-      neighbourNodeWithRegionCount.update(t._2, neighbourNodeWithRegionCount(t._2) - 1)
-      neighbourRegionWithNodes(t._1) -= t._2
+    override def onChanged(batch: Iterable[(Long, Int)]): Unit = {
+      val map1 = batch.groupBy(_._1).map(x => x._1 -> x._2.map(_._2))
+      val map2 = batch.groupBy(_._2).map(x => x._1 -> x._2.size).toArray.sortBy(_._2)
+      this.synchronized {
+        neighbourRegionWithNodes = map1
+        neighbourNodeWithRegionCount.clear()
+        neighbourNodeWithRegionCount ++= map2
+      }
     }
 
     override def accepts(t: (Long, Int)): Boolean = nodeId != t._1
@@ -432,7 +429,7 @@ class ReceiveTimeMismatchedCheckSumException extends
 
 class PrimaryRegionWatcher(zookeeper: ZooKeeperClient,
                            conf: GlobalConfig,
-                           localRegionManager: RegionManager, mapNodeClients: mutable.Map[Int, FsNodeClient])
+                           localRegionManager: RegionManager, mapNodeClients: Map[Int, FsNodeClient])
   extends Logging {
   val thread: Thread = new Thread(new Runnable() {
     override def run(): Unit = {

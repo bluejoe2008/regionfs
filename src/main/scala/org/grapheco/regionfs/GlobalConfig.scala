@@ -1,74 +1,61 @@
 package org.grapheco.regionfs
 
-import java.io.{ByteArrayInputStream, File, FileInputStream}
+import java.io.{File, FileInputStream}
 import java.util.Properties
 
+import org.grapheco.commons.util.ConfigUtils._
+import org.grapheco.commons.util.{Configuration, ConfigurationEx}
 import org.grapheco.regionfs.client.ZooKeeperClient
-import org.grapheco.regionfs.server.RegionFsServerException
-import org.grapheco.commons.util.ConfigurationEx
-import org.apache.commons.io.IOUtils
-import org.apache.zookeeper.ZooDefs.Ids
-import org.apache.zookeeper.{CreateMode, ZooKeeper}
+
+import scala.collection.JavaConversions
 
 /**
   * Created by bluejoe on 2020/2/6.
   */
-case class GlobalConfig(replicaNum: Int, regionSizeLimit: Long, enableCrc: Boolean) {
+class GlobalConfig(props: Properties) {
+  val conf = new Configuration {
+    override def getRaw(name: String): Option[String] =
+      if (props.containsKey(name)) {
+        Some(props.getProperty(name))
+      } else {
+        None
+      }
+  }
+
+  lazy val replicaNum: Int = conf.get("replica.num").withDefault(1).asInt
+  lazy val regionSizeLimit: Long = conf.get("region.size.limit").withDefault(Constants.DEFAULT_REGION_SIZE_LIMIT).asLong
+  lazy val enableCrc: Boolean = conf.get("blob.crc.enabled").withDefault(true).asBoolean
+  lazy val regionVersionCheckInterval: Long = conf.get("region.version.check.interval").withDefault(Constants.DEFAULT_REGION_VERSION_CHECK_INTERVAL).asLong
 }
 
 object GlobalConfig {
-  def load(zk: ZooKeeper): GlobalConfig = {
-    if (zk.exists("/regionfs/config", null) == null) {
-      throw new GlobalConfigPathNotFoundException("/regionfs/config");
-    }
-
-    val bytes = zk.getData("/regionfs/config", null, null)
-    val bais = new ByteArrayInputStream(bytes);
-    val props = new Properties()
-    props.load(bais)
-
-    val conf = new ConfigurationEx(props)
-
-    new GlobalConfig(conf.get("replica.num").withDefault(3).asInt,
-      conf.get("region.size.limit").withDefault(Constants.DEFAULT_REGION_SIZE_LIMIT).asLong,
-      conf.get("blob.crc.enabled").withDefault(true).asBoolean)
-  }
-
-  def save(zk: ZooKeeper, bytes: Array[Byte]): Unit = {
-    if (zk.exists("/regionfs/config", null) == null) {
-      zk.create("/regionfs/config", bytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
-    }
-    else {
-      zk.setData("/regionfs/config", bytes, -1)
-    }
-  }
-}
-
-class GlobalConfigPathNotFoundException(path: String) extends
-  RegionFsServerException(s"zookeeper path not exists: $path") {
-
+  def empty = new GlobalConfig(new Properties())
 }
 
 class GlobalConfigWriter {
-  def write(configFile: File): Unit = {
-    val conf = new ConfigurationEx(configFile)
+  def write(props: Properties): Unit = {
+    val conf = new ConfigurationEx(props)
 
     val zks = conf.get("zookeeper.address").asString
     val zk = ZooKeeperClient.create(zks)
 
-    if (zk.exists("/regionfs", false) == null)
-      zk.create("/regionfs", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
-
-    if (zk.exists("/regionfs/nodes", false) == null)
-      zk.create("/regionfs/nodes", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
-
-    if (zk.exists("/regionfs/regions", false) == null)
-      zk.create("/regionfs/regions", "".getBytes, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT)
-
-    val fis = new FileInputStream(configFile)
-    GlobalConfig.save(zk, IOUtils.toByteArray(fis))
-    fis.close()
+    zk.createAbsentNodes();
+    zk.saveGlobalConfig(props)
 
     zk.close()
+  }
+
+  def write(map: Map[String, String]): Unit = {
+    val props = new Properties();
+    props.putAll(JavaConversions.mapAsJavaMap(map))
+    write(props)
+  }
+
+  def write(configFile: File): Unit = {
+    val props = new Properties();
+    val fis = new FileInputStream(configFile)
+    props.load(fis)
+    write(props)
+    fis.close()
   }
 }

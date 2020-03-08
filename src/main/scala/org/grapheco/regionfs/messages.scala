@@ -46,7 +46,7 @@ case class ListFileResponseDetail(result: (FileId, Long)) {
 
 }
 
-case class SendFileRequest( totalLength: Long, crc32: Long) {
+case class SendFileRequest(totalLength: Long, crc32: Long) {
 
 }
 
@@ -71,5 +71,9 @@ case class GetNodeStatRequest() {
 }
 
 case class GetNodeStatResponse(stat: NodeStat) {
+
+}
+
+case class GetRegionPatchRequest(regionId: Long, since: Long) {
 
 }

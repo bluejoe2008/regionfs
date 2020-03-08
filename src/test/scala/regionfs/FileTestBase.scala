@@ -3,41 +3,61 @@ package regionfs
 import java.io.{File, FileOutputStream}
 import java.nio.ByteBuffer
 
+import org.apache.commons.io.FileUtils
 import org.grapheco.commons.util.{Logging, Profiler}
-import org.grapheco.regionfs.FileId
 import org.grapheco.regionfs.client.FsClient
-import org.grapheco.regionfs.server.FsNodeServer
-import org.junit.{After, Before}
+import org.grapheco.regionfs.server.{FsNodeServer, RegionEvent, RegionEventListener}
 import org.grapheco.regionfs.util.ByteBufferConversions._
+import org.grapheco.regionfs.{FileId, GlobalConfigWriter}
+import org.junit.{After, Before}
+
+import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, Future}
 
 /**
   * Created by bluejoe on 2019/8/23.
   */
-class FileTestBase extends Logging {
-  Profiler.enableTiming = true
+class FileTestBase extends SingleNode with Logging {
+  val nullRegionEventListener = new RegionEventListener {
+    override def handleRegionEvent(event: RegionEvent): Unit = {}
+  }
+
   val BLOB_LENGTH = Array[Long](999, 9999, 99999, 999999, 9999999)
 
-  val configFile = new File("./node1.conf")
-  var server: FsNodeServer = null
+  var servers = ArrayBuffer[FsNodeServer]()
   var client: FsClient = null
 
   @Before
   def setup() {
-    try {
-      //this server will not startup due to lock by annother process
-      server = FsNodeServer.create(configFile)
-      //Thread.sleep(1000)
-    }
-    catch {
-      case e: Throwable => {
-        logger.warn(e.getMessage)
-        server = null
+    Profiler.enableTiming = true
+    new GlobalConfigWriter().write(GLOBAL_SETTING);
+    FileUtils.deleteDirectory(new File("./testdata/nodes"));
+
+    //this server will not startup due to lock by annother process
+    val confs = SERVER_NODE_ID.map(x => {
+      Map[String, String](
+        "zookeeper.address" -> zookeeperString,
+        "server.host" -> "localhost",
+        "server.port" -> s"${x._2}",
+        "data.storeDir" -> new File(s"./testdata/nodes/node${x._1}").getCanonicalFile.getAbsolutePath,
+        "node.id" -> s"${x._1}"
+      )
+    })
+
+    for (conf <- confs) {
+      try {
+        new File(conf("data.storeDir")).mkdirs()
+        servers += FsNodeServer.create(conf)
+      }
+      catch {
+        case e: Throwable => {
+          logger.warn(e.getMessage)
+        }
       }
     }
 
-    client = new FsClient("localhost:2181")
+    client = new FsClient(zookeeperString)
 
     for (i <- BLOB_LENGTH) {
       makeFile(new File(s"./testdata/inputs/$i"), i)
@@ -46,13 +66,9 @@ class FileTestBase extends Logging {
 
   @After
   def after(): Unit = {
-    if (server != null)
-      server.shutdown()
+    servers.foreach(_.shutdown())
     if (client != null)
       client.close
-
-    //waiting zookeeper disconnect
-    //Thread.sleep(1000)
   }
 
   def writeFile(src: File): FileId = {

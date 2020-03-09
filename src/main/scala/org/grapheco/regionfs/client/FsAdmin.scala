@@ -21,6 +21,30 @@ class FsAdmin(zks: String) extends FsClient(zks: String) {
     }
   }
 
+  def getNodesWithAddress(): Map[Int, RpcAddress] = {
+    allNodes.toMap
+  }
+
+  def getRegionsWithListOfNodes(): Map[Long, Array[Int]] = {
+    allRegionsWithListOfNode.map(x => x._1 -> x._2.toArray).toMap
+  }
+
+  def getRegions(): Iterable[Long] = {
+    allRegionsWithListOfNode.keys
+  }
+
+  def getRegions(nodeId: Int): Iterable[Long] = {
+    allRegionWithNodes.filter(_._2 == nodeId).map(_._1)
+  }
+
+  def getNodes(regionId: Long): Iterable[Int] = {
+    allRegionsWithListOfNode(regionId)
+  }
+
+  def getNodes(): Iterable[Int] = {
+    allNodes.keys
+  }
+
   def statNode(nodeId: Int, rpcTimeout: Duration): NodeStat = {
     val future = clientOf(nodeId).endPointRef.ask[GetNodeStatResponse](GetNodeStatRequest())
     Await.result(future, rpcTimeout).stat

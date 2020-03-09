@@ -29,6 +29,7 @@ object StartNodeServerForTest extends Logging {
     try {
       new File(conf("data.storeDir")).mkdirs()
       servers += FsNodeServer.create(conf)
+      Thread.sleep(2000)
     }
     catch {
       case e: Throwable => {
@@ -37,14 +38,15 @@ object StartNodeServerForTest extends Logging {
     }
   }
 
+  /*
   servers.foreach(server =>
     new Thread(new Runnable {
       override def run(): Unit = {
-        Thread.sleep(5000)
         server.awaitTermination()
       }
     }).start()
   )
+  */
 
   Thread.sleep(1000)
 }

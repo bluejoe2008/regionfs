@@ -5,7 +5,7 @@ import java.util.Properties
 
 import org.grapheco.commons.util.ConfigUtils._
 import org.grapheco.commons.util.{Configuration, ConfigurationEx}
-import org.grapheco.regionfs.client.ZooKeeperClient
+import org.grapheco.regionfs.util.ZooKeeperClient
 
 import scala.collection.JavaConversions
 

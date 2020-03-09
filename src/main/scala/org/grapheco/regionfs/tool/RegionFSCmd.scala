@@ -243,6 +243,7 @@ class ShutdownAllShellCommandExecutor extends ShellCommandExecutor {
     admin.shutdownAllNodes(Duration("4s")).foreach { x =>
       println(s"shutdowning node-${x._1} on ${x._2}...")
     }
+    admin.close
   }
 }
 
@@ -274,6 +275,7 @@ class ShutdownNodeShellCommandExecutor extends ShellCommandExecutor {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
     val (nodeId, address) = admin.shutdownNode(commandLine.getOptionValue("node").toInt, Duration("4s"))
     println(s"shutdowning node-$nodeId on address...")
+    admin.close
   }
 }
 
@@ -298,6 +300,7 @@ class CleanAllShellCommandExecutor extends ShellCommandExecutor {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
     val addrs = admin.cleanAllData(Duration("4s"))
     addrs.foreach(addr => println(s"cleaned data on $addr..."))
+    admin.close
   }
 }
 
@@ -329,6 +332,7 @@ class CleanNodeShellCommandExecutor extends ShellCommandExecutor {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
     val addr = admin.cleanNodeData(commandLine.getOptionValue("node").toInt, Duration("4s"))
     println(s"cleaned data on $addr...")
+    admin.close
   }
 }
 
@@ -362,6 +366,8 @@ class PutFilesShellCommandExecutor extends ShellCommandExecutor {
       val id = Await.result(admin.writeFile(file), Duration("4s"))
       println(s"\t${file.getAbsoluteFile.getCanonicalPath} -> ${FileId.toBase64String(id)}")
     }
+
+    admin.close
   }
 }
 
@@ -389,6 +395,8 @@ class DeleteFilesShellCommandExecutor extends ShellCommandExecutor {
       Await.result(admin.deleteFile(id), Duration("4s"));
       println(s"${arg}");
     }
+
+    admin.close
   }
 }
 
@@ -467,5 +475,6 @@ class GetFilesShellCommandExecutor extends ShellCommandExecutor {
     }
 
     output.done()
+    admin.close
   }
 }

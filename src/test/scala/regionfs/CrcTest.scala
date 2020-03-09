@@ -3,7 +3,6 @@ package regionfs
 import java.io.{BufferedInputStream, File, FileInputStream}
 import java.nio.ByteBuffer
 
-import io.netty.buffer.Unpooled
 import org.grapheco.commons.util.Profiler
 import org.grapheco.commons.util.Profiler._
 import org.grapheco.regionfs.util.CrcUtils

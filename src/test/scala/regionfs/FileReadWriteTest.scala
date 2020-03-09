@@ -12,7 +12,7 @@ import scala.concurrent.duration.Duration
 /**
   * Created by bluejoe on 2019/8/23.
   */
-class FileReadWriteTest extends FileTestBase with SingleNode {
+class FileReadWriteTest extends FileTestBase {
 
   @Test
   def testWrite(): Unit = {

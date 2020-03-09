@@ -1,15 +1,14 @@
 package regionfs
 
 import org.grapheco.regionfs.client.FsAdmin
-import net.neoremind.kraps.rpc.RpcAddress
-import org.junit.{After, Assert, Before, Test}
+import org.junit.{After, Before, Test}
 
 import scala.concurrent.duration.Duration
 
 /**
   * Created by bluejoe on 2020/2/8.
   */
-class FileAdminTest extends FileTestBase with SingleNode {
+class FileAdminTest extends FileTestBase {
   var admin: FsAdmin = null
 
   @Before

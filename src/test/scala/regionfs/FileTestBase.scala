@@ -3,6 +3,7 @@ package regionfs
 import java.io.{File, FileOutputStream}
 import java.nio.ByteBuffer
 
+import org.apache.commons.io.FileUtils
 import org.grapheco.commons.util.{Logging, Profiler}
 import org.grapheco.regionfs.client.FsClient
 import org.grapheco.regionfs.server.{FsNodeServer, RegionEvent, RegionEventListener}
@@ -17,7 +18,9 @@ import scala.concurrent.{Await, Future}
 /**
   * Created by bluejoe on 2019/8/23.
   */
-abstract class FileTestBase extends TestCondition with Logging {
+class FileTestBase extends Logging {
+  val con: TestCondition = new SingleNode()
+
   val nullRegionEventListener = new RegionEventListener {
     override def handleRegionEvent(event: RegionEvent): Unit = {}
   }
@@ -29,13 +32,15 @@ abstract class FileTestBase extends TestCondition with Logging {
 
   @Before
   def setup() {
+    System.err.println(s"@Before ...");
+    FileUtils.deleteDirectory(new File("./testdata/nodes"));
     Profiler.enableTiming = true
-    new GlobalConfigWriter().write(GLOBAL_SETTING);
+    new GlobalConfigWriter().write(con.GLOBAL_SETTING);
 
     //this server will not startup due to lock by annother process
-    val confs = SERVER_NODE_ID.map(x => {
+    val confs = con.SERVER_NODE_ID.map(x => {
       Map[String, String](
-        "zookeeper.address" -> zookeeperString,
+        "zookeeper.address" -> con.zookeeperString,
         "server.host" -> "localhost",
         "server.port" -> s"${x._2}",
         "data.storeDir" -> new File(s"./testdata/nodes/node${x._1}").getCanonicalFile.getAbsolutePath,
@@ -56,18 +61,33 @@ abstract class FileTestBase extends TestCondition with Logging {
       }
     }
 
-    client = new FsClient(zookeeperString)
+    client = new FsClient(con.zookeeperString)
 
     for (i <- BLOB_LENGTH) {
       makeFile(new File(s"./testdata/inputs/$i"), i)
     }
   }
 
+  def makeFile(dst: File, length: Long): Unit = {
+    val fos = new FileOutputStream(dst)
+    var n: Long = 0
+    while (n < length) {
+      val left: Int = Math.min((length - n).toInt, 10240)
+      fos.write((0 to left - 1).map(x => ('a' + x % 26).toByte).toArray)
+      n += left
+    }
+
+    fos.close()
+  }
+
   @After
   def after(): Unit = {
-    servers.foreach(_.shutdown())
+    System.err.println(s"@After ...");
+
     if (client != null)
       client.close
+
+    servers.foreach(_.shutdown())
   }
 
   def writeFile(src: File): FileId = {
@@ -82,29 +102,17 @@ abstract class FileTestBase extends TestCondition with Logging {
     Await.result(client.writeFile(ByteBuffer.wrap(bytes)), Duration("4s"))
   }
 
+  def writeFileAsync(text: String): Future[FileId] = {
+    writeFileAsync(text.getBytes)
+  }
+
   private def writeFileAsync(bytes: Array[Byte]): Future[FileId] = {
     val fid = client.writeFile(ByteBuffer.wrap(bytes))
     fid
   }
 
-  def writeFileAsync(text: String): Future[FileId] = {
-    writeFileAsync(text.getBytes)
-  }
-
   def writeFileAsync(src: File): Future[FileId] = {
     val fid = client.writeFile(src)
     fid
-  }
-
-  def makeFile(dst: File, length: Long): Unit = {
-    val fos = new FileOutputStream(dst)
-    var n: Long = 0
-    while (n < length) {
-      val left: Int = Math.min((length - n).toInt, 10240)
-      fos.write((0 to left - 1).map(x => ('a' + x % 26).toByte).toArray)
-      n += left
-    }
-
-    fos.close()
   }
 }

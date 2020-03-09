@@ -9,9 +9,9 @@
     <version>0.9-SNAPSHOT</version>
     <dependencies>
         <dependency>
-            <groupId>org.apache.zookeeper</groupId>
-            <artifactId>zookeeper</artifactId>
-            <version>3.4.14</version>
+            <groupId>org.apache.curator</groupId>
+            <artifactId>curator-recipes</artifactId>
+            <version>3.3.0</version>
         </dependency>
         <dependency>
             <groupId>commons-cli</groupId>

@@ -47,6 +47,7 @@ class FileTestBase extends SingleNode with Logging {
       try {
         new File(conf("data.storeDir")).mkdirs()
         servers += FsNodeServer.create(conf)
+        //Thread.sleep(2000)
       }
       catch {
         case e: Throwable => {

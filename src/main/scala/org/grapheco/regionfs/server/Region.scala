@@ -191,7 +191,8 @@ class RegionBodyStore(conf: RegionConfig) {
   * a Region store files in storeDir
   */
 class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listener: RegionEventListener, val isPrimary: Boolean) extends Logging {
-  val isWritable = true
+  //TODO: archive
+  val isWritable = length <= conf.globalConfig.regionSizeLimit
 
   //metadata file
   lazy val fbody = new RegionBodyStore(conf)

@@ -85,8 +85,9 @@ class FsClient(zks: String) extends Logging {
 
   private def getSafeClient[T](fileId: FileId): FsNodeClient = {
     assertNodesNotEmpty();
-    //TODO: may not be noticed immediately
-    val nodeId: Int = allRegionWithNodes.get(fileId.regionId).map(_.head).getOrElse((fileId.regionId >> 16).toInt)
+    //TODO: secondary up-to-date regions will be used here
+    //val nodeId: Int = allRegionWithNodes.get(fileId.regionId).map(_.head).getOrElse((fileId.regionId >> 16).toInt)
+    val nodeId: Int = (fileId.regionId >> 16).toInt
     val maybeClient = allNodeWithClients.get(nodeId);
     if (maybeClient.isEmpty)
       throw new WrongFileIdException(fileId);

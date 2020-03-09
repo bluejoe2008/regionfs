@@ -233,7 +233,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       localRegionManager.synchronized {
         //counterOffset=size of region
         localRegionManager.regions.values.toArray.
-          filter(_.length <= globalConfig.regionSizeLimit).
+          filter(x=> x.isPrimary && x.isWritable).
           sortBy(_.length).headOption.
           getOrElse({
             //no enough regions

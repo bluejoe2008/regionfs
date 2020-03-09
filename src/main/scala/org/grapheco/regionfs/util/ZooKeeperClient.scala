@@ -156,9 +156,11 @@ class ZooKeeperClient(curator: CuratorFramework) {
     })
   }
 
+  val currentClient = this;
+
   def watchChildrenPath(parentPath: String, handler: ChildNodeEventHandler): Closeable = {
     val childrenCache = new PathChildrenCache(curator, parentPath, true);
-    childrenCache.getListenable().addListener(new PathChildrenCacheListener {
+    childrenCache.getListenable().addListener(new PathChildrenCacheListener with Logging {
       override def childEvent(curatorFramework: CuratorFramework, pathChildrenCacheEvent: PathChildrenCacheEvent): Unit = {
         pathChildrenCacheEvent.getType match {
           case PathChildrenCacheEvent.Type.CHILD_ADDED =>

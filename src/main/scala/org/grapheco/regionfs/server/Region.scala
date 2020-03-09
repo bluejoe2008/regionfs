@@ -35,7 +35,7 @@ class RegionMetaStore(conf: RegionConfig) {
   val cache: Cache[Long, Option[MetaData]] = new FixSizedCache[Long, Option[MetaData]](1024);
 
   def iterator(): Iterator[MetaData] = {
-    (0 to count.toInt - 1).iterator.map(read(_).get)
+    (0 to cursor.current.toInt - 1).iterator.map(read(_).get)
   }
 
   //local id as offset
@@ -109,23 +109,24 @@ class RegionMetaStore(conf: RegionConfig) {
     }
   }
 
-  def count = fileMetaFile.length() / Constants.METADATA_ENTRY_LENGTH_WITH_PADDING;
-
   def close(): Unit = {
     fptr.close()
     fptr.close()
   }
+
+  val cursor = new LocalIdGenerator(new AtomicLong(fileMetaFile.length() / Constants.METADATA_ENTRY_LENGTH_WITH_PADDING))
 }
 
-class LocalIdGenerator(conf: RegionConfig, meta: RegionMetaStore) {
-  //free id
-  val counterLocalId = new AtomicLong(meta.count);
-
+class LocalIdGenerator(counterLocalId: AtomicLong) {
   def consumeNextId(consume: (Long) => Unit): Long = {
-    val id = counterLocalId.get();
-    consume(id)
-    counterLocalId.getAndIncrement()
+    counterLocalId.synchronized {
+      val id = counterLocalId.get();
+      consume(id)
+      counterLocalId.incrementAndGet()
+    }
   }
+
+  def current = counterLocalId.get()
 
   def close(): Unit = {
   }
@@ -190,24 +191,21 @@ class RegionBodyStore(conf: RegionConfig) {
 /**
   * a Region store files in storeDir
   */
-class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listener: RegionEventListener, val isPrimary: Boolean) extends Logging {
+class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listener: RegionEventListener) extends Logging {
   //TODO: archive
   val isWritable = length <= conf.globalConfig.regionSizeLimit
+  val isPrimary = (regionId >> 16) == nodeId
 
   //metadata file
   lazy val fbody = new RegionBodyStore(conf)
   lazy val fmeta = new RegionMetaStore(conf)
-  lazy val idgen = new LocalIdGenerator(conf, fmeta)
+  lazy val cursor = fmeta.cursor
 
-  def revision = idgen.counterLocalId.get()
+  def revision = cursor.current
+
+  def fileCount = cursor.current
 
   def length = fbody.fileBodyLength.get()
-
-  //TOOD: deleted items
-  def statFileCount(): Long = {
-    fmeta.count
-  }
-
 
   def listFiles(): Iterator[(FileId, Long)] = {
     fmeta.iterator.map(meta => FileId.make(regionId, meta.localId) -> meta.length)
@@ -227,7 +225,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
       fbody.write(buf, crc32)
 
     //get local id
-    idgen.consumeNextId((id: Long) => {
+    cursor.consumeNextId((id: Long) => {
       fmeta.write(id, offset, length, crc32)
       if (logger.isTraceEnabled())
         logger.trace(s"[region-${regionId}@${nodeId}] written: localId=$id, length=${length}, actual=${actualWritten}")
@@ -239,7 +237,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
   def close(): Unit = {
     fbody.close()
     fmeta.close()
-    idgen.close()
+    cursor.close()
   }
 
   def read(localId: Long): Option[ByteBuffer] = {
@@ -317,12 +315,11 @@ class RegionManager(nodeId: Int, storeDir: File, globalConfig: GlobalConfig, lis
   def get(id: Long): Option[Region] = regions.get(id)
 
   def reload(region: Region): Region = {
-    val newRegion = new Region(nodeId, region.regionId, region.conf, listener, region.isPrimary)
+    val newRegion = new Region(nodeId, region.regionId, region.conf, listener)
     regions(region.regionId) = newRegion
     newRegion
   }
 
-  private def isPrimary(id: Long): Boolean = (id >> 16) == nodeId;
   /*
    layout of storeDir
     ./1
@@ -339,7 +336,7 @@ class RegionManager(nodeId: Int, storeDir: File, globalConfig: GlobalConfig, lis
     }.
     map { file =>
       val id = file.getName.toLong
-      id -> new Region(nodeId, id, RegionConfig(file, globalConfig), listener, isPrimary(id))
+      id -> new Region(nodeId, id, RegionConfig(file, globalConfig), listener)
     }
 
   if (logger.isInfoEnabled())
@@ -371,7 +368,7 @@ class RegionManager(nodeId: Int, storeDir: File, globalConfig: GlobalConfig, lis
       if (logger.isTraceEnabled())
         logger.trace(s"[region-${regionId}@${nodeId}] created: dir=$regionDir")
 
-      new Region(nodeId, regionId, RegionConfig(regionDir, globalConfig), listener, isPrimary(regionId))
+      new Region(nodeId, regionId, RegionConfig(regionDir, globalConfig), listener)
     }
 
     listener.handleRegionEvent(CreateRegionEvent(region))

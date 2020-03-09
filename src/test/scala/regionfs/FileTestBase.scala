@@ -5,7 +5,7 @@ import java.nio.ByteBuffer
 
 import org.apache.commons.io.FileUtils
 import org.grapheco.commons.util.{Logging, Profiler}
-import org.grapheco.regionfs.client.FsClient
+import org.grapheco.regionfs.client.{FsAdmin, FsClient}
 import org.grapheco.regionfs.server.{FsNodeServer, RegionEvent, RegionEventListener}
 import org.grapheco.regionfs.util.ByteBufferConversions._
 import org.grapheco.regionfs.{FileId, GlobalConfigWriter}
@@ -29,6 +29,7 @@ class FileTestBase extends Logging {
 
   var servers = ArrayBuffer[FsNodeServer]()
   var client: FsClient = null
+  var admin: FsAdmin = null
 
   @Before
   def setup() {
@@ -59,7 +60,8 @@ class FileTestBase extends Logging {
       }
     }
 
-    client = new FsClient(con.zookeeperString)
+    admin = new FsAdmin(con.zookeeperString)
+    client = admin
 
     for (i <- BLOB_LENGTH) {
       makeFile(new File(s"./testdata/inputs/$i"), i)

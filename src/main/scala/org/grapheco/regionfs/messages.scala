@@ -1,7 +1,7 @@
 package org.grapheco.regionfs
 
 import net.neoremind.kraps.rpc.RpcAddress
-import org.grapheco.regionfs.client.NodeStat
+import org.grapheco.regionfs.client.{RegionStat, NodeStat}
 
 /**
   * Created by bluejoe on 2019/8/23.

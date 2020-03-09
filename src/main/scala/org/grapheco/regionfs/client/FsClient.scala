@@ -26,7 +26,7 @@ class FsClient(zks: String) extends Logging {
   val clientFactory = new FsNodeClientFactory(globalConfig);
 
   //get all nodes
-  val cacheNodeWithClients = mutable.Map[RpcAddress, FsNodeClient]()
+  val cacheNodeWithClients = mutable.Map[Int, FsNodeClient]()
   val allNodes = mutable.Map[Int, RpcAddress]()
   val ring = new Ring[Int]()
   val nodesWatcher = zookeeper.watchNodeList(
@@ -48,15 +48,18 @@ class FsClient(zks: String) extends Logging {
 
   //get all regions
   //32768->(1,2), 32769->(1), ...
-  val allRegionWithNodes = mutable.Map[Long, ArrayBuffer[Int]]()
+  val allRegionWithNodes = ArrayBuffer[(Long, Int)]();
+  val allRegionsWithListOfNode = mutable.Map[Long, ArrayBuffer[Int]]()
   val regionsWatcher = zookeeper.watchRegionList(
     new ParsedChildNodeEventHandler[(Long, Int)] {
       override def onCreated(t: (Long, Int)): Unit = {
-        allRegionWithNodes.getOrElseUpdate(t._1, ArrayBuffer()) += t._2
+        allRegionWithNodes += t
+        allRegionsWithListOfNode.getOrElseUpdate(t._1, ArrayBuffer()) += t._2
       }
 
       override def onDeleted(t: (Long, Int)): Unit = {
-        allRegionWithNodes -= t._1
+        allRegionWithNodes -= t
+        allRegionsWithListOfNode -= t._1
       }
 
       override def accepts(t: (Long, Int)): Boolean = {
@@ -66,18 +69,9 @@ class FsClient(zks: String) extends Logging {
 
   val writerSelector = new RoundRobinSelector(ring);
 
-  protected def maybeClientOf(nodeId: Int): Option[FsNodeClient] = {
-    allNodes.get(nodeId).map { x =>
-      cacheNodeWithClients.getOrElseUpdate(x, clientFactory.of(x))
-    }
-  }
-
   protected def clientOf(nodeId: Int): FsNodeClient = {
-    maybeClientOf(nodeId).get
-  }
-
-  protected def clientOf(address: RpcAddress): FsNodeClient = {
-    cacheNodeWithClients.getOrElseUpdate(address, clientFactory.of(address))
+    cacheNodeWithClients.getOrElseUpdate(nodeId,
+      clientFactory.of(allNodes(nodeId)))
   }
 
   private def assertNodesNotEmpty() {
@@ -91,37 +85,38 @@ class FsClient(zks: String) extends Logging {
   }
 
   def writeFile(content: ByteBuffer): Future[FileId] = {
-    assertNodesNotEmpty();
-
-    val client = clientOf(writerSelector.select())
+    val client = getWriterClient
     client.writeFile(content)
   }
 
+  def getWriterClient: FsNodeClient = {
+    assertNodesNotEmpty();
+    clientOf(writerSelector.select())
+  }
+
   def readFile[T](fileId: FileId, rpcTimeout: Duration): InputStream = {
-    val client = getSafeClient(fileId)
+    val client = getReaderClient(fileId)
     client.readFile(fileId, rpcTimeout)
   }
 
-  private def getSafeClient[T](fileId: FileId): FsNodeClient = {
+  private def getReaderClient[T](fileId: FileId): FsNodeClient = {
     assertNodesNotEmpty();
     //TODO: secondary up-to-date regions will be used here
     //val nodeId: Int = allRegionWithNodes.get(fileId.regionId).map(_.head).getOrElse((fileId.regionId >> 16).toInt)
     val nodeId: Int = (fileId.regionId >> 16).toInt
-    val maybeClient = maybeClientOf(nodeId);
-    if (maybeClient.isEmpty)
+    if (!allNodes.contains(nodeId))
       throw new WrongFileIdException(fileId);
 
-    maybeClient.get
+    clientOf(nodeId);
   }
 
   private def getMasterClient[T](fileId: FileId): FsNodeClient = {
     assertNodesNotEmpty();
     val nodeId = (fileId.regionId >> 16).toInt;
-    val maybeClient = maybeClientOf(nodeId);
-    if (maybeClient.isEmpty)
+    if (!allNodes.contains(nodeId))
       throw new WrongFileIdException(fileId);
 
-    maybeClient.get
+    clientOf(nodeId);
   }
 
   def deleteFile[T](fileId: FileId): Future[Boolean] = {

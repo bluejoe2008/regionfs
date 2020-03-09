@@ -21,7 +21,7 @@ class GlobalConfig(props: Properties) {
         None
       }
   }
-
+  lazy val minWritableRegions: Int = conf.get("region.min.writable").withDefault(Constants.DEFAULT_MIN_WRITABLE_REGIONS).asInt
   lazy val replicaNum: Int = conf.get("replica.num").withDefault(1).asInt
   lazy val regionSizeLimit: Long = conf.get("region.size.limit").withDefault(Constants.DEFAULT_REGION_SIZE_LIMIT).asLong
   lazy val enableCrc: Boolean = conf.get("blob.crc.enabled").withDefault(true).asBoolean

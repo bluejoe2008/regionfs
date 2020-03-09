@@ -14,55 +14,53 @@ import scala.concurrent.duration.Duration
 class FsAdmin(zks: String) extends FsClient(zks: String) {
   def stat(rpcTimeout: Duration): Stat = {
     Stat {
-      val futures = allNodeWithClients.values.map(
-        _.endPointRef.ask[GetNodeStatResponse](GetNodeStatRequest()))
+      val futures = allNodes.map(x =>
+        clientOf(x._1).endPointRef.ask[GetNodeStatResponse](GetNodeStatRequest()))
 
       futures.map(x => Await.result(x, rpcTimeout).stat).toList
     }
   }
 
   def statNode(nodeId: Int, rpcTimeout: Duration): NodeStat = {
-    val future = allNodeWithClients(nodeId).endPointRef.ask[GetNodeStatResponse](GetNodeStatRequest())
+    val future = clientOf(nodeId).endPointRef.ask[GetNodeStatResponse](GetNodeStatRequest())
     Await.result(future, rpcTimeout).stat
   }
 
   def cleanAllData(rpcTimeout: Duration): Array[RpcAddress] = {
-    val futures = allNodeWithClients.values.map(
-      _.endPointRef.ask[CleanDataResponse](CleanDataRequest()))
+    val futures = allNodes.map(x =>
+      clientOf(x._1).endPointRef.ask[CleanDataResponse](CleanDataRequest()))
 
     futures.map(x => Await.result(x, rpcTimeout).address).toArray
   }
 
   def cleanNodeData(nodeId: Int, rpcTimeout: Duration): RpcAddress = {
-    val future = allNodeWithClients(nodeId).endPointRef.ask[CleanDataResponse](CleanDataRequest())
+    val future = clientOf(nodeId).endPointRef.ask[CleanDataResponse](CleanDataRequest())
     Await.result(future, Duration.Inf).address
   }
 
   def shutdownAllNodes(rpcTimeout: Duration): Array[(Int, RpcAddress)] = {
-    val res = allNodeWithClients.map(x => x._1 -> x._2.remoteAddress)
+    allNodes.map(x =>
+      clientOf(x._1).endPointRef.ask[ShutdownResponse](ShutdownRequest()))
 
-    allNodeWithClients.values.map(
-      _.endPointRef.ask[ShutdownResponse](ShutdownRequest()))
-
-    res.toArray
+    allNodes.toArray
   }
 
   def shutdownNode(nodeId: Int, rpcTimeout: Duration): (Int, RpcAddress) = {
-    val client = allNodeWithClients(nodeId)
+    val client = clientOf(nodeId)
     client.endPointRef.ask[ShutdownResponse](ShutdownRequest(), rpcTimeout)
     nodeId -> client.remoteAddress
   }
 
   def greet(nodeId: Int, rpcTimeout: Duration): (Int, RpcAddress) = {
-    val future = allNodeWithClients(nodeId).endPointRef.ask[GreetingResponse](GreetingRequest("I am here!!"))
+    val future = clientOf(nodeId).endPointRef.ask[GreetingResponse](GreetingRequest("I am here!!"))
     nodeId -> Await.result(future, rpcTimeout).address
   }
 
   def listFiles(rpcTimeout: Duration): Iterator[(FileId, Long)] = {
-    val iter = allNodeWithClients.values.iterator
+    val iter = allNodes.iterator
     IteratorUtils.concatIterators { (index) =>
       if (iter.hasNext) {
-        Some(iter.next().endPointRef.getChunkedStream[ListFileResponseDetail](
+        Some(clientOf(iter.next()._1).endPointRef.getChunkedStream[ListFileResponseDetail](
           ListFileRequest(), rpcTimeout).map(_.result).iterator)
       }
       else {

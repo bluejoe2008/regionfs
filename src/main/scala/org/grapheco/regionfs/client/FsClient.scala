@@ -26,17 +26,18 @@ class FsClient(zks: String) extends Logging {
   val clientFactory = new FsNodeClientFactory(globalConfig);
 
   //get all nodes
-  val allNodeWithClients = mutable.Map[Int, FsNodeClient]()
+  val cacheNodeWithClients = mutable.Map[RpcAddress, FsNodeClient]()
+  val allNodes = mutable.Map[Int, RpcAddress]()
   val ring = new Ring[Int]()
   val nodesWatcher = zookeeper.watchNodeList(
     new ParsedChildNodeEventHandler[(Int, RpcAddress)] {
       override def onCreated(t: (Int, RpcAddress)): Unit = {
-        allNodeWithClients += t._1 -> (clientFactory.of(t._2))
+        allNodes += t
         ring += t._1
       }
 
       override def onDeleted(t: (Int, RpcAddress)): Unit = {
-        allNodeWithClients -= t._1
+        allNodes -= t._1
         ring -= t._1
       }
 
@@ -63,10 +64,24 @@ class FsClient(zks: String) extends Logging {
       }
     })
 
-  val writerSelector = new RoundRobinSelector(ring, allNodeWithClients);
+  val writerSelector = new RoundRobinSelector(ring);
+
+  protected def maybeClientOf(nodeId: Int): Option[FsNodeClient] = {
+    allNodes.get(nodeId).map { x =>
+      cacheNodeWithClients.getOrElseUpdate(x, clientFactory.of(x))
+    }
+  }
+
+  protected def clientOf(nodeId: Int): FsNodeClient = {
+    maybeClientOf(nodeId).get
+  }
+
+  protected def clientOf(address: RpcAddress): FsNodeClient = {
+    cacheNodeWithClients.getOrElseUpdate(address, clientFactory.of(address))
+  }
 
   private def assertNodesNotEmpty() {
-    if (allNodeWithClients.isEmpty) {
+    if (allNodes.isEmpty) {
       if (logger.isTraceEnabled) {
         logger.trace(zookeeper.readNodeList().mkString(","))
       }
@@ -78,7 +93,7 @@ class FsClient(zks: String) extends Logging {
   def writeFile(content: ByteBuffer): Future[FileId] = {
     assertNodesNotEmpty();
 
-    val client = writerSelector.select()
+    val client = clientOf(writerSelector.select())
     client.writeFile(content)
   }
 
@@ -92,7 +107,7 @@ class FsClient(zks: String) extends Logging {
     //TODO: secondary up-to-date regions will be used here
     //val nodeId: Int = allRegionWithNodes.get(fileId.regionId).map(_.head).getOrElse((fileId.regionId >> 16).toInt)
     val nodeId: Int = (fileId.regionId >> 16).toInt
-    val maybeClient = allNodeWithClients.get(nodeId);
+    val maybeClient = maybeClientOf(nodeId);
     if (maybeClient.isEmpty)
       throw new WrongFileIdException(fileId);
 
@@ -102,7 +117,7 @@ class FsClient(zks: String) extends Logging {
   private def getMasterClient[T](fileId: FileId): FsNodeClient = {
     assertNodesNotEmpty();
     val nodeId = (fileId.regionId >> 16).toInt;
-    val maybeClient = allNodeWithClients.get(nodeId);
+    val maybeClient = maybeClientOf(nodeId);
     if (maybeClient.isEmpty)
       throw new WrongFileIdException(fileId);
 
@@ -212,14 +227,12 @@ class FsNodeClient(globalConfig: GlobalConfig, val endPointRef: HippoEndpointRef
 }
 
 trait FsNodeSelector {
-  def select(): FsNodeClient;
+  def select(): Int;
 }
 
-class RoundRobinSelector(nodes: Ring[Int], map: mutable.Map[Int, FsNodeClient]) extends FsNodeSelector {
-  def select(): FsNodeClient = {
-    nodes.synchronized {
-      map(nodes !)
-    }
+class RoundRobinSelector(nodes: Ring[Int]) extends FsNodeSelector {
+  def select(): Int = {
+    nodes !
   }
 }
 

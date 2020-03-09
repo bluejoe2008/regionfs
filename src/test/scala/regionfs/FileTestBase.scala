@@ -32,7 +32,6 @@ class FileTestBase extends Logging {
 
   @Before
   def setup() {
-    System.err.println(s"@Before ...");
     FileUtils.deleteDirectory(new File("./testdata/nodes"));
     Profiler.enableTiming = true
     new GlobalConfigWriter().write(con.GLOBAL_SETTING);
@@ -52,7 +51,6 @@ class FileTestBase extends Logging {
       try {
         new File(conf("data.storeDir")).mkdirs()
         servers += FsNodeServer.create(conf)
-        //Thread.sleep(2000)
       }
       catch {
         case e: Throwable => {
@@ -82,8 +80,6 @@ class FileTestBase extends Logging {
 
   @After
   def after(): Unit = {
-    System.err.println(s"@After ...");
-
     if (client != null)
       client.close
 

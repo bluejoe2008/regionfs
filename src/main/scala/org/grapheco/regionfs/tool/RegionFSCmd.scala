@@ -139,10 +139,11 @@ class StatAllShellCommandExecutor extends ShellCommandExecutor {
 
   override def run(commandLine: CommandLine): Unit = {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
+    println(s"[region-fs]")
     admin.stat(Duration("4s")).nodeStats.foreach { x =>
-      println(s"[node-${x.nodeId}](address=${x.address})")
+      println(s"    ╰┈┈┈[node-${x.nodeId}](address=${x.address})")
       x.regionStats.foreach { y =>
-        println(s"    ╰┈┈┈[region-${y.regionId}](file number=${y.fileCount}, total size=${y.totalSize})")
+        println(s"    ┆       ╰┈┈┈[region-${y.regionId}](file number=${y.fileCount}, total size=${y.totalSize})")
       }
     }
 

@@ -14,6 +14,8 @@ import org.grapheco.commons.util.Logging
 import org.grapheco.regionfs.GlobalConfig
 import org.grapheco.regionfs.server.{Region, RegionData}
 
+import scala.collection.JavaConversions
+
 /**
   * Created by bluejoe on 2020/2/26.
   */
@@ -104,6 +106,14 @@ class ZooKeeperClient(curator: CuratorFramework) {
     curator.create().orSetData().forPath("/regionfs/config", bytes)
   }
 
+  def readNodeList(): Iterable[String] = {
+    JavaConversions.iterableAsScalaIterable(curator.getChildren.forPath("/regionfs/nodes"))
+  }
+
+  def readRegionList(): Iterable[String] = {
+    JavaConversions.iterableAsScalaIterable(curator.getChildren.forPath("/regionfs/regions"))
+  }
+
   /**
     * watches on nodes registered in zookeeper
     * filters node list by parameter filter
@@ -148,6 +158,10 @@ class ZooKeeperClient(curator: CuratorFramework) {
           handler.onCreated(t)
       }
 
+      def onInitialized(batch: Iterable[ChildData]): Unit = {
+        batch.foreach(onChildAdded(_))
+      }
+
       override def onChildRemoved(data: ChildData): Unit = {
         val t = parse(data)
         if (handler.accepts(t))
@@ -175,7 +189,10 @@ class ZooKeeperClient(curator: CuratorFramework) {
       }
     }, pool);
 
-    childrenCache.start(StartMode.POST_INITIALIZED_EVENT);
+    //read initial cache
+    childrenCache.start(StartMode.BUILD_INITIAL_CACHE);
+    //parse initial cache
+    handler.onInitialized(JavaConversions.iterableAsScalaIterable(childrenCache.getCurrentData))
 
     new Closeable {
       override def close(): Unit = {
@@ -187,6 +204,8 @@ class ZooKeeperClient(curator: CuratorFramework) {
 
 trait ChildNodeEventHandler {
   def onChildAdded(data: ChildData);
+
+  def onInitialized(batch: Iterable[ChildData]);
 
   def onChildRemoved(data: ChildData);
 }

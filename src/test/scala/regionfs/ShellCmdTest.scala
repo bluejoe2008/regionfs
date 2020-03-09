@@ -11,6 +11,7 @@ class ShellCmdTest extends FileTestBase {
 
   @Test
   def testStat(): Unit = {
+    RegionFSCmd.main("stat-all -zk localhost:2181".split(" "));
     RegionFSCmd.main("put -zk localhost:2181 ./pom.xml ./README.md".split(" "));
     RegionFSCmd.main("stat-all -zk localhost:2181".split(" "));
   }

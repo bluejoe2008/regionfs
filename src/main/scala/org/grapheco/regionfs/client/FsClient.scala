@@ -67,6 +67,10 @@ class FsClient(zks: String) extends Logging {
 
   private def assertNodesNotEmpty() {
     if (allNodeWithClients.isEmpty) {
+      if (logger.isTraceEnabled) {
+        logger.trace(zookeeper.readNodeList().mkString(","))
+      }
+
       throw new RegionFsClientException("no serving data nodes")
     }
   }

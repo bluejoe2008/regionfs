@@ -17,7 +17,7 @@ import scala.concurrent.{Await, Future}
 /**
   * Created by bluejoe on 2019/8/23.
   */
-class FileTestBase extends SingleNode with Logging {
+abstract class FileTestBase extends TestCondition with Logging {
   val nullRegionEventListener = new RegionEventListener {
     override def handleRegionEvent(event: RegionEvent): Unit = {}
   }

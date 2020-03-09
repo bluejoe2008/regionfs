@@ -9,7 +9,7 @@ import scala.concurrent.duration.Duration
 /**
   * Created by bluejoe on 2020/2/8.
   */
-class FileAdminTest extends FileTestBase {
+class FileAdminTest extends FileTestBase with SingleNode {
   var admin: FsAdmin = null
 
   @Before

@@ -13,7 +13,7 @@ import org.junit.{Assert, Test}
 /**
   * Created by bluejoe on 2020/2/11.
   */
-class LocalRegionFileIOTest extends FileTestBase {
+class LocalRegionFileIOTest extends FileTestBase with SingleNode {
   @Test
   def testRegionIO(): Unit = {
     val rm = new RegionManager(1, new File("./testdata/nodes/node1"),

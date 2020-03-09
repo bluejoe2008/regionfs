@@ -15,7 +15,7 @@ import scala.concurrent.duration.Duration
 /**
   * Created by bluejoe on 2019/8/23.
   */
-class FsNodeClientTest extends FileTestBase {
+class FsNodeClientTest extends FileTestBase with SingleNode {
 
   var nodeClient: FsNodeClient = null
 

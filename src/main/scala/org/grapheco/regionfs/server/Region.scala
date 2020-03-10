@@ -4,8 +4,6 @@ import java.io._
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.util.concurrent.atomic.AtomicLong
-
-import io.netty.buffer.{ByteBuf, Unpooled}
 import org.grapheco.commons.util.Logging
 import org.grapheco.regionfs.client.RegionFsClientException
 import org.grapheco.regionfs.util.{Cache, CrcUtils, FixSizedCache}
@@ -101,32 +99,24 @@ class RegionMetaStore(conf: RegionConfig) {
     cache.put(localId, Some(MetaData(localId, offset, length, crc32)))
   }
 
-  def overwrite(buf: ByteBuffer): Unit = {
-    fptr.synchronized {
-      fptr.setLength(0)
-      fptr.seek(0)
-      fptr.getChannel.write(buf)
-    }
-  }
-
   def close(): Unit = {
     fptr.close()
     fptr.close()
   }
 
-  val cursor = new LocalIdGenerator(new AtomicLong(fileMetaFile.length() / Constants.METADATA_ENTRY_LENGTH_WITH_PADDING))
+  val cursor = new Cursor(new AtomicLong(fileMetaFile.length() / Constants.METADATA_ENTRY_LENGTH_WITH_PADDING))
 }
 
-class LocalIdGenerator(counterLocalId: AtomicLong) {
+class Cursor(position: AtomicLong) {
   def offerNextId(consume: (Long) => Unit): Long = {
-    counterLocalId.synchronized {
-      val id = counterLocalId.get();
+    position.synchronized {
+      val id = position.get();
       consume(id)
-      counterLocalId.incrementAndGet()
+      position.incrementAndGet()
     }
   }
 
-  def current = counterLocalId.get()
+  def current = position.get()
 
   def close(): Unit = {
   }
@@ -179,13 +169,6 @@ class RegionBodyStore(conf: RegionConfig) {
       readerChannel.map(FileChannel.MapMode.READ_ONLY, offset, length);
     }
   }
-
-  def copy(offset: Long, tail: Long): ByteBuffer = {
-    readerChannel.synchronized {
-      readerChannel.position(offset)
-      readerChannel.map(FileChannel.MapMode.READ_ONLY, offset, tail - offset + 1);
-    }
-  }
 }
 
 /**
@@ -197,9 +180,9 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
   val isPrimary = (regionId >> 16) == nodeId
 
   //metadata file
-  lazy val fbody = new RegionBodyStore(conf)
-  lazy val fmeta = new RegionMetaStore(conf)
-  lazy val cursor = fmeta.cursor
+  private lazy val fbody = new RegionBodyStore(conf)
+  private lazy val fmeta = new RegionMetaStore(conf)
+  private lazy val cursor = fmeta.cursor
 
   def revision = cursor.current
 

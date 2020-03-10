@@ -9,7 +9,7 @@ class Ring[T]() {
   private val _buffer = ArrayBuffer[T]();
   private var pos = 0;
 
-  def clear(): Unit ={
+  def clear(): Unit = {
     _buffer.clear()
   }
 
@@ -38,5 +38,19 @@ class Ring[T]() {
     pos += 1
 
     t
+  }
+
+  def !(filter: (T) => Boolean): Option[T] = {
+    var n = _buffer.length;
+    var t: T = null.asInstanceOf[T];
+    do {
+      t = this.!()
+      n -= 1;
+    } while (!filter(t) && n > 0)
+
+    if (n == 0)
+      None
+    else
+      Some(t);
   }
 }

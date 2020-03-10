@@ -89,23 +89,18 @@ class FsClient(zks: String) extends Logging {
   def writeFile(content: ByteBuffer): Future[FileId] = {
     val client = getWriterClient
     val (regionId: Long, fileId: FileId, nodes: Array[Int]) =
-      timing(true) {
-        Await.result(client.prepareToWriteFile(content), Duration("1s"))
-      }
+      Await.result(client.prepareToWriteFile(content), Duration("1s"))
 
     val crc32 =
-      timing(true) {
-        if (globalConfig.enableCrc) {
-          CrcUtils.computeCrc32(content.duplicate())
-        }
-        else {
-          0
-        }
+      if (globalConfig.enableCrc) {
+        CrcUtils.computeCrc32(content.duplicate())
+      }
+      else {
+        0
       }
 
-    val futures = timing(true) {
+    val futures =
       nodes.map(clientOf(_).writeFile(regionId, crc32, fileId, content.duplicate()))
-    }
 
     Future {
       //TODO: consistency check
@@ -126,20 +121,24 @@ class FsClient(zks: String) extends Logging {
   }
 
   private def getReaderClient[T](fileId: FileId): FsNodeClient = {
-    assertNodesNotEmpty();
-    //TODO: secondary up-to-date regions will be used here
-    //val nodeId: Int = allRegionWithNodes.get(fileId.regionId).map(_.head).getOrElse((fileId.regionId >> 16).toInt)
-    val nodeId: Int = (fileId.regionId >> 16).toInt
-    if (!allNodes.contains(nodeId))
+    assertNodesNotEmpty()
+
+    val rwlon = allRegionsWithListOfNode.get(fileId.regionId)
+    if (rwlon.isEmpty)
       throw new WrongFileIdException(fileId);
 
-    clientOf(nodeId);
+    val map = rwlon.get.map((_, 1)).toMap
+    val maybeNodeId = ring.!(map.contains(_))
+    if (maybeNodeId.isEmpty)
+      throw new WrongFileIdException(fileId);
+
+    clientOf(maybeNodeId.get);
   }
 
   def deleteFile[T](fileId: FileId): Future[Boolean] = {
     val futures = allRegionsWithListOfNode(fileId.regionId).map(clientOf(_).deleteFile(fileId))
 
-    if(futures.isEmpty)
+    if (futures.isEmpty)
       throw new WrongFileIdException(fileId);
 
     Future {

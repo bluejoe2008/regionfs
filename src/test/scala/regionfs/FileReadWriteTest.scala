@@ -6,8 +6,9 @@ import org.apache.commons.io.IOUtils
 import org.grapheco.commons.util.Profiler._
 import org.junit.{Assert, Test}
 
-import scala.concurrent.Await
+import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration
+import scala.concurrent.{Await, Future}
 
 /**
   * Created by bluejoe on 2019/8/23.
@@ -36,8 +37,30 @@ class FileReadWriteTest extends FileTestBase {
 
     for (i <- Array(999, 9999, 99999, 999999, 9999999)) {
       println(s"writing $i bytes...")
-      timing(true) {
+      val ids = timing(true) {
         (1 to 10).map(_ => super.writeFileAsync(new File(s"./testdata/inputs/$i"))).map(Await.result(_, Duration.Inf))
+      }
+    }
+  }
+
+  @Test
+  def testReadAsync(): Unit = {
+    timing(true) {
+      (1 to 10).map(_ => super.writeFileAsync("hello, world")).map(Await.result(_, Duration.Inf))
+    }
+
+    for (i <- Array(999, 9999, 99999, 999999, 9999999)) {
+      val id = super.writeFile(new File(s"./testdata/inputs/$i"))
+
+      println(s"reading $i bytes...")
+      timing(true) {
+        val futures = (1 to 10).map(x =>
+          Future {
+            IOUtils.toByteArray(client.readFile(id, Duration("4s")))
+          }
+        )
+
+        futures.foreach(Await.result(_, Duration("4s")))
       }
     }
   }

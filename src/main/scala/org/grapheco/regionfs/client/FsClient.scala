@@ -8,7 +8,6 @@ import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.{HippoEndpointRef, HippoRpcEnv, HippoRpcEnvFactory}
 import net.neoremind.kraps.rpc.{RpcAddress, RpcEnvClientConfig}
 import org.grapheco.commons.util.Logging
-import org.grapheco.commons.util.Profiler._
 import org.grapheco.regionfs._
 import org.grapheco.regionfs.util._
 
@@ -104,9 +103,7 @@ class FsClient(zks: String) extends Logging {
 
     Future {
       //TODO: consistency check
-      futures.map(x => timing(true) {
-        Await.result(x, Duration.Inf)
-      }).head
+      futures.map(x => Await.result(x, Duration.Inf)).head
     }
   }
 

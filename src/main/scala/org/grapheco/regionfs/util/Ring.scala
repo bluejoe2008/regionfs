@@ -31,7 +31,7 @@ class Ring[T]() {
   }
 
   def !(): T = {
-    if (pos == _buffer.size)
+    if (pos >= _buffer.size)
       pos = 0;
 
     val t = _buffer(pos)
@@ -46,9 +46,9 @@ class Ring[T]() {
     do {
       t = this.!()
       n -= 1;
-    } while (!filter(t) && n > 0)
+    } while (!filter(t) && n >= 0)
 
-    if (n == 0)
+    if (n < 0)
       None
     else
       Some(t);

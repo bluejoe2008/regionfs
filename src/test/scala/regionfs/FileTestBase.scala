@@ -63,6 +63,7 @@ class FileTestBase extends Logging {
     admin = new FsAdmin(con.zookeeperString)
     client = admin
 
+    new File(s"./testdata/inputs").mkdirs()
     for (i <- BLOB_LENGTH) {
       makeFile(new File(s"./testdata/inputs/$i"), i)
     }

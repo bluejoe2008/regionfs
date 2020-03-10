@@ -11,7 +11,7 @@ import org.junit.Test
 /**
   * Created by bluejoe on 2020/3/3.
   */
-class CrcTest {
+class CrcTest extends FileTestBase {
   Profiler.enableTiming = true
 
   @Test

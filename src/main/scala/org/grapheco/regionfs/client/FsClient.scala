@@ -8,14 +8,15 @@ import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.{HippoEndpointRef, HippoRpcEnv, HippoRpcEnvFactory}
 import net.neoremind.kraps.rpc.{RpcAddress, RpcEnvClientConfig}
 import org.grapheco.commons.util.Logging
+import org.grapheco.commons.util.Profiler._
 import org.grapheco.regionfs._
 import org.grapheco.regionfs.util._
 
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.Future
 import scala.concurrent.duration.Duration
+import scala.concurrent.{Await, Future}
 
 /**
   * a client to regionfs servers
@@ -26,7 +27,7 @@ class FsClient(zks: String) extends Logging {
   val clientFactory = new FsNodeClientFactory(globalConfig);
 
   //get all nodes
-  val cacheNodeWithClients = mutable.Map[Int, FsNodeClient]()
+  val cachedClients = mutable.Map[Int, FsNodeClient]()
   val allNodes = mutable.Map[Int, RpcAddress]()
   val ring = new Ring[Int]()
   val nodesWatcher = zookeeper.watchNodeList(
@@ -48,8 +49,9 @@ class FsClient(zks: String) extends Logging {
 
   //get all regions
   //32768->(1,2), 32769->(1), ...
-  val allRegionWithNodes = ArrayBuffer[(Long, Int)]();
+  val allRegionWithNodes = ArrayBuffer[(Long, Int)]()
   val allRegionsWithListOfNode = mutable.Map[Long, ArrayBuffer[Int]]()
+
   val regionsWatcher = zookeeper.watchRegionList(
     new ParsedChildNodeEventHandler[(Long, Int)] {
       override def onCreated(t: (Long, Int)): Unit = {
@@ -70,7 +72,7 @@ class FsClient(zks: String) extends Logging {
   val writerSelector = new RoundRobinSelector(ring);
 
   protected def clientOf(nodeId: Int): FsNodeClient = {
-    cacheNodeWithClients.getOrElseUpdate(nodeId,
+    cachedClients.getOrElseUpdate(nodeId,
       clientFactory.of(allNodes(nodeId)))
   }
 
@@ -86,7 +88,31 @@ class FsClient(zks: String) extends Logging {
 
   def writeFile(content: ByteBuffer): Future[FileId] = {
     val client = getWriterClient
-    client.writeFile(content)
+    val (regionId: Long, fileId: FileId, nodes: Array[Int]) =
+      timing(true) {
+        Await.result(client.prepareToWriteFile(content), Duration("1s"))
+      }
+
+    val crc32 =
+      timing(true) {
+        if (globalConfig.enableCrc) {
+          CrcUtils.computeCrc32(content.duplicate())
+        }
+        else {
+          0
+        }
+      }
+
+    val futures = timing(true) {
+      nodes.map(clientOf(_).writeFile(regionId, crc32, fileId, content.duplicate()))
+    }
+
+    Future {
+      //TODO: consistency check
+      futures.map(x => timing(true) {
+        Await.result(x, Duration("10s"))
+      }).head
+    }
   }
 
   def getWriterClient: FsNodeClient = {
@@ -179,18 +205,17 @@ class FsNodeClient(globalConfig: GlobalConfig, val endPointRef: HippoEndpointRef
     }
   }
 
-  def writeFile(content: ByteBuffer): Future[FileId] = {
+  def prepareToWriteFile(content: ByteBuffer): Future[(Long, FileId, Array[Int])] = {
     safeCall {
-      val crc32 =
-        if (globalConfig.enableCrc) {
-          CrcUtils.computeCrc32(content.duplicate())
-        }
-        else {
-          0
-        }
+      endPointRef.ask[PrepareToWriteFileResponse](
+        PrepareToWriteFileRequest(content.remaining())).map(x => (x.regionId, x.fileId, x.nodes))
+    }
+  }
 
+  def writeFile(regionId: Long, crc32: Long, fileId: FileId, content: ByteBuffer): Future[FileId] = {
+    safeCall {
       endPointRef.askWithStream[SendFileResponse](
-        SendFileRequest(content.remaining(), crc32),
+        SendFileRequest(regionId, fileId, content.remaining(), crc32),
         (buf: ByteBuf) => {
           buf.writeBytes(content)
         }).map(_.fileId)
@@ -208,14 +233,6 @@ class FsNodeClient(globalConfig: GlobalConfig, val endPointRef: HippoEndpointRef
     safeCall {
       endPointRef.getInputStream(
         ReadFileRequest(fileId.regionId, fileId.localId),
-        rpcTimeout)
-    }
-  }
-
-  def getPatchInputStream(regionId: Long, revision: Long, rpcTimeout: Duration): InputStream = {
-    safeCall {
-      endPointRef.getInputStream(
-        GetRegionPatchRequest(regionId, revision),
         rpcTimeout)
     }
   }

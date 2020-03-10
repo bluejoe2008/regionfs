@@ -118,7 +118,7 @@ class RegionMetaStore(conf: RegionConfig) {
 }
 
 class LocalIdGenerator(counterLocalId: AtomicLong) {
-  def consumeNextId(consume: (Long) => Unit): Long = {
+  def offerNextId(consume: (Long) => Unit): Long = {
     counterLocalId.synchronized {
       val id = counterLocalId.get();
       consume(id)
@@ -207,6 +207,8 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
 
   def length = fbody.fileBodyLength.get()
 
+  def peekNextFileId() = FileId(regionId, cursor.current)
+
   def listFiles(): Iterator[(FileId, Long)] = {
     fmeta.iterator.map(meta => FileId.make(regionId, meta.localId) -> meta.length)
   }
@@ -225,13 +227,16 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
       fbody.write(buf, crc32)
 
     //get local id
-    cursor.consumeNextId((id: Long) => {
+    var localId = -1L
+    cursor.offerNextId((id: Long) => {
+      localId = id
       fmeta.write(id, offset, length, crc32)
       if (logger.isTraceEnabled())
         logger.trace(s"[region-${regionId}@${nodeId}] written: localId=$id, length=${length}, actual=${actualWritten}")
-
-      listener.handleRegionEvent(new WriteRegionEvent(this))
     })
+
+    //listener.handleRegionEvent(new WriteRegionEvent(this))
+    localId
   }
 
   def close(): Unit = {
@@ -245,61 +250,6 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
     maybeMeta.map(meta => fbody.read(meta.offset, meta.length.toInt))
   }
 
-  def applyPatch(is: InputStream): Unit = {
-    val dis = new DataInputStream(is)
-    val mark = dis.readByte()
-    mark match {
-      case Constants.MARK_GET_REGION_PATCH_ALREADY_UP_TO_DATE =>
-
-      case Constants.MARK_GET_REGION_PATCH_SERVER_IS_BUSY =>
-        val regionId = dis.readLong()
-        if (logger.isDebugEnabled)
-          logger.debug(s"server is busy now: ${regionId >> 16}")
-
-      case Constants.MARK_GET_REGION_PATCH_OK =>
-        val regionId = dis.readLong()
-        val lastRevision = dis.readLong()
-        val lenMeta = dis.readLong()
-        val lenBody = dis.readLong()
-
-        val buf2 = Unpooled.buffer(1024)
-        buf2.writeBytes(is, lenBody.toInt)
-        fbody.append(buf2.nioBuffer())
-
-        val buf1 = Unpooled.buffer(1024)
-        buf1.writeBytes(is, lenMeta.toInt)
-        fmeta.overwrite(buf1.nioBuffer())
-
-        if (logger.isDebugEnabled)
-          logger.debug(s"[region-${regionId}@${nodeId}] updated: .meta ${lenMeta} bytes, .body ${lenBody} bytes")
-    }
-  }
-
-  def buildPatch(since: Long): ByteBuf = {
-    val bytebuf = Unpooled.compositeBuffer()
-    val rev = revision
-
-    if (rev == since) {
-      bytebuf.writeByte(Constants.MARK_GET_REGION_PATCH_ALREADY_UP_TO_DATE).writeLong(regionId)
-    }
-    else {
-      //current version, length_of_metadata, body
-      //write .metadata
-      //write .body
-      val meta1 = fmeta.read(since).get
-      val meta2 = fmeta.read(rev).get
-
-      val metabuf = Unpooled.wrappedBuffer(fmeta.copy(since, rev))
-      val bodybuf = Unpooled.wrappedBuffer(fbody.copy(meta1.offset, meta2.tail))
-
-      bytebuf.writeByte(Constants.MARK_GET_REGION_PATCH_OK).writeLong(regionId).writeLong(rev).writeLong(metabuf.readableBytes()).writeLong(bodybuf.readableBytes())
-
-      bytebuf.addComponent(metabuf)
-      bytebuf.addComponent(bodybuf)
-    }
-    bytebuf
-  }
-
   def delete(localId: Long): Unit = {
     fmeta.markDeleted(localId)
   }
@@ -310,15 +260,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
   */
 class RegionManager(nodeId: Int, storeDir: File, globalConfig: GlobalConfig, listener: RegionEventListener) extends Logging {
   val regions = mutable.Map[Long, Region]()
-  lazy val regionIdSerial = new AtomicLong(0)
-
-  def get(id: Long): Option[Region] = regions.get(id)
-
-  def reload(region: Region): Region = {
-    val newRegion = new Region(nodeId, region.regionId, region.conf, listener)
-    regions(region.regionId) = newRegion
-    newRegion
-  }
+  val regionIdSerial = new AtomicLong(0)
 
   /*
    layout of storeDir
@@ -350,6 +292,14 @@ class RegionManager(nodeId: Int, storeDir: File, globalConfig: GlobalConfig, lis
 
   def createNewReplica(regionId: Long) = {
     _createNewRegion(regionId);
+  }
+
+  def get(id: Long): Option[Region] = regions.get(id)
+
+  def reload(region: Region): Region = {
+    val newRegion = new Region(nodeId, region.regionId, region.conf, listener)
+    regions(region.regionId) = newRegion
+    newRegion
   }
 
   private def _createNewRegion(regionId: Long) = {

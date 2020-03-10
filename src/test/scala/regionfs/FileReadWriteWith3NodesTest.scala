@@ -13,7 +13,7 @@ class FileReadWriteWith3NodesTest extends FileReadWriteTest {
   override val con = new MultiNode
 
   private def assertRegion(nodeId: Int, regionId: Long)(op: (Region) => Unit) = {
-    val region = servers(nodeId).localRegionManager.regions(regionId)
+    val region = servers(nodeId - 1).localRegionManager.regions(regionId)
     op(region)
   }
 
@@ -34,23 +34,6 @@ class FileReadWriteWith3NodesTest extends FileReadWriteTest {
         Assert.assertEquals(true, region.isPrimary);
     }
 
-    //not sync-ed
-    assertRegion(2, fid1.regionId) {
-      (region) =>
-        Assert.assertEquals(65537, region.regionId);
-        Assert.assertEquals(0, region.fileCount);
-        Assert.assertEquals(0, region.revision);
-        Assert.assertEquals(false, region.isPrimary);
-    }
-    assertRegion(3, fid1.regionId) {
-      (region) =>
-        Assert.assertEquals(65537, region.regionId);
-        Assert.assertEquals(0, region.fileCount);
-        Assert.assertEquals(0, region.revision);
-        Assert.assertEquals(false, region.isPrimary);
-    }
-
-    Thread.sleep(2000);
     //now, region should be sync-ed
     assertRegion(2, fid1.regionId) {
       (region) =>
@@ -78,16 +61,7 @@ class FileReadWriteWith3NodesTest extends FileReadWriteTest {
         Assert.assertEquals(1, region.revision);
         Assert.assertEquals(true, region.isPrimary);
     }
-    assertRegion(1, fid2.regionId) {
-      (region) =>
-        Assert.assertEquals(131073, region.regionId);
-        Assert.assertEquals(0, region.fileCount);
-        Assert.assertEquals(0, region.revision);
-        Assert.assertEquals(false, region.isPrimary);
-    }
 
-    Thread.sleep(2000);
-    //now, region should be sync-ed
     assertRegion(1, fid2.regionId) {
       (region) =>
         Assert.assertEquals(131073, region.regionId);

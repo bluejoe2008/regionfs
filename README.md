@@ -37,8 +37,7 @@ this will create `regionfs-<version>.jar` in `./target`
 ```
 zookeeper.address=localhost:2181
 replica.num=1
-#region.size.limit=1073741824
-blob.crc.enabled=false
+blob.crc.enabled=true
 ```
 
 2. start gloal config setting
@@ -55,7 +54,7 @@ bin/rfs init -conf ./conf/global.conf
 zookeeper.address=localhost:2181
 server.host=localhost
 server.port=1224
-data.storeDir=../data/node/
+data.storeDir=/data/node/
 node.id=1
 ```
 
@@ -92,13 +91,22 @@ commands:
 ## configuration
 
 ### global.conf
-key|type|default value
--|-|-
-region.min.writable|Int|3
-replica.num|Int|1(no duplicates)
-region.size.limit|Long|20*1024*1024*1024(20G)
-blob.crc.enabled|Boolean|true
-region.version.check.interval|Long|60000 * 60(1hour)
+key|type|default value|description
+-|-|-|-
+region.min.writable|Int|3|minimized writable region number
+replica.num|Int|1(no duplicates)|replica number of region
+region.size.limit|Long|20*1024*1024*1024(20G)|upper limit of region size
+blob.crc.enabled|Boolean|true|if use checksum of data on transmission
+region.version.check.interval|Long|60000 * 60(1hour)|interval time of region version checking
+
+### node.conf
+key|type|default value|description
+-|-|-|-
+zookeeper.address|String|<none>|e.g,localhost:2181
+server.host|String|localhost|
+server.port|Int|<none>|e.g,1224
+data.storeDir|String|<none>|e.g, /data/node/
+node.id|Int|<none>|unique id of current server, e.g, 1
 
 ## using FsClient
 

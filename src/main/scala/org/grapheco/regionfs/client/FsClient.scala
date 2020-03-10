@@ -110,7 +110,7 @@ class FsClient(zks: String) extends Logging {
     Future {
       //TODO: consistency check
       futures.map(x => timing(true) {
-        Await.result(x, Duration("10s"))
+        Await.result(x, Duration.Inf)
       }).head
     }
   }
@@ -136,18 +136,15 @@ class FsClient(zks: String) extends Logging {
     clientOf(nodeId);
   }
 
-  private def getMasterClient[T](fileId: FileId): FsNodeClient = {
-    assertNodesNotEmpty();
-    val nodeId = (fileId.regionId >> 16).toInt;
-    if (!allNodes.contains(nodeId))
+  def deleteFile[T](fileId: FileId): Future[Boolean] = {
+    val futures = allRegionsWithListOfNode(fileId.regionId).map(clientOf(_).deleteFile(fileId))
+
+    if(futures.isEmpty)
       throw new WrongFileIdException(fileId);
 
-    clientOf(nodeId);
-  }
-
-  def deleteFile[T](fileId: FileId): Future[Boolean] = {
-    val client = getMasterClient(fileId)
-    client.deleteFile(fileId)
+    Future {
+      futures.map(Await.result(_, Duration.Inf)).head
+    }
   }
 
   def close = {

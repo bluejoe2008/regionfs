@@ -1,7 +1,7 @@
 package org.grapheco.regionfs
 
 import net.neoremind.kraps.rpc.RpcAddress
-import org.grapheco.regionfs.client.{RegionStat, NodeStat}
+import org.grapheco.regionfs.client.NodeStat
 
 /**
   * Created by bluejoe on 2019/8/23.
@@ -46,7 +46,7 @@ case class ListFileResponseDetail(result: (FileId, Long)) {
 
 }
 
-case class SendFileRequest(totalLength: Long, crc32: Long) {
+case class SendFileRequest(regionId: Long, fileId: FileId, totalLength: Long, crc32: Long) {
 
 }
 
@@ -74,6 +74,10 @@ case class GetNodeStatResponse(stat: NodeStat) {
 
 }
 
-case class GetRegionPatchRequest(regionId: Long, since: Long) {
+case class PrepareToWriteFileRequest(fileSize: Long) {
+
+}
+
+case class PrepareToWriteFileResponse(regionId: Long, fileId: FileId, nodes: Array[Int]) {
 
 }

@@ -16,7 +16,7 @@ class MultiNode extends TestCondition {
   override val GLOBAL_SETTING = Map[String, String](
     "zookeeper.address" -> zookeeperString,
     "replica.num" -> "3",
-    "region.size.limit" -> "100000000",
+    "region.size.limit" -> "9000000",
     "blob.crc.enabled" -> "true",
     "region.version.check.interval" -> "1000"
   )
@@ -27,7 +27,7 @@ class SingleNode extends TestCondition {
   val GLOBAL_SETTING = Map[String, String](
     "zookeeper.address" -> zookeeperString,
     "replica.num" -> "1",
-    "region.size.limit" -> "100000000",
+    "region.size.limit" -> "9000000",
     "blob.crc.enabled" -> "true",
     "region.version.check.interval" -> "1000"
   )

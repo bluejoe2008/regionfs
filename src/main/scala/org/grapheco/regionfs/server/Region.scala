@@ -134,8 +134,8 @@ class LocalIdGenerator(counterLocalId: AtomicLong) {
 
 class RegionBodyStore(conf: RegionConfig) {
   //region file, one file for each region by far
-  val fileBody = new File(conf.regionDir, "body")
-  val fileBodyLength = new AtomicLong(fileBody.length())
+  private val fileBody = new File(conf.regionDir, "body")
+  val cursor = new AtomicLong(fileBody.length())
   lazy val readerChannel = new RandomAccessFile(fileBody, "r").getChannel
   lazy val appenderChannel = new FileOutputStream(fileBody, true).getChannel
 
@@ -150,7 +150,7 @@ class RegionBodyStore(conf: RegionConfig) {
     }
 
     val written = length + Constants.REGION_FILE_BODY_EOF_LENGTH
-    val offset = fileBodyLength.getAndAdd(written)
+    val offset = cursor.getAndAdd(written)
 
     if (conf.globalConfig.enableCrc) {
       val buf = read(offset, length)
@@ -193,7 +193,7 @@ class RegionBodyStore(conf: RegionConfig) {
   */
 class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listener: RegionEventListener) extends Logging {
   //TODO: archive
-  val isWritable = length <= conf.globalConfig.regionSizeLimit
+  def isWritable = length <= conf.globalConfig.regionSizeLimit
   val isPrimary = (regionId >> 16) == nodeId
 
   //metadata file
@@ -205,7 +205,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
 
   def fileCount = cursor.current
 
-  def length = fbody.fileBodyLength.get()
+  def length = fbody.cursor.get()
 
   def peekNextFileId() = FileId(regionId, cursor.current)
 

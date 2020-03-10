@@ -1,1 +1,1 @@
-java -cp "./conf/:./target/regionfs-0.9.jar" cn.bluejoe.regionfs.tool.RegionFSCmd $@
+java -cp "./conf/:./target/regionfs-0.9-SNAPSHOT.jar" org.grapheco.regionfs.tool.RegionFSCmd $@

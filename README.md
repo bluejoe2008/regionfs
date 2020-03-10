@@ -89,6 +89,17 @@ commands:
 	stat-node           report statistics of a node
 ```
 
+## configuration
+
+### global.conf
+key|type|default value
+-|-|-
+region.min.writable|Int|3
+replica.num|Int|1(no duplicates)
+region.size.limit|Long|20*1024*1024*1024(20G)
+blob.crc.enabled|Boolean|true
+region.version.check.interval|Long|60000 * 60(1hour)
+
 ## using FsClient
 
 add repository in `pom.xml`:
@@ -107,4 +118,4 @@ add repository in `pom.xml`:
       new FileInputStream(src), src.length), Duration.Inf)
 ```
 
-more examples, see https://github.com/bluejoe2008/regionfs/blob/non-kraps/src/test/scala/regionfs/FileReadWriteTest.scala
+more examples, see https://github.com/bluejoe2008/regionfs/blob/master/src/test/scala/regionfs/FileReadWriteTest.scala

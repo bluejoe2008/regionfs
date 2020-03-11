@@ -6,7 +6,7 @@ import org.apache.commons.cli._
 import org.apache.commons.io.IOUtils
 import org.grapheco.regionfs.client.FsAdmin
 import org.grapheco.regionfs.server.FsNodeServer
-import org.grapheco.regionfs.{FileId, GlobalConfigWriter}
+import org.grapheco.regionfs.{FileId, GlobalSettingWriter}
 import org.grapheco.regionfs.util.ByteBufferConversions._
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Await
@@ -114,7 +114,7 @@ trait ShellCommandExecutor {
 class ConfigShellCommandExecutor extends ShellCommandExecutor {
   override def buildOptions(options: Options): Unit = {
     options.addOption(Option.builder("conf")
-      .argName("globalConfigFile")
+      .argName("globalSettingFile")
       .desc("conf file path of global setting, e.g conf/global.conf")
       .hasArg
       .required(true)
@@ -122,7 +122,7 @@ class ConfigShellCommandExecutor extends ShellCommandExecutor {
   }
 
   override def run(commandLine: CommandLine): Unit = {
-    new GlobalConfigWriter().write(new File(commandLine.getOptionValue("conf")))
+    new GlobalSettingWriter().write(new File(commandLine.getOptionValue("conf")))
     println("cluster is successfully configured.");
   }
 }

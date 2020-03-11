@@ -11,7 +11,7 @@ import org.apache.curator.framework.{CuratorFramework, CuratorFrameworkFactory}
 import org.apache.curator.retry.ExponentialBackoffRetry
 import org.apache.zookeeper.CreateMode
 import org.grapheco.commons.util.Logging
-import org.grapheco.regionfs.GlobalConfig
+import org.grapheco.regionfs.{GlobalSetting, GlobalSetting$}
 import org.grapheco.regionfs.server.{Region, RegionData}
 
 import scala.collection.JavaConversions
@@ -85,9 +85,9 @@ class ZooKeeperClient(curator: CuratorFramework) {
     pool.shutdown()
   }
 
-  def loadGlobalConfig(): GlobalConfig = {
+  def loadGlobalSetting(): GlobalSetting = {
     if (curator.checkExists().forPath("/regionfs/config") == null) {
-      throw new GlobalConfigPathNotFoundException("/regionfs/config");
+      throw new GlobalSettingNotFoundException("/regionfs/config");
     }
 
     val bytes = curator.getData.forPath("/regionfs/config")
@@ -95,10 +95,10 @@ class ZooKeeperClient(curator: CuratorFramework) {
     val props = new Properties()
     props.load(bais)
 
-    new GlobalConfig(props)
+    new GlobalSetting(props)
   }
 
-  def saveGlobalConfig(props: Properties): Unit = {
+  def saveglobalSetting(props: Properties): Unit = {
     val baos = new ByteArrayOutputStream();
     props.store(baos, "global setting of region-fs")
     val bytes = baos.toByteArray
@@ -234,8 +234,8 @@ class InvalidZooKeeperConnectionStringException(zks: String) extends
 
 }
 
-class GlobalConfigPathNotFoundException(path: String) extends
-  RegionFsException(s"zookeeper path not exists: $path") {
+class GlobalSettingNotFoundException(path: String) extends
+  RegionFsException(s"zknode for global setting not exists: $path") {
 
 }
 

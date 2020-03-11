@@ -73,9 +73,9 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
   val zookeeper = ZooKeeperClient.create(zks)
   val (env, address) = createRpcEnv(zookeeper)
-  val globalConfig = zookeeper.loadGlobalConfig()
+  val globalSetting = zookeeper.loadGlobalSetting()
 
-  val localRegionManager = new RegionManager(nodeId, storeDir, globalConfig, new RegionEventListener {
+  val localRegionManager = new RegionManager(nodeId, storeDir, globalSetting, new RegionEventListener {
     override def handleRegionEvent(event: RegionEvent): Unit = {
       event match {
         case CreateRegionEvent(region) => {
@@ -89,7 +89,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
     }
   })
 
-  val clientFactory = new FsNodeClientFactory(globalConfig);
+  val clientFactory = new FsNodeClientFactory(globalSetting);
 
   //get neighbour nodes
   val cachedClients = mutable.Map[Int, FsNodeClient]()
@@ -211,12 +211,12 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       val regionId = region.regionId
 
       val nodeIds: Array[Int] = {
-        if (globalConfig.replicaNum <= 1) {
+        if (globalSetting.replicaNum <= 1) {
           Array[Int]()
         }
         else {
-          if (neighbourNodes.size < globalConfig.replicaNum - 1)
-            throw new InsufficientNodeServerException(neighbourNodes.size, globalConfig.replicaNum);
+          if (neighbourNodes.size < globalSetting.replicaNum - 1)
+            throw new InsufficientNodeServerException(neighbourNodes.size, globalSetting.replicaNum);
 
           //notify neighbours
           //find thinnest neighbour which has least regions
@@ -224,7 +224,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
           //TODO: very very time costing
           val thinNodeIds = neighbourNodes.map(
             x => x._1 -> neighbourNodeWithRegionCount.getOrElse(x._1, new AtomicInteger(0)).get).
-            toList.sortBy(_._2).takeRight(globalConfig.replicaNum - 1).map(_._1)
+            toList.sortBy(_._2).takeRight(globalSetting.replicaNum - 1).map(_._1)
 
           if (logger.isTraceEnabled()) {
             logger.trace(s"chosen thin nodes: ${thinNodeIds.mkString(",")}");
@@ -249,7 +249,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       localRegionManager.synchronized {
         val writableRegions = localRegionManager.regions.values.toArray.filter(x => x.isWritable).sortBy(_.length);
         //too few regions
-        if (writableRegions.size < globalConfig.minWritableRegions) {
+        if (writableRegions.size < globalSetting.minWritableRegions) {
           createNewRegion()
         }
         else {
@@ -397,7 +397,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         val region = localRegionManager.get(regionId).get
         val clone = extraInput.duplicate()
 
-        if (globalConfig.enableCrc && CrcUtils.computeCrc32(clone) != crc32) {
+        if (globalSetting.enableCrc && CrcUtils.computeCrc32(clone) != crc32) {
           throw new ReceiveTimeMismatchedCheckSumException();
         }
 

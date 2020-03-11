@@ -12,7 +12,7 @@ import scala.collection.JavaConversions
 /**
   * Created by bluejoe on 2020/2/6.
   */
-class GlobalConfig(props: Properties) {
+class GlobalSetting(props: Properties) {
   val conf = new Configuration {
     override def getRaw(name: String): Option[String] =
       if (props.containsKey(name)) {
@@ -28,11 +28,11 @@ class GlobalConfig(props: Properties) {
   lazy val regionVersionCheckInterval: Long = conf.get("region.version.check.interval").withDefault(Constants.DEFAULT_REGION_VERSION_CHECK_INTERVAL).asLong
 }
 
-object GlobalConfig {
-  def empty = new GlobalConfig(new Properties())
+object GlobalSetting {
+  def empty = new GlobalSetting(new Properties())
 }
 
-class GlobalConfigWriter {
+class GlobalSettingWriter {
   def write(props: Properties): Unit = {
     val conf = new ConfigurationEx(props)
 
@@ -40,7 +40,7 @@ class GlobalConfigWriter {
     val zk = ZooKeeperClient.create(zks)
 
     zk.createAbsentNodes();
-    zk.saveGlobalConfig(props)
+    zk.saveglobalSetting(props)
 
     zk.close()
   }

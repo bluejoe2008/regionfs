@@ -5,7 +5,7 @@ import java.nio.ByteBuffer
 
 import org.apache.commons.io.IOUtils
 import org.grapheco.commons.util.Profiler._
-import org.grapheco.regionfs.{FileId, GlobalConfig}
+import org.grapheco.regionfs.{GlobalSetting, FileId, GlobalSetting$}
 import org.grapheco.regionfs.server.RegionManager
 import org.grapheco.regionfs.util.CrcUtils
 import org.junit.{Assert, Test}
@@ -17,7 +17,7 @@ class LocalRegionFileIOTest extends FileTestBase {
   @Test
   def testRegionIO(): Unit = {
     val rm = new RegionManager(1, new File("./testdata/nodes/node1"),
-      GlobalConfig.empty, nullRegionEventListener);
+      GlobalSetting.empty, nullRegionEventListener);
 
     val region = rm.createNew()
 

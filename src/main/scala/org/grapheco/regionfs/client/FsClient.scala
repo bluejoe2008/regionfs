@@ -22,8 +22,8 @@ import scala.concurrent.{Await, Future}
   */
 class FsClient(zks: String) extends Logging {
   val zookeeper = ZooKeeperClient.create(zks)
-  val globalConfig = zookeeper.loadGlobalConfig()
-  val clientFactory = new FsNodeClientFactory(globalConfig);
+  val globalSetting = zookeeper.loadGlobalSetting()
+  val clientFactory = new FsNodeClientFactory(globalSetting);
 
   //get all nodes
   val cachedClients = mutable.Map[Int, FsNodeClient]()
@@ -91,7 +91,7 @@ class FsClient(zks: String) extends Logging {
       Await.result(client.prepareToWriteFile(content), Duration("1s"))
 
     val crc32 =
-      if (globalConfig.enableCrc) {
+      if (globalSetting.enableCrc) {
         CrcUtils.computeCrc32(content.duplicate())
       }
       else {
@@ -154,7 +154,7 @@ class FsClient(zks: String) extends Logging {
 /**
   * FsNodeClient factory
   */
-class FsNodeClientFactory(globalConfig: GlobalConfig) {
+class FsNodeClientFactory(globalSetting: GlobalSetting) {
   val refs = mutable.Map[RpcAddress, HippoEndpointRef]();
 
   val rpcEnv: HippoRpcEnv = {
@@ -169,7 +169,7 @@ class FsNodeClientFactory(globalConfig: GlobalConfig) {
         rpcEnv.setupEndpointRef(RpcAddress(remoteAddress.host, remoteAddress.port), "regionfs-service"));
     }
 
-    new FsNodeClient(globalConfig: GlobalConfig, endPointRef, remoteAddress)
+    new FsNodeClient(globalSetting: GlobalSetting, endPointRef, remoteAddress)
   }
 
   def of(remoteAddress: String): FsNodeClient = {
@@ -188,7 +188,7 @@ class FsNodeClientFactory(globalConfig: GlobalConfig) {
   * an FsNodeClient is an underline client used by FsClient
   * it sends raw messages (e.g. SendCompleteFileRequest) to NodeServer and handles responses
   */
-class FsNodeClient(globalConfig: GlobalConfig, val endPointRef: HippoEndpointRef, val remoteAddress: RpcAddress) extends Logging {
+class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointRef, val remoteAddress: RpcAddress) extends Logging {
   private def safeCall[T](body: => T): T = {
     try {
       body

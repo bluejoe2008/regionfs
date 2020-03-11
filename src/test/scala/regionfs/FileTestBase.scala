@@ -8,7 +8,7 @@ import org.grapheco.commons.util.{Logging, Profiler}
 import org.grapheco.regionfs.client.{FsAdmin, FsClient}
 import org.grapheco.regionfs.server.{FsNodeServer, RegionEvent, RegionEventListener}
 import org.grapheco.regionfs.util.ByteBufferConversions._
-import org.grapheco.regionfs.{FileId, GlobalConfigWriter}
+import org.grapheco.regionfs.{FileId, GlobalSettingWriter}
 import org.junit.{After, Before}
 
 import scala.collection.mutable.ArrayBuffer
@@ -35,7 +35,7 @@ class FileTestBase extends Logging {
   def setup() {
     FileUtils.deleteDirectory(new File("./testdata/nodes"));
     Profiler.enableTiming = true
-    new GlobalConfigWriter().write(con.GLOBAL_SETTING);
+    new GlobalSettingWriter().write(con.GLOBAL_SETTING);
 
     //this server will not startup due to lock by annother process
     val confs = con.SERVER_NODE_ID.map(x => {

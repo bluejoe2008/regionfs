@@ -8,14 +8,14 @@ import java.util.concurrent.atomic.AtomicLong
 import org.grapheco.commons.util.Logging
 import org.grapheco.regionfs.client.RegionFsClientException
 import org.grapheco.regionfs.util.{Cache, CrcUtils, FixSizedCache}
-import org.grapheco.regionfs.{Constants, FileId, GlobalConfig}
+import org.grapheco.regionfs.{GlobalSetting, Constants, FileId}
 
 import scala.collection.mutable
 
 /**
   * Created by bluejoe on 2019/8/30.
   */
-case class RegionConfig(regionDir: File, globalConfig: GlobalConfig) {
+case class RegionConfig(regionDir: File, globalSetting: GlobalSetting) {
 
 }
 
@@ -138,7 +138,7 @@ class RegionBodyStore(conf: RegionConfig) {
     val written = length + padding.length
     val offset = cursor.getAndAdd(written)
 
-    if (conf.globalConfig.enableCrc) {
+    if (conf.globalSetting.enableCrc) {
       val buf = read(offset, length)
       if (crc != CrcUtils.computeCrc32(buf)) {
         throw new WriteTimeMismatchedCheckSumException();
@@ -172,7 +172,7 @@ class RegionBodyStore(conf: RegionConfig) {
   */
 class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listener: RegionEventListener) extends Logging {
   //TODO: archive
-  def isWritable = length <= conf.globalConfig.regionSizeLimit
+  def isWritable = length <= conf.globalSetting.regionSizeLimit
 
   val isPrimary = (regionId >> 16) == nodeId
 
@@ -195,7 +195,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
 
   def write(buf: ByteBuffer, crc: Long): Long = {
     val crc32 =
-      if (conf.globalConfig.enableCrc) {
+      if (conf.globalSetting.enableCrc) {
         crc
       }
       else {
@@ -238,7 +238,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
 /**
   * RegionManager manages local regions stored in storeDir
   */
-class RegionManager(nodeId: Int, storeDir: File, globalConfig: GlobalConfig, listener: RegionEventListener) extends Logging {
+class RegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetting, listener: RegionEventListener) extends Logging {
   val regions = mutable.Map[Long, Region]()
   val regionIdSerial = new AtomicLong(0)
 
@@ -258,7 +258,7 @@ class RegionManager(nodeId: Int, storeDir: File, globalConfig: GlobalConfig, lis
     }.
     map { file =>
       val id = file.getName.toLong
-      id -> new Region(nodeId, id, RegionConfig(file, globalConfig), listener)
+      id -> new Region(nodeId, id, RegionConfig(file, globalSetting), listener)
     }
 
   if (logger.isInfoEnabled())
@@ -298,7 +298,7 @@ class RegionManager(nodeId: Int, storeDir: File, globalConfig: GlobalConfig, lis
       if (logger.isTraceEnabled())
         logger.trace(s"[region-${regionId}@${nodeId}] created: dir=$regionDir")
 
-      new Region(nodeId, regionId, RegionConfig(regionDir, globalConfig), listener)
+      new Region(nodeId, regionId, RegionConfig(regionDir, globalSetting), listener)
     }
 
     listener.handleRegionEvent(CreateRegionEvent(region))

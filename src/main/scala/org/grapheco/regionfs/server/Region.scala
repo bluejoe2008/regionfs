@@ -5,10 +5,11 @@ import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.util.concurrent.atomic.AtomicLong
 
+import io.netty.buffer.{ByteBuf, Unpooled}
 import org.grapheco.commons.util.Logging
 import org.grapheco.regionfs.client.RegionFsClientException
 import org.grapheco.regionfs.util.{Cache, CrcUtils, FixSizedCache}
-import org.grapheco.regionfs.{GlobalSetting, Constants, FileId}
+import org.grapheco.regionfs.{Constants, FileId, GlobalSetting}
 
 import scala.collection.mutable
 
@@ -92,8 +93,23 @@ class RegionMetaStore(conf: RegionConfig) {
     cache.put(localId, Some(MetaData(localId, offset, length, crc32)))
   }
 
+  //since=0,tail=1
+  def unsafeRead(since: Long, tail: Long): ByteBuffer = {
+    fptr.synchronized {
+      fptr.getChannel.map(FileChannel.MapMode.READ_ONLY,
+        Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * since,
+        Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * (tail - since));
+    }
+  }
+
+  def unsafeWrite(buf: ByteBuffer): Unit = {
+    fptr.synchronized {
+      fptr.seek(fptr.length())
+      fptr.getChannel.write(buf)
+    }
+  }
+
   def close(): Unit = {
-    fptr.close()
     fptr.close()
   }
 
@@ -148,9 +164,15 @@ class RegionBodyStore(conf: RegionConfig) {
     (offset, length, written)
   }
 
-  def append(buf: ByteBuffer): Unit = {
+  def unsafeWrite(buf: ByteBuffer): Unit = {
     appenderChannel.synchronized {
       appenderChannel.write(buf)
+    }
+  }
+
+  def unsafeRead(offset: Long, tail: Long): ByteBuffer = {
+    readerChannel.synchronized {
+      readerChannel.map(FileChannel.MapMode.READ_ONLY, offset, tail - offset);
     }
   }
 
@@ -161,7 +183,6 @@ class RegionBodyStore(conf: RegionConfig) {
 
   def read(offset: Long, length: Int): ByteBuffer = {
     readerChannel.synchronized {
-      readerChannel.position(offset)
       readerChannel.map(FileChannel.MapMode.READ_ONLY, offset, length);
     }
   }
@@ -233,6 +254,82 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
   def delete(localId: Long): Unit = {
     fmeta.markDeleted(localId)
   }
+
+  def offerPatch(since: Long): ByteBuf = {
+    val buf = Unpooled.buffer()
+
+    val (rev, len) = this.synchronized {
+      revision -> length
+    }
+
+    //1!=0
+    if (rev == since) {
+      buf.writeByte(Constants.MARK_GET_REGION_PATCH_ALREADY_UP_TO_DATE).writeLong(regionId)
+      buf
+    }
+    else {
+      //current version, length_of_metadata, body
+      //write .metadata
+      //write .body
+      val meta1 = fmeta.read(since).get
+      val metabuf = Unpooled.wrappedBuffer(fmeta.unsafeRead(since, rev))
+      val bodybuf = Unpooled.wrappedBuffer(fbody.unsafeRead(meta1.offset, len))
+
+      //TODO: checksum
+      buf.writeByte(Constants.MARK_GET_REGION_PATCH_OK).
+        writeLong(regionId).writeLong(rev).
+        writeLong(metabuf.readableBytes()).
+        writeLong(bodybuf.readableBytes())
+
+      Unpooled.wrappedBuffer(buf, metabuf, bodybuf)
+    }
+  }
+
+  //return value means if update is ok
+  def applyPatch(is: InputStream): Boolean = {
+    val dis = new DataInputStream(is)
+    val mark = dis.readByte()
+    mark match {
+      case Constants.MARK_GET_REGION_PATCH_ALREADY_UP_TO_DATE =>
+        false
+
+      case Constants.MARK_GET_REGION_PATCH_SERVER_IS_BUSY =>
+        val regionId = dis.readLong()
+        if (logger.isDebugEnabled)
+          logger.debug(s"server is busy now: ${regionId >> 16}")
+
+        false
+      case Constants.MARK_GET_REGION_PATCH_OK =>
+        val regionId = dis.readLong()
+        val lastRevision = dis.readLong()
+        val sizeMeta = dis.readLong()
+        val sizeBody = dis.readLong()
+
+        val buf1 = Unpooled.buffer(1024)
+        if (buf1.writeBytes(is, sizeMeta.toInt) != sizeMeta.toInt) {
+          throw new WrongRegionPatchSizeException();
+        }
+
+        val buf2 = Unpooled.buffer(1024)
+        if (buf2.writeBytes(is, sizeBody.toInt) != sizeBody.toInt) {
+          throw new WrongRegionPatchSizeException();
+        }
+
+        this.synchronized {
+          //TOOD: transaction assurance
+          fmeta.unsafeWrite(buf1.nioBuffer())
+          fbody.unsafeWrite(buf2.nioBuffer())
+        }
+
+        if (logger.isDebugEnabled)
+          logger.debug(s"[region-${regionId}@${nodeId}] updated: .meta ${sizeMeta} bytes, .body ${sizeBody} bytes")
+
+        true
+    }
+  }
+
+  def status = RegionStatus(nodeId: Long, regionId: Long,
+    revision: Long, isPrimary: Boolean, isWritable: Boolean, length: Long)
 }
 
 /**
@@ -276,7 +373,9 @@ class RegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetting, l
 
   def get(id: Long): Option[Region] = regions.get(id)
 
-  def reload(region: Region): Region = {
+  def update(region: Region): Region = {
+    region.close()
+
     val newRegion = new Region(nodeId, region.regionId, region.conf, listener)
     regions(region.regionId) = newRegion
     newRegion
@@ -341,25 +440,10 @@ trait RegionEventListener {
   def handleRegionEvent(event: RegionEvent): Unit
 }
 
-object Region {
-  def unpack(nodeId: Long, regionId: Long, data: Array[Byte]): RegionData = {
-    val bais = new ByteArrayInputStream((data))
-    val dis = new DataInputStream(bais)
-    RegionData(nodeId, regionId, dis.readLong(), dis.readBoolean(), dis.readBoolean(), dis.readLong())
-  }
+case class WrongRegionPatchSizeException() extends RegionFsServerException(s"wrong region patch") {
 
-  def pack(region: Region): Array[Byte] = {
-    val baos = new ByteArrayOutputStream();
-    val dos = new DataOutputStream(baos);
-    dos.writeLong(region.revision)
-    dos.writeBoolean(region.isPrimary)
-    dos.writeBoolean(region.isWritable)
-    dos.writeLong(region.length)
-
-    dos.close()
-    baos.toByteArray
-  }
 }
 
-case class RegionData(nodeId: Long, regionId: Long, revision: Long, isPrimary: Boolean, isWritable: Boolean, length: Long) {
+case class RegionStatus(nodeId: Long, regionId: Long, revision: Long, isPrimary: Boolean, isWritable: Boolean, length: Long) {
+
 }

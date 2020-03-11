@@ -14,7 +14,7 @@ import scala.concurrent.duration.Duration
 class FsAdmin(zks: String) extends FsClient(zks: String) {
   def stat(rpcTimeout: Duration): Stat = {
     Stat {
-      val futures = allNodes.map(x =>
+      val futures = mapNodeWithAddress.map(x =>
         clientOf(x._1).endPointRef.ask[GetNodeStatResponse](GetNodeStatRequest()))
 
       futures.map(x => Await.result(x, rpcTimeout).stat).toList
@@ -22,27 +22,27 @@ class FsAdmin(zks: String) extends FsClient(zks: String) {
   }
 
   def getNodesWithAddress(): Map[Int, RpcAddress] = {
-    allNodes.toMap
+    mapNodeWithAddress.toMap
   }
 
   def getRegionsWithListOfNodes(): Map[Long, Array[Int]] = {
-    allRegionsWithListOfNode.map(x => x._1 -> x._2.toArray).toMap
+    mapRegionWithNodes.map(x => x._1 -> x._2.toArray).toMap
   }
 
   def getRegions(): Iterable[Long] = {
-    allRegionsWithListOfNode.keys
+    mapRegionWithNodes.keys
   }
 
   def getRegions(nodeId: Int): Iterable[Long] = {
-    allRegionWithNodes.filter(_._2 == nodeId).map(_._1)
+    arrayRegionWithNode.filter(_._2 == nodeId).map(_._1)
   }
 
   def getNodes(regionId: Long): Iterable[Int] = {
-    allRegionsWithListOfNode(regionId)
+    mapRegionWithNodes(regionId)
   }
 
   def getNodes(): Iterable[Int] = {
-    allNodes.keys
+    mapNodeWithAddress.keys
   }
 
   def statNode(nodeId: Int, rpcTimeout: Duration): NodeStat = {
@@ -51,7 +51,7 @@ class FsAdmin(zks: String) extends FsClient(zks: String) {
   }
 
   def cleanAllData(rpcTimeout: Duration): Array[RpcAddress] = {
-    val futures = allNodes.map(x =>
+    val futures = mapNodeWithAddress.map(x =>
       clientOf(x._1).endPointRef.ask[CleanDataResponse](CleanDataRequest()))
 
     futures.map(x => Await.result(x, rpcTimeout).address).toArray
@@ -63,10 +63,10 @@ class FsAdmin(zks: String) extends FsClient(zks: String) {
   }
 
   def shutdownAllNodes(rpcTimeout: Duration): Array[(Int, RpcAddress)] = {
-    allNodes.map(x =>
+    mapNodeWithAddress.map(x =>
       clientOf(x._1).endPointRef.ask[ShutdownResponse](ShutdownRequest()))
 
-    allNodes.toArray
+    mapNodeWithAddress.toArray
   }
 
   def shutdownNode(nodeId: Int, rpcTimeout: Duration): (Int, RpcAddress) = {
@@ -81,7 +81,7 @@ class FsAdmin(zks: String) extends FsClient(zks: String) {
   }
 
   def listFiles(rpcTimeout: Duration): Iterator[(FileId, Long)] = {
-    val iter = allNodes.iterator
+    val iter = mapNodeWithAddress.iterator
     IteratorUtils.concatIterators { (index) =>
       if (iter.hasNext) {
         Some(clientOf(iter.next()._1).endPointRef.getChunkedStream[ListFileResponseDetail](

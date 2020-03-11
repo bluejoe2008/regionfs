@@ -9,6 +9,7 @@ import net.neoremind.kraps.rpc.netty.{HippoEndpointRef, HippoRpcEnv, HippoRpcEnv
 import net.neoremind.kraps.rpc.{RpcAddress, RpcEnvClientConfig}
 import org.grapheco.commons.util.Logging
 import org.grapheco.regionfs._
+import org.grapheco.regionfs.server.RegionStatus
 import org.grapheco.regionfs.util._
 
 import scala.collection.mutable
@@ -24,21 +25,32 @@ class FsClient(zks: String) extends Logging {
   val zookeeper = ZooKeeperClient.create(zks)
   val globalSetting = zookeeper.loadGlobalSetting()
   val clientFactory = new FsNodeClientFactory(globalSetting);
+  val ring = new Ring[Int]()
+
+  val consistencyStrategy: ConsistencyStrategy = ConsistencyStrategy.create(
+    globalSetting.consistencyStrategy, clientOf(_), ring.!(_));
 
   //get all nodes
   val cachedClients = mutable.Map[Int, FsNodeClient]()
-  val allNodes = mutable.Map[Int, RpcAddress]()
-  val ring = new Ring[Int]()
+  val mapNodeWithAddress = mutable.Map[Int, RpcAddress]()
   val nodesWatcher = zookeeper.watchNodeList(
     new ParsedChildNodeEventHandler[(Int, RpcAddress)] {
       override def onCreated(t: (Int, RpcAddress)): Unit = {
-        allNodes += t
-        ring += t._1
+        mapNodeWithAddress.synchronized {
+          mapNodeWithAddress += t
+        }
+        ring.synchronized {
+          ring += t._1
+        }
       }
 
       override def onDeleted(t: (Int, RpcAddress)): Unit = {
-        allNodes -= t._1
-        ring -= t._1
+        mapNodeWithAddress.synchronized {
+          mapNodeWithAddress -= t._1
+        }
+        ring.synchronized {
+          ring -= t._1
+        }
       }
 
       override def accepts(t: (Int, RpcAddress)): Boolean = {
@@ -48,19 +60,19 @@ class FsClient(zks: String) extends Logging {
 
   //get all regions
   //32768->(1,2), 32769->(1), ...
-  val allRegionWithNodes = ArrayBuffer[(Long, Int)]()
-  val allRegionsWithListOfNode = mutable.Map[Long, ArrayBuffer[Int]]()
+  val arrayRegionWithNode = ArrayBuffer[(Long, Int)]()
+  val mapRegionWithNodes = mutable.Map[Long, ArrayBuffer[Int]]()
 
   val regionsWatcher = zookeeper.watchRegionList(
     new ParsedChildNodeEventHandler[(Long, Int)] {
       override def onCreated(t: (Long, Int)): Unit = {
-        allRegionWithNodes += t
-        allRegionsWithListOfNode.getOrElseUpdate(t._1, ArrayBuffer()) += t._2
+        arrayRegionWithNode += t
+        mapRegionWithNodes.getOrElseUpdate(t._1, ArrayBuffer()) += t._2
       }
 
       override def onDeleted(t: (Long, Int)): Unit = {
-        allRegionWithNodes -= t
-        allRegionsWithListOfNode -= t._1
+        arrayRegionWithNode -= t
+        mapRegionWithNodes -= t._1
       }
 
       override def accepts(t: (Long, Int)): Boolean = {
@@ -70,13 +82,13 @@ class FsClient(zks: String) extends Logging {
 
   val writerSelector = new RoundRobinSelector(ring);
 
-  protected def clientOf(nodeId: Int): FsNodeClient = {
+  def clientOf(nodeId: Int): FsNodeClient = {
     cachedClients.getOrElseUpdate(nodeId,
-      clientFactory.of(allNodes(nodeId)))
+      clientFactory.of(mapNodeWithAddress(nodeId)))
   }
 
   private def assertNodesNotEmpty() {
-    if (allNodes.isEmpty) {
+    if (mapNodeWithAddress.isEmpty) {
       if (logger.isTraceEnabled) {
         logger.trace(zookeeper.readNodeList().mkString(","))
       }
@@ -87,7 +99,8 @@ class FsClient(zks: String) extends Logging {
 
   def writeFile(content: ByteBuffer): Future[FileId] = {
     val client = getWriterClient
-    val (regionId: Long, fileId: FileId, nodes: Array[Int]) =
+    //prepare
+    val (regionId: Long, fileId: FileId, regionOwnerNodes: Array[Int]) =
       Await.result(client.prepareToWriteFile(content), Duration("1s"))
 
     val crc32 =
@@ -98,13 +111,7 @@ class FsClient(zks: String) extends Logging {
         0
       }
 
-    val futures =
-      nodes.map(clientOf(_).writeFile(regionId, crc32, fileId, content.duplicate()))
-
-    Future {
-      //TODO: consistency check
-      futures.map(x => Await.result(x, Duration.Inf)).head
-    }
+    consistencyStrategy.writeFile(fileId, regionOwnerNodes, crc32, content.duplicate());
   }
 
   def getWriterClient: FsNodeClient = {
@@ -113,34 +120,17 @@ class FsClient(zks: String) extends Logging {
   }
 
   def readFile[T](fileId: FileId, rpcTimeout: Duration): InputStream = {
-    val client = getReaderClient(fileId)
-    client.readFile(fileId, rpcTimeout)
-  }
-
-  private def getReaderClient[T](fileId: FileId): FsNodeClient = {
     assertNodesNotEmpty()
 
-    val rwlon = allRegionsWithListOfNode.get(fileId.regionId)
-    if (rwlon.isEmpty)
+    val regionOwnerNodes = mapRegionWithNodes.get(fileId.regionId)
+    if (regionOwnerNodes.isEmpty)
       throw new WrongFileIdException(fileId);
 
-    val map = rwlon.get.map((_, 1)).toMap
-    val maybeNodeId = ring.!(map.contains(_))
-    if (maybeNodeId.isEmpty)
-      throw new WrongFileIdException(fileId);
-
-    clientOf(maybeNodeId.get);
+    consistencyStrategy.readFile(fileId, regionOwnerNodes.get.toArray, rpcTimeout)
   }
 
   def deleteFile[T](fileId: FileId): Future[Boolean] = {
-    val futures = allRegionsWithListOfNode(fileId.regionId).map(clientOf(_).deleteFile(fileId))
-
-    if (futures.isEmpty)
-      throw new WrongFileIdException(fileId);
-
-    Future {
-      futures.map(Await.result(_, Duration.Inf)).head
-    }
+    consistencyStrategy.deleteFile(fileId, mapRegionWithNodes(fileId.regionId).toArray)
   }
 
   def close = {
@@ -201,7 +191,7 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
   def prepareToWriteFile(content: ByteBuffer): Future[(Long, FileId, Array[Int])] = {
     safeCall {
       endPointRef.ask[PrepareToWriteFileResponse](
-        PrepareToWriteFileRequest(content.remaining())).map(x => (x.regionId, x.fileId, x.nodes))
+        PrepareToWriteFileRequest(content.remaining())).map(x => (x.regionId, x.fileId, x.regionOwnerNodes))
     }
   }
 
@@ -229,6 +219,21 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
         rpcTimeout)
     }
   }
+
+  def getPatchInputStream(regionId: Long, revision: Long, rpcTimeout: Duration): InputStream = {
+    safeCall {
+      endPointRef.getInputStream(
+        GetRegionPatchRequest(regionId, revision),
+        rpcTimeout)
+    }
+  }
+
+  def getRegionStatus(regionIds: Array[Long]): Future[Array[RegionStatus]] = {
+    safeCall {
+      endPointRef.ask[GetRegionStatusResponse](
+        GetRegionStatusRequest(regionIds)).map(_.statusList)
+    }
+  }
 }
 
 trait FsNodeSelector {
@@ -254,4 +259,70 @@ class WrongFileIdException(fileId: FileId) extends
 class ServerRaisedException(cause: Throwable) extends
   RegionFsClientException(s"got a server side error: ${cause.getMessage}") {
 
+}
+
+trait ConsistencyStrategy {
+  def deleteFile(fileId: FileId, regionOwnerNodes: Array[Int]): Future[Boolean]
+
+  def readFile[T](fileId: FileId, regionOwnerNodes: Array[Int], rpcTimeout: Duration): InputStream
+
+  def writeFile(fileIdExpected: FileId, regionOwnerNodes: Array[Int], crc32: Long, content: ByteBuffer): Future[FileId]
+}
+
+object ConsistencyStrategy {
+  def create(strategyType: Int, clientOf: (Int) => FsNodeClient,
+             chooseNextNode: ((Int) => Boolean) => Option[Int]): ConsistencyStrategy =
+    strategyType match {
+      case Constants.CONSISTENCY_STRATEGY_EVENTUAL =>
+        new EventualConsistencyStrategy(clientOf, chooseNextNode)
+      case Constants.CONSISTENCY_STRATEGY_STRONG =>
+        new StrongConsistencyStrategy(clientOf, chooseNextNode)
+    }
+}
+
+class EventualConsistencyStrategy(clientOf: (Int) => FsNodeClient, chooseNextNode: ((Int) => Boolean) => Option[Int]) extends ConsistencyStrategy {
+  def writeFile(fileIdExpected: FileId, regionOwnerNodes: Array[Int], crc32: Long, content: ByteBuffer): Future[FileId] = {
+    //only primary region's being written is necessary
+    clientOf((fileIdExpected.regionId >> 16).toInt).writeFile(fileIdExpected.regionId, crc32, fileIdExpected, content.duplicate())
+  }
+
+  def readFile[T](fileId: FileId, regionOwnerNodes: Array[Int], rpcTimeout: Duration): InputStream = {
+    clientOf((fileId.regionId >> 16).toInt).readFile(fileId, rpcTimeout)
+  }
+
+  def deleteFile(fileId: FileId, regionOwnerNodes: Array[Int]): Future[Boolean] = {
+    clientOf((fileId.regionId >> 16).toInt).deleteFile(fileId)
+  }
+}
+
+class StrongConsistencyStrategy(clientOf: (Int) => FsNodeClient, chooseNextNode: ((Int) => Boolean) => Option[Int]) extends ConsistencyStrategy {
+  def writeFile(fileIdExpected: FileId, regionOwnerNodes: Array[Int], crc32: Long, content: ByteBuffer): Future[FileId] = {
+    val futures =
+      regionOwnerNodes.map(clientOf(_).writeFile(fileIdExpected.regionId, crc32, fileIdExpected, content.duplicate()))
+
+    Future {
+      //TODO: consistency check
+      futures.map(x => Await.result(x, Duration.Inf)).head
+    }
+  }
+
+  def readFile[T](fileId: FileId, regionOwnerNodes: Array[Int], rpcTimeout: Duration): InputStream = {
+    val map = regionOwnerNodes.map((_, 1)).toMap
+    val maybeNodeId = chooseNextNode(map.contains(_))
+    if (maybeNodeId.isEmpty)
+      throw new WrongFileIdException(fileId);
+
+    clientOf(maybeNodeId.get).readFile(fileId, rpcTimeout)
+  }
+
+  def deleteFile(fileId: FileId, regionOwnerNodes: Array[Int]): Future[Boolean] = {
+    val futures = regionOwnerNodes.map(clientOf(_).deleteFile(fileId))
+
+    if (futures.isEmpty)
+      throw new WrongFileIdException(fileId);
+
+    Future {
+      futures.map(Await.result(_, Duration.Inf)).head
+    }
+  }
 }

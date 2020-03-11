@@ -11,8 +11,8 @@ import org.apache.curator.framework.{CuratorFramework, CuratorFrameworkFactory}
 import org.apache.curator.retry.ExponentialBackoffRetry
 import org.apache.zookeeper.CreateMode
 import org.grapheco.commons.util.Logging
-import org.grapheco.regionfs.{GlobalSetting, GlobalSetting$}
-import org.grapheco.regionfs.server.{Region, RegionData}
+import org.grapheco.regionfs.GlobalSetting
+import org.grapheco.regionfs.server.Region
 
 import scala.collection.JavaConversions
 
@@ -50,17 +50,6 @@ class ZooKeeperClient(curator: CuratorFramework) {
     curator.create().orSetData().forPath("/regionfs/regions")
   }
 
-  def readRegionData(regionId: Long): RegionData = {
-    val nodeId = regionId >> 16;
-    val data = curator.getData.forPath(s"/regionfs/regions/${nodeId}_${regionId}")
-    Region.unpack(nodeId, regionId, data);
-  }
-
-  def writeRegionData(nodeId: Int, region: Region) = {
-    curator.setData.forPath(s"/regionfs/regions/${nodeId}_${region.regionId}",
-      Region.pack(region))
-  }
-
   def assertPathNotExists(path: String)(onAssertFailed: => Unit) = {
     if (curator.checkExists.forPath(path) != null) {
       onAssertFailed
@@ -70,14 +59,12 @@ class ZooKeeperClient(curator: CuratorFramework) {
 
   def createRegionNode(nodeId: Int, region: Region) = {
     curator.create().withMode(CreateMode.EPHEMERAL).forPath(
-      s"/regionfs/regions/${nodeId}_${region.regionId}",
-      Region.pack(region))
+      s"/regionfs/regions/${nodeId}_${region.regionId}")
   }
 
   def createNodeNode(nodeId: Int, address: RpcAddress) = {
     curator.create().withMode(CreateMode.EPHEMERAL).forPath(
-      s"/regionfs/nodes/${nodeId}_${address.host}_${address.port}",
-      "".getBytes)
+      s"/regionfs/nodes/${nodeId}_${address.host}_${address.port}")
   }
 
   def close(): Unit = {

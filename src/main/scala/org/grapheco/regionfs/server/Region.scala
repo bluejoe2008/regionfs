@@ -4,6 +4,7 @@ import java.io._
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.util.concurrent.atomic.AtomicLong
+
 import org.grapheco.commons.util.Logging
 import org.grapheco.regionfs.client.RegionFsClientException
 import org.grapheco.regionfs.util.{Cache, CrcUtils, FixSizedCache}
@@ -45,14 +46,6 @@ class RegionMetaStore(conf: RegionConfig) {
       fptr.writeByte(1)
     }
     cache.put(localId, None)
-  }
-
-  def copy(since: Long, tail: Long): ByteBuffer = {
-    fptr.synchronized {
-      fptr.getChannel.map(FileChannel.MapMode.READ_ONLY,
-        Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * since,
-        Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * (tail - since + 1));
-    }
   }
 
   def read(localId: Long): Option[MetaData] = {
@@ -134,12 +127,15 @@ class RegionBodyStore(conf: RegionConfig) {
     */
   def write(buf: ByteBuffer, crc: Long): (Long, Long, Long) = {
     val length = buf.remaining()
+    val padding = new Array[Byte](Constants.REGION_FILE_ALIGNMENT_SIZE - 1 -
+      (length + Constants.REGION_FILE_ALIGNMENT_SIZE - 1) % Constants.REGION_FILE_ALIGNMENT_SIZE)
 
     appenderChannel.synchronized {
-      appenderChannel.write(Array(buf, ByteBuffer.wrap(Constants.REGION_FILE_BODY_EOF)))
+      //7-(x+7)%8
+      appenderChannel.write(Array(buf, ByteBuffer.wrap(padding.map(_ => '*'.toByte))))
     }
 
-    val written = length + Constants.REGION_FILE_BODY_EOF_LENGTH
+    val written = length + padding.length
     val offset = cursor.getAndAdd(written)
 
     if (conf.globalConfig.enableCrc) {
@@ -177,6 +173,7 @@ class RegionBodyStore(conf: RegionConfig) {
 class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listener: RegionEventListener) extends Logging {
   //TODO: archive
   def isWritable = length <= conf.globalConfig.regionSizeLimit
+
   val isPrimary = (regionId >> 16) == nodeId
 
   //metadata file

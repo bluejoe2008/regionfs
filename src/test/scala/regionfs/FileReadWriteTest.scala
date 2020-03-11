@@ -21,7 +21,7 @@ class FileReadWriteTest extends FileTestBase {
       super.writeFile("hello, world")
     }
 
-    for (i <- Array(999, 9999, 99999, 999999, 9999999)) {
+    for (i <- BLOB_LENGTH) {
       println(s"writing $i bytes...")
       timing(true, 10) {
         super.writeFile(new File(s"./testdata/inputs/$i"))
@@ -35,7 +35,7 @@ class FileReadWriteTest extends FileTestBase {
       (1 to 10).map(_ => super.writeFileAsync("hello, world")).map(Await.result(_, Duration.Inf))
     }
 
-    for (i <- Array(999, 9999, 99999, 999999, 9999999)) {
+    for (i <- BLOB_LENGTH) {
       println(s"writing $i bytes...")
       val ids = timing(true) {
         (1 to 10).map(_ => super.writeFileAsync(new File(s"./testdata/inputs/$i"))).map(Await.result(_, Duration.Inf))
@@ -49,7 +49,7 @@ class FileReadWriteTest extends FileTestBase {
       (1 to 10).map(_ => super.writeFileAsync("hello, world")).map(Await.result(_, Duration.Inf))
     }
 
-    for (i <- Array(999, 9999, 99999, 999999, 9999999)) {
+    for (i <- BLOB_LENGTH) {
       val id = super.writeFile(new File(s"./testdata/inputs/$i"))
 
       println(s"reading $i bytes...")
@@ -89,7 +89,7 @@ class FileReadWriteTest extends FileTestBase {
 
   @Test
   def testRead(): Unit = {
-    for (i <- Array(999, 9999, 99999, 999999, 9999999)) {
+    for (i <- BLOB_LENGTH) {
       val src: File = new File(s"./testdata/inputs/$i")
       val id = super.writeFile(src);
 

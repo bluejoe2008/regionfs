@@ -21,6 +21,12 @@ class GlobalSetting(props: Properties) {
         None
       }
   }
+
+  lazy val consistencyStrategy: Int = conf.get("consistency.strategy").
+    withDefault(Constants.CONSISTENCY_STRATEGY_STRONG).
+    withOptions(Map("strong" -> Constants.CONSISTENCY_STRATEGY_STRONG,
+      "eventual" -> Constants.CONSISTENCY_STRATEGY_EVENTUAL)).asInt
+
   lazy val minWritableRegions: Int = conf.get("region.min.writable").withDefault(Constants.DEFAULT_MIN_WRITABLE_REGIONS).asInt
   lazy val replicaNum: Int = conf.get("replica.num").withDefault(1).asInt
   lazy val regionSizeLimit: Long = conf.get("region.size.limit").withDefault(Constants.DEFAULT_REGION_SIZE_LIMIT).asLong

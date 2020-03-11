@@ -4,6 +4,7 @@ import java.io._
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicInteger
 
+import io.netty.buffer.Unpooled
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.{HippoRpcEnv, HippoRpcEnvFactory}
 import net.neoremind.kraps.rpc.{RpcAddress, RpcCallContext, RpcEndpoint, RpcEnvServerConfig}
@@ -83,7 +84,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         }
 
         case WriteRegionEvent(region) => {
-          zookeeper.writeRegionData(nodeId, region)
+          //
         }
       }
     }
@@ -93,15 +94,15 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
   //get neighbour nodes
   val cachedClients = mutable.Map[Int, FsNodeClient]()
-  val neighbourNodes = mutable.Map[Int, RpcAddress]()
+  val mapNeighbourNodeWithAddress = mutable.Map[Int, RpcAddress]()
   val neighbourNodesWatcher = zookeeper.watchNodeList(
     new ParsedChildNodeEventHandler[(Int, RpcAddress)] {
       override def onCreated(t: (Int, RpcAddress)): Unit = {
-        neighbourNodes += t
+        mapNeighbourNodeWithAddress += t
       }
 
       override def onDeleted(t: (Int, RpcAddress)): Unit = {
-        neighbourNodes -= t._1
+        mapNeighbourNodeWithAddress -= t._1
       }
 
       override def accepts(t: (Int, RpcAddress)): Boolean = {
@@ -109,21 +110,30 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       }
     })
 
+  val primaryRegionWatcher: Option[PrimaryRegionWatcher] = {
+    if (globalSetting.consistencyStrategy == Constants.CONSISTENCY_STRATEGY_EVENTUAL) {
+      Some(new PrimaryRegionWatcher(zookeeper, globalSetting, nodeId, localRegionManager, clientOf(_)).start)
+    }
+    else {
+      None
+    }
+  }
+
   //get regions in neighbour nodes
   //32768->(1,2), 32769->(1), ...
-  var neighbourRegionWithNodes = mutable.Map[Long, ArrayBuffer[Int]]()
-  var neighbourNodeWithRegionCount = mutable.ListMap[Int, AtomicInteger]()
+  var mapNeighbourRegionWithNodes = mutable.Map[Long, ArrayBuffer[Int]]()
+  var mapNeighbourNodeWithRegionCount = mutable.ListMap[Int, AtomicInteger]()
 
   val neighbourRegionsWatcher = zookeeper.watchRegionList(
     new ParsedChildNodeEventHandler[(Long, Int)] {
       override def onCreated(t: (Long, Int)): Unit = {
-        neighbourNodeWithRegionCount.getOrElseUpdate(t._2, new AtomicInteger(0)).incrementAndGet()
-        neighbourRegionWithNodes.getOrElseUpdate(t._1, ArrayBuffer()) += t._2
+        mapNeighbourNodeWithRegionCount.getOrElseUpdate(t._2, new AtomicInteger(0)).incrementAndGet()
+        mapNeighbourRegionWithNodes.getOrElseUpdate(t._1, ArrayBuffer()) += t._2
       }
 
       override def onDeleted(t: (Long, Int)): Unit = {
-        neighbourNodeWithRegionCount(t._2).decrementAndGet()
-        neighbourRegionWithNodes(t._1) -= t._2
+        mapNeighbourNodeWithRegionCount(t._2).decrementAndGet()
+        mapNeighbourRegionWithNodes(t._1) -= t._2
       }
 
       override def accepts(t: (Long, Int)): Boolean = {
@@ -157,6 +167,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       neighbourRegionsWatcher.close()
 
       new File(storeDir, ".lock").delete();
+      primaryRegionWatcher.foreach(_.stop())
       env.shutdown()
       zookeeper.close()
       println(s"shutdown node server on ${address}, nodeId=${nodeId}")
@@ -166,7 +177,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
   private def clientOf(nodeId: Int): FsNodeClient = {
     cachedClients.getOrElseUpdate(nodeId,
-      clientFactory.of(neighbourNodes(nodeId)))
+      clientFactory.of(mapNeighbourNodeWithAddress(nodeId)))
   }
 
   def cleanData(): Unit = {
@@ -215,15 +226,15 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
           Array[Int]()
         }
         else {
-          if (neighbourNodes.size < globalSetting.replicaNum - 1)
-            throw new InsufficientNodeServerException(neighbourNodes.size, globalSetting.replicaNum);
+          if (mapNeighbourNodeWithAddress.size < globalSetting.replicaNum - 1)
+            throw new InsufficientNodeServerException(mapNeighbourNodeWithAddress.size, globalSetting.replicaNum);
 
           //notify neighbours
           //find thinnest neighbour which has least regions
 
           //TODO: very very time costing
-          val thinNodeIds = neighbourNodes.map(
-            x => x._1 -> neighbourNodeWithRegionCount.getOrElse(x._1, new AtomicInteger(0)).get).
+          val thinNodeIds = mapNeighbourNodeWithAddress.map(
+            x => x._1 -> mapNeighbourNodeWithRegionCount.getOrElse(x._1, new AtomicInteger(0)).get).
             toList.sortBy(_._2).takeRight(globalSetting.replicaNum - 1).map(_._1)
 
           if (logger.isTraceEnabled()) {
@@ -235,7 +246,6 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
           //hello, pls create a new region with id=regionId
           futures.foreach(Await.result(_, Duration.Inf))
-
           thinNodeIds.toArray
         }
       }
@@ -254,7 +264,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         }
         else {
           val region = writableRegions(0)
-          region -> neighbourRegionWithNodes.get(region.regionId).map(_.toArray).getOrElse(Array[Int]())
+          region -> mapNeighbourRegionWithNodes.get(region.regionId).map(_.toArray).getOrElse(Array[Int]())
         }
       }
     }
@@ -309,6 +319,15 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         ctx.reply(GetNodeStatResponse(nodeStat))
       }
 
+      case GetRegionStatusRequest(regionIds: Array[Long]) => {
+        val status = regionIds.map(regionId => {
+          val region = localRegionManager.regions(regionId)
+          region.status
+        })
+
+        ctx.reply(GetRegionStatusResponse(status))
+      }
+
       //create region as replica
       case CreateRegionRequest(regionId: Long) => {
         val region = localRegionManager.createNewReplica(regionId)
@@ -345,7 +364,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
           maybeRegion.get.delete(localId)
           //notify neigbours
           //TODO: filter(ownsNewVersion)
-          val futures = neighbourRegionWithNodes(regionId).filter(_ => true).map(clientOf(_).endPointRef.ask[CreateRegionResponse](
+          val futures = mapNeighbourRegionWithNodes(regionId).filter(_ => true).map(clientOf(_).endPointRef.ask[CreateRegionResponse](
             DeleteFileRequest(regionId, localId)))
 
           //TODO: if fail?
@@ -378,6 +397,21 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         }
 
         CompleteStream.fromByteBuffer(maybeBuffer.get)
+      }
+
+      case GetRegionPatchRequest(regionId: Long, since: Long) => {
+        val maybeRegion = localRegionManager.get(regionId)
+        if (maybeRegion.isEmpty) {
+          throw new WrongRegionIdException(regionId);
+        }
+
+        if (traffic.get() > Constants.MAX_BUSY_TRAFFIC) {
+          CompleteStream.fromByteBuffer(Unpooled.buffer(1024).writeByte(Constants.MARK_GET_REGION_PATCH_SERVER_IS_BUSY))
+        }
+        else {
+          val buf = maybeRegion.get.offerPatch(since)
+          CompleteStream.fromByteBuffer(buf)
+        }
       }
     }
 
@@ -440,4 +474,66 @@ class WrongRegionIdException(regionId: Long) extends
 class ReceiveTimeMismatchedCheckSumException extends
   RegionFsServerException(s"mismatched checksum exception on receive time") {
 
+}
+
+class PrimaryRegionWatcher(zookeeper: ZooKeeperClient,
+                           conf: GlobalSetting,
+                           nodeId: Int,
+                           localRegionManager: RegionManager,
+                           clientOf: (Int) => FsNodeClient)
+  extends Logging {
+  var stopped: Boolean = false;
+  val thread: Thread = new Thread(new Runnable() {
+    override def run(): Unit = {
+      while (!stopped) {
+        Thread.sleep(conf.regionVersionCheckInterval)
+        val secondaryRegions = localRegionManager.regions.values.filter(!_.isPrimary).groupBy(x => (x.regionId >> 16).toInt)
+        secondaryRegions.foreach {
+          x => {
+            try {
+              val regionIds = x._2.map(_.regionId).toArray
+              val statusList = Await.result(clientOf(x._1).getRegionStatus(regionIds), Duration("2s"))
+              statusList.foreach(status => {
+                val localRegion = localRegionManager.regions(status.regionId)
+                //local is old
+                val targetRevision: Long = status.revision
+                val localRevision: Long = localRegion.revision
+                if (targetRevision > localRevision) {
+                  if (logger.isTraceEnabled())
+                    logger.trace(s"[region-${localRegion.regionId}@${nodeId}] found new version : ${targetRevision}>${localRevision}");
+
+                  val is = clientOf(x._1).getPatchInputStream(
+                    localRegion.regionId, localRevision, Duration("10s"))
+
+                  val updated = localRegion.applyPatch(is);
+                  is.close();
+
+                  if (updated) {
+                    val updatedRegion = localRegionManager.update(localRegion)
+                    if (logger.isTraceEnabled())
+                      logger.trace(s"[region-${localRegion.regionId}@${nodeId}] updated: ${localRevision}->${updatedRegion.revision}");
+                  }
+                }
+              })
+            }
+            catch {
+              case t: Throwable =>
+                if (logger.isWarnEnabled())
+                  logger.warn(t.getMessage)
+            }
+          }
+        }
+      }
+    }
+  });
+
+  def start(): PrimaryRegionWatcher = {
+    thread.start();
+    this;
+  }
+
+  def stop(): Unit = {
+    stopped = true;
+    thread.join()
+  }
 }

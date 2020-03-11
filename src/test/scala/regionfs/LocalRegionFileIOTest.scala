@@ -5,7 +5,7 @@ import java.nio.ByteBuffer
 
 import org.apache.commons.io.IOUtils
 import org.grapheco.commons.util.Profiler._
-import org.grapheco.regionfs.{GlobalSetting, FileId, GlobalSetting$}
+import org.grapheco.regionfs.GlobalSetting
 import org.grapheco.regionfs.server.RegionManager
 import org.grapheco.regionfs.util.CrcUtils
 import org.junit.{Assert, Test}

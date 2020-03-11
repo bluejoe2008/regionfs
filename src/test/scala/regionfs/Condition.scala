@@ -18,7 +18,20 @@ class MultiNode extends TestCondition {
     "replica.num" -> "3",
     "region.size.limit" -> "9000000",
     "blob.crc.enabled" -> "true",
-    "region.version.check.interval" -> "1000"
+    "region.version.check.interval" -> "1000",
+    "consistency.strategy" -> "strong"
+  )
+}
+
+class EventualMultiNode extends TestCondition {
+  override val SERVER_NODE_ID = Array(1 -> 1224, 2 -> 1225, 3 -> 1226)
+  override val GLOBAL_SETTING = Map[String, String](
+    "zookeeper.address" -> zookeeperString,
+    "replica.num" -> "3",
+    "region.size.limit" -> "9000000",
+    "blob.crc.enabled" -> "true",
+    "region.version.check.interval" -> "1000",
+    "consistency.strategy" -> "eventual"
   )
 }
 

@@ -7,11 +7,11 @@ import org.grapheco.regionfs.server.RegionStatus
 /**
   * Created by bluejoe on 2019/8/23.
   */
-case class CreateRegionRequest(regionId: Long) {
+case class CreateSecondaryRegionRequest(regionId: Long) {
 
 }
 
-case class CreateRegionResponse(regionId: Long) {
+case class CreateSecondaryRegionResponse(regionId: Long) {
 
 }
 
@@ -59,11 +59,11 @@ case class CreateFileResponse(nodeId: Int, fileId: FileId, revision: Long) {
 
 }
 
-case class ReadFileRequest(regionId: Long, localId: Long) {
+case class ReadFileRequest(fileId: FileId) {
 
 }
 
-case class DeleteFileRequest(regionId: Long, localId: Long) {
+case class DeleteFileRequest(fileId: FileId) {
 
 }
 

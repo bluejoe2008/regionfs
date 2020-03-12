@@ -11,7 +11,7 @@ trait TestCondition {
   val GLOBAL_SETTING: Map[String, String];
 }
 
-class MultiNode extends TestCondition {
+class StrongMultiNode extends TestCondition {
   override val SERVER_NODE_ID = Array(1 -> 1224, 2 -> 1225, 3 -> 1226)
   override val GLOBAL_SETTING = Map[String, String](
     "zookeeper.address" -> zookeeperString,

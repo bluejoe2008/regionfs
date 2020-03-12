@@ -9,8 +9,8 @@ import org.junit.{Assert, Test}
 /**
   * Created by bluejoe on 2020/3/8.
   */
-class FileReadWriteWith3NodesTest extends FileReadWriteTest {
-  override val con = new MultiNode
+class StrongConsistency3NodesFileIOTest extends SingleNodeFileIOTest {
+  override val con = new StrongMultiNode
 
   private def assertRegion(nodeId: Int, regionId: Long)(op: (Region) => Unit) = {
     val region = servers(nodeId - 1).localRegionManager.regions(regionId)

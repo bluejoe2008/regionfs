@@ -414,7 +414,7 @@ class RegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetting, l
     _createNewRegion((nodeId << 16) + regionIdSerial.incrementAndGet());
   }
 
-  def createNewReplica(regionId: Long) = {
+  def createSecondaryRegion(regionId: Long) = {
     _createNewRegion(regionId);
   }
 

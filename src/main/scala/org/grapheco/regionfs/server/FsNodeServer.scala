@@ -362,15 +362,6 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         ctx.reply(CreateRegionResponse(regionId))
       }
 
-      case PrepareToWriteFileRequest(fileSize: Long) => {
-        val (region: Region, nodeIds: Array[Int]) = chooseRegionForWrite()
-        ctx.reply(PrepareToWriteFileResponse(
-          region.regionId,
-          region.peekNextFileId(),
-          (Set(region.nodeId) ++ nodeIds).toArray)
-        )
-      }
-
       case ShutdownRequest() => {
         ctx.reply(ShutdownResponse(address))
         shutdown()
@@ -390,7 +381,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         try {
           maybeRegion.get.delete(localId)
           //is a primary region?
-          if ((regionId >> 16) == nodeId) {
+          if (globalSetting.replicaNum > 1 && (regionId >> 16) == nodeId) {
             //notify secondary regions
             val futures = mapNeighbourRegionWithNodes(regionId).map(x =>
               clientOf(x._1).endPointRef.ask[DeleteFileResponse](
@@ -456,18 +447,41 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         })
     }
 
-    private def receiveWithStreamInternal(extraInput: ByteBuffer, context: ReceiveContext): PartialFunction[Any, Unit] = {
-      case SendFileRequest(regionId: Long, fileId: FileId, totalLength: Long, crc32: Long) =>
-        //primary region
-        val region = localRegionManager.get(regionId).get
-        val clone = extraInput.duplicate()
-
-        if (globalSetting.enableCrc && CrcUtils.computeCrc32(clone) != crc32) {
+    private def receiveWithStreamInternal(extraInput: ByteBuffer, ctx: ReceiveContext): PartialFunction[Any, Unit] = {
+      case CreateSecondaryFileRequest(regionId: Long, localId: Long, totalLength: Long, crc32: Long) => {
+        if (globalSetting.enableCrc && CrcUtils.computeCrc32(extraInput.duplicate()) != crc32) {
           throw new ReceiveTimeMismatchedCheckSumException();
         }
 
-        val (localId, revision) = region.write(extraInput, crc32)
-        context.reply(SendFileResponse(nodeId, FileId.make(regionId, localId), revision))
+        val region = localRegionManager.get(regionId).get
+        val (localId, revision) = region.write(extraInput.duplicate(), crc32)
+        ctx.reply(CreateFileResponse(nodeId, FileId.make(regionId, localId), revision))
+      }
+
+      case CreateFileRequest(totalLength: Long, crc32: Long) =>
+        //primary region
+        if (globalSetting.enableCrc && CrcUtils.computeCrc32(extraInput.duplicate()) != crc32) {
+          throw new ReceiveTimeMismatchedCheckSumException();
+        }
+
+        val (region: Region, neighbourNodeIds: Array[Int]) = chooseRegionForWrite()
+        val regionId = region.regionId;
+
+        val (localId, revision) = region.write(extraInput.duplicate(), crc32)
+
+        //i am a primary region
+        if (globalSetting.replicaNum > 1 &&
+          globalSetting.consistencyStrategy == Constants.CONSISTENCY_STRATEGY_STRONG) {
+          val futures =
+            neighbourNodeIds.map(x => clientOf(x).endPointRef.askWithStream[CreateFileResponse](
+              CreateSecondaryFileRequest(regionId, localId, totalLength, crc32),
+              (buf) => buf.writeBytes(extraInput.duplicate())))
+
+          //TODO: consistency check
+          futures.foreach(x => Await.result(x, Duration.Inf))
+        }
+
+        ctx.reply(CreateFileResponse(nodeId, FileId.make(regionId, localId), revision))
     }
   }
 

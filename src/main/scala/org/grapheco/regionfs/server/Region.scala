@@ -127,6 +127,7 @@ class RegionTrashStore(conf: RegionConfig) {
   lazy val appenderChannel = new FileOutputStream(fileBody, true).getChannel
 
   def length = readerChannel.length()
+
   def append(localId: Long): Unit = {
     val buf = ByteBuffer.allocate(1024)
     buf.putLong(localId)
@@ -255,7 +256,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
     fmeta.iterator.map(meta => FileId.make(regionId, meta.localId) -> meta.length)
   }
 
-  def write(buf: ByteBuffer, crc: Long): Long = {
+  def write(buf: ByteBuffer, crc: Long): (Long, Long) = {
     val crc32 =
       if (conf.globalSetting.enableCrc) {
         crc
@@ -278,7 +279,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
     })
 
     listener.handleRegionEvent(new WriteRegionEvent(this))
-    localId
+    localId -> revision
   }
 
   def close(): Unit = {

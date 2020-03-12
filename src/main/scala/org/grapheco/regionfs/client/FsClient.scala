@@ -70,29 +70,32 @@ class FsClient(zks: String) extends Logging {
 
   //get all regions
   //32768->(1,2), 32769->(1), ...
-  val arrayRegionWithNode = ArrayBuffer[(Long, Int, Long)]()
+  val arrayRegionWithNode = ArrayBuffer[(Long, Int)]()
   val mapRegionWithNodes = mutable.Map[Long, mutable.Map[Int, Long]]()
 
   val regionsWatcher = zookeeper.watchRegionList(
     new ParsedChildNodeEventHandler[(Long, Int, Long)] {
       override def onCreated(t: (Long, Int, Long)): Unit = {
-        arrayRegionWithNode += t
+        arrayRegionWithNode += t._1 -> t._2
         mapRegionWithNodes.getOrElseUpdate(t._1, mutable.Map[Int, Long]()) += (t._2 -> t._3)
       }
 
       override def onUpdated(t: (Long, Int, Long)): Unit = {
+        mapRegionWithNodes.synchronized {
+          mapRegionWithNodes(t._1).update(t._2, t._3)
+        }
       }
 
       override def onInitialized(batch: Iterable[(Long, Int, Long)]): Unit = {
         this.synchronized {
-          arrayRegionWithNode ++= batch
+          arrayRegionWithNode ++= batch.map(x => x._1 -> x._2)
           mapRegionWithNodes ++= batch.groupBy(_._1).map(x =>
             x._1 -> (mutable.Map[Int, Long]() ++ x._2.map(x => x._2 -> x._3)))
         }
       }
 
       override def onDeleted(t: (Long, Int, Long)): Unit = {
-        arrayRegionWithNode -= t
+        arrayRegionWithNode -= t._1 -> t._2
         mapRegionWithNodes -= t._1
       }
 
@@ -217,13 +220,13 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
     }
   }
 
-  def writeFile(regionId: Long, crc32: Long, fileId: FileId, content: ByteBuffer): Future[FileId] = {
+  def writeFile(regionId: Long, crc32: Long, fileId: FileId, content: ByteBuffer): Future[(Int, FileId, Long)] = {
     safeCall {
       endPointRef.askWithStream[SendFileResponse](
         SendFileRequest(regionId, fileId, content.remaining(), crc32),
         (buf: ByteBuf) => {
           buf.writeBytes(content)
-        }).map(_.fileId)
+        }).map(x => (x.nodeId, x.fileId, x.revision))
     }
   }
 

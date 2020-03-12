@@ -51,7 +51,7 @@ case class SendFileRequest(regionId: Long, fileId: FileId, totalLength: Long, cr
 
 }
 
-case class SendFileResponse(fileId: FileId) {
+case class SendFileResponse(nodeId: Int, fileId: FileId, revision: Long) {
 
 }
 

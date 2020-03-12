@@ -14,23 +14,30 @@ class Ring[T]() {
   }
 
   def -=(t: T) = {
-    val idx = _buffer.indexOf(t)
-    if (idx != -1) {
-      if (idx < pos) {
-        pos -= 1
+    this.synchronized {
+      val idx = _buffer.indexOf(t)
+
+      if (idx != -1) {
+        if (idx < pos) {
+          pos -= 1
+        }
       }
     }
   }
 
   def +=(t: T) = {
-    _buffer += t
+    this.synchronized {
+      _buffer += t
+    }
   }
 
   def ++=(t: Iterable[T]) = {
-    _buffer ++= t
+    this.synchronized {
+      _buffer ++= t
+    }
   }
 
-  def !(): T = {
+  private def unsafeTakeOne(): T = {
     if (pos >= _buffer.size)
       pos = 0;
 
@@ -40,17 +47,25 @@ class Ring[T]() {
     t
   }
 
-  def !(filter: (T) => Boolean): Option[T] = {
-    var n = _buffer.length;
-    var t: T = null.asInstanceOf[T];
-    do {
-      t = this.!()
-      n -= 1;
-    } while (!filter(t) && n >= 0)
+  def !(): T = {
+    this.synchronized {
+      unsafeTakeOne()
+    }
+  }
 
-    if (n < 0)
-      None
-    else
-      Some(t);
+  def !(filter: (T) => Boolean): Option[T] = {
+    this.synchronized {
+      var n = _buffer.length;
+      var t: T = null.asInstanceOf[T];
+      do {
+        t = unsafeTakeOne()
+        n -= 1;
+      } while (!filter(t) && n >= 0)
+
+      if (n < 0)
+        None
+      else
+        Some(t);
+    }
   }
 }

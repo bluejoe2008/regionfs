@@ -13,7 +13,7 @@ import scala.concurrent.{Await, Future}
 /**
   * Created by bluejoe on 2019/8/23.
   */
-class FileIOTestNode1 extends FileTestBase {
+class FileIOWithNode1Test extends FileTestBase {
 
   @Test
   def testWrite(): Unit = {

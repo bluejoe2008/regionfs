@@ -9,7 +9,7 @@ import org.junit.{Assert, Test}
 /**
   * Created by bluejoe on 2020/3/8.
   */
-class FileIOTestNode3Replica3Strong extends FileIOTestNode1 {
+class FileIOWithNode3Replica3StrongTest extends FileIOWithNode1Test {
   override val con = new StrongMultiNode
 
   private def assertRegion(nodeId: Int, regionId: Long)(op: (Region) => Unit) = {

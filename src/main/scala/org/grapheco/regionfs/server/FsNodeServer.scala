@@ -268,10 +268,6 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             x => x._1 -> mapNeighbourNodeWithRegionCount.getOrElse(x._1, new AtomicInteger(0)).get).
             toList.sortBy(_._2).takeRight(globalSetting.replicaNum - 1).map(_._1)
 
-          if (logger.isTraceEnabled()) {
-            logger.trace(s"chosen thin nodes: ${thinNodeIds.mkString(",")}");
-          }
-
           val futures = thinNodeIds.map(clientOf(_).endPointRef.ask[CreateRegionResponse](
             CreateRegionRequest(regionId)))
 
@@ -470,8 +466,8 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
           throw new ReceiveTimeMismatchedCheckSumException();
         }
 
-        val localId = region.write(extraInput, crc32)
-        context.reply(SendFileResponse(FileId.make(regionId, localId)))
+        val (localId, revision) = region.write(extraInput, crc32)
+        context.reply(SendFileResponse(nodeId, FileId.make(regionId, localId), revision))
     }
   }
 

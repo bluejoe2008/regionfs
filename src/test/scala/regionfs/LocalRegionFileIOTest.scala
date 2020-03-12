@@ -29,7 +29,7 @@ class LocalRegionFileIOTest extends FileTestBase {
     val bytes1 = IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/9999999")))
     val buf = ByteBuffer.wrap(bytes1)
 
-    val id = timing(true, 10) {
+    val (id, _) = timing(true, 10) {
       val clone = buf.duplicate()
       region.write(clone, CrcUtils.computeCrc32(buf.duplicate()))
     }

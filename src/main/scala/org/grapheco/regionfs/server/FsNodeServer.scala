@@ -268,8 +268,8 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             x => x._1 -> mapNeighbourNodeWithRegionCount.getOrElse(x._1, new AtomicInteger(0)).get).
             toList.sortBy(_._2).takeRight(globalSetting.replicaNum - 1).map(_._1)
 
-          val futures = thinNodeIds.map(clientOf(_).endPointRef.ask[CreateRegionResponse](
-            CreateRegionRequest(regionId)))
+          val futures = thinNodeIds.map(clientOf(_).endPointRef.ask[CreateSecondaryRegionResponse](
+            CreateSecondaryRegionRequest(regionId)))
 
           //hello, pls create a new region with id=regionId
           futures.foreach(Await.result(_, Duration.Inf))
@@ -356,10 +356,10 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       }
 
       //create region as replica
-      case CreateRegionRequest(regionId: Long) => {
-        val region = localRegionManager.createNewReplica(regionId)
+      case CreateSecondaryRegionRequest(regionId: Long) => {
+        val region = localRegionManager.createSecondaryRegion(regionId)
         zookeeper.createRegionNode(nodeId, region)
-        ctx.reply(CreateRegionResponse(regionId))
+        ctx.reply(CreateSecondaryRegionResponse(regionId))
       }
 
       case ShutdownRequest() => {
@@ -372,20 +372,23 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         ctx.reply(CleanDataResponse(address))
       }
 
-      case DeleteFileRequest(regionId: Long, localId: Long) => {
-        val maybeRegion = localRegionManager.get(regionId)
+      case DeleteFileRequest(fileId: FileId) => {
+        val maybeRegion = localRegionManager.get(fileId.regionId)
         if (maybeRegion.isEmpty) {
-          throw new WrongRegionIdException(regionId);
+          throw new WrongRegionIdException(fileId.regionId);
         }
 
         try {
-          maybeRegion.get.delete(localId)
+          if (maybeRegion.get.revision <= fileId.localId)
+            throw new FileNotFoundException(fileId);
+
+          maybeRegion.get.delete(fileId.localId)
           //is a primary region?
-          if (globalSetting.replicaNum > 1 && (regionId >> 16) == nodeId) {
+          if (globalSetting.replicaNum > 1 && (fileId.regionId >> 16) == nodeId) {
             //notify secondary regions
-            val futures = mapNeighbourRegionWithNodes(regionId).map(x =>
+            val futures = mapNeighbourRegionWithNodes(fileId.regionId).map(x =>
               clientOf(x._1).endPointRef.ask[DeleteFileResponse](
-                DeleteFileRequest(regionId, localId)))
+                DeleteFileRequest(fileId)))
 
             //TODO: if fail?
             futures.foreach(Await.result(_, Duration.Inf))
@@ -406,16 +409,16 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
     }
 
     private def openCompleteStreamInternal(): PartialFunction[Any, CompleteStream] = {
-      case ReadFileRequest(regionId: Long, localId: Long) => {
-        val maybeRegion = localRegionManager.get(regionId)
+      case ReadFileRequest(fileId: FileId) => {
+        val maybeRegion = localRegionManager.get(fileId.regionId)
 
         if (maybeRegion.isEmpty) {
-          throw new WrongRegionIdException(regionId);
+          throw new WrongRegionIdException(fileId.regionId);
         }
 
-        val maybeBuffer = maybeRegion.get.read(localId)
+        val maybeBuffer = maybeRegion.get.read(fileId.localId)
         if (maybeBuffer.isEmpty) {
-          throw new WrongLocalIdException(regionId, localId);
+          throw new FileNotFoundException(fileId);
         }
 
         CompleteStream.fromByteBuffer(maybeBuffer.get)
@@ -448,7 +451,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
     }
 
     private def receiveWithStreamInternal(extraInput: ByteBuffer, ctx: ReceiveContext): PartialFunction[Any, Unit] = {
-      case CreateSecondaryFileRequest(regionId: Long, localId: Long, totalLength: Long, crc32: Long) => {
+      case CreateSecondaryFileRequest(regionId: Long, localIdExpected: Long, totalLength: Long, crc32: Long) => {
         if (globalSetting.enableCrc && CrcUtils.computeCrc32(extraInput.duplicate()) != crc32) {
           throw new ReceiveTimeMismatchedCheckSumException();
         }
@@ -467,57 +470,29 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         val (region: Region, neighbourNodeIds: Array[Int]) = chooseRegionForWrite()
         val regionId = region.regionId;
 
-        val (localId, revision) = region.write(extraInput.duplicate(), crc32)
-
+        val maybeLocalId = region.revision
         //i am a primary region
         if (globalSetting.replicaNum > 1 &&
           globalSetting.consistencyStrategy == Constants.CONSISTENCY_STRATEGY_STRONG) {
+
           val futures =
             neighbourNodeIds.map(x => clientOf(x).endPointRef.askWithStream[CreateFileResponse](
-              CreateSecondaryFileRequest(regionId, localId, totalLength, crc32),
-              (buf) => buf.writeBytes(extraInput.duplicate())))
+              CreateSecondaryFileRequest(regionId, maybeLocalId, totalLength, crc32),
+              Unpooled.wrappedBuffer(extraInput.duplicate())))
+
+          //TODO: lock first
+          val (localId, revision) = region.write(extraInput.duplicate(), crc32)
 
           //TODO: consistency check
-          futures.foreach(x => Await.result(x, Duration.Inf))
+          //futures.foreach(x => Await.result(x, Duration.Inf))
+          ctx.reply(CreateFileResponse(nodeId, FileId.make(regionId, localId), revision))
         }
-
-        ctx.reply(CreateFileResponse(nodeId, FileId.make(regionId, localId), revision))
+        else {
+          val (localId, revision) = region.write(extraInput.duplicate(), crc32)
+          ctx.reply(CreateFileResponse(nodeId, FileId.make(regionId, localId), revision))
+        }
     }
   }
-
-}
-
-class RegionFsServerException(msg: String, cause: Throwable = null) extends
-  RegionFsException(msg, cause) {
-}
-
-class InsufficientNodeServerException(actual: Int, required: Int) extends
-  RegionFsServerException(s"insufficient node server for replica: actual: ${actual}, required: ${required}") {
-
-}
-
-class StoreLockedException(storeDir: File, pid: Int) extends
-  RegionFsServerException(s"store is locked by another node server: node server pid=${pid}, storeDir=${storeDir.getPath}") {
-
-}
-
-class StoreDirNotExistsException(storeDir: File) extends
-  RegionFsServerException(s"store dir does not exist: ${storeDir.getPath}") {
-
-}
-
-class WrongLocalIdException(regionId: Long, localId: Long) extends
-  RegionFsServerException(s"file #${localId} not exist in region #${regionId}") {
-
-}
-
-class WrongRegionIdException(regionId: Long) extends
-  RegionFsServerException(s"region not exist: ${regionId}") {
-
-}
-
-class ReceiveTimeMismatchedCheckSumException extends
-  RegionFsServerException(s"mismatched checksum exception on receive time") {
 
 }
 
@@ -532,9 +507,10 @@ class PrimaryRegionWatcher(zookeeper: ZooKeeperClient,
     override def run(): Unit = {
       while (!stopped) {
         Thread.sleep(conf.regionVersionCheckInterval)
-        val secondaryRegions = localRegionManager.regions.values.filter(!_.isPrimary).groupBy(x => (x.regionId >> 16).toInt)
-        secondaryRegions.foreach {
-          x => {
+        if (!stopped) {
+          val secondaryRegions = localRegionManager.regions.values.filter(!_.isPrimary).groupBy(x =>
+            (x.regionId >> 16).toInt)
+          for (x <- secondaryRegions if (!stopped)) {
             try {
               val regionIds = x._2.map(_.regionId).toArray
               val statusList = Await.result(clientOf(x._1).getRegionStatus(regionIds), Duration("2s"))
@@ -563,6 +539,8 @@ class PrimaryRegionWatcher(zookeeper: ZooKeeperClient,
             }
             catch {
               case t: Throwable =>
+                t.printStackTrace();
+
                 if (logger.isWarnEnabled())
                   logger.warn(t.getMessage)
             }
@@ -570,7 +548,7 @@ class PrimaryRegionWatcher(zookeeper: ZooKeeperClient,
         }
       }
     }
-  });
+  })
 
   def start(): PrimaryRegionWatcher = {
     thread.start();
@@ -581,4 +559,38 @@ class PrimaryRegionWatcher(zookeeper: ZooKeeperClient,
     stopped = true;
     thread.join()
   }
+}
+
+class RegionFsServerException(msg: String, cause: Throwable = null) extends
+  RegionFsException(msg, cause) {
+}
+
+class InsufficientNodeServerException(actual: Int, required: Int) extends
+  RegionFsServerException(s"insufficient node server for replica: actual: ${actual}, required: ${required}") {
+
+}
+
+class StoreLockedException(storeDir: File, pid: Int) extends
+  RegionFsServerException(s"store is locked by another node server: node server pid=${pid}, storeDir=${storeDir.getPath}") {
+
+}
+
+class StoreDirNotExistsException(storeDir: File) extends
+  RegionFsServerException(s"store dir does not exist: ${storeDir.getPath}") {
+
+}
+
+class WrongRegionIdException(regionId: Long) extends
+  RegionFsServerException(s"region not exist: ${regionId}") {
+
+}
+
+class ReceiveTimeMismatchedCheckSumException extends
+  RegionFsServerException(s"mismatched checksum exception on receive time") {
+
+}
+
+class FileNotFoundException(fileId: FileId) extends
+  RegionFsServerException(s"file not found: ${fileId.getBase64String()}") {
+
 }

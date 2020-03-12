@@ -8,7 +8,7 @@ import org.grapheco.regionfs.FileId
 import org.grapheco.regionfs.server.Region
 import org.junit.{Assert, Test}
 
-class EventualMultiModeTest extends FileReadWriteTest {
+class EventualConsistency3NodesFileIOTest extends SingleNodeFileIOTest {
   override val con = new EventualMultiNode
 
   private def assertRegion(nodeId: Int, regionId: Long)(op: (Region) => Unit) = {

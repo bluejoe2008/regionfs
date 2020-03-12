@@ -3,7 +3,7 @@ package org.grapheco.regionfs.client
 import java.io.InputStream
 import java.nio.ByteBuffer
 
-import io.netty.buffer.ByteBuf
+import io.netty.buffer.Unpooled
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.{HippoEndpointRef, HippoRpcEnv, HippoRpcEnvFactory}
 import net.neoremind.kraps.rpc.{RpcAddress, RpcEnvClientConfig}
@@ -31,7 +31,7 @@ class FsClient(zks: String) extends Logging {
     globalSetting.consistencyStrategy,
     clientOf(_), ring.!(_),
     (regionId: Long, nodeId: Int, revision: Long) => {
-      mapRegionWithNodes.getOrElse(regionId, mutable.Map()).put(nodeId, revision)
+      mapRegionWithNodes.getOrElseUpdate(regionId, mutable.Map()).put(nodeId, revision)
     });
 
   //get all nodes
@@ -211,23 +211,22 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
     safeCall {
       endPointRef.askWithStream[CreateFileResponse](
         CreateFileRequest(content.remaining(), crc32),
-        (buf: ByteBuf) => {
-          buf.writeBytes(content)
-        }).map(x => (x.nodeId, x.fileId, x.revision))
+        Unpooled.wrappedBuffer(content)
+      ).map(x => (x.nodeId, x.fileId, x.revision))
     }
   }
 
   def deleteFile(fileId: FileId): Future[Boolean] = {
     safeCall {
       endPointRef.ask[DeleteFileResponse](
-        DeleteFileRequest(fileId.regionId, fileId.localId)).map(_.success)
+        DeleteFileRequest(fileId)).map(_.success)
     }
   }
 
   def readFile[T](fileId: FileId, rpcTimeout: Duration): InputStream = {
     safeCall {
       endPointRef.getInputStream(
-        ReadFileRequest(fileId.regionId, fileId.localId),
+        ReadFileRequest(fileId),
         rpcTimeout)
     }
   }

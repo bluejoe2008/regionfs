@@ -7,7 +7,7 @@ import org.junit.Test
   * Created by bluejoe on 2020/2/8.
   */
 class ShellCmdTest extends FileTestBase {
-  override val con = new MultiNode
+  override val con = new StrongMultiNode
 
   @Test
   def testStat(): Unit = {

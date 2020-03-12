@@ -44,7 +44,7 @@ class EventualConsistencyStrategy(clientOf: (Int) => FsNodeClient, chooseNextNod
     //nodes who own newer region
     val maybeNodeId = chooseNextNode(nodeId =>
       regionOwnerNodes.contains(nodeId) && regionOwnerNodes(nodeId) > fileId.localId)
-println(regionOwnerNodes,maybeNodeId,fileId.localId)
+
     if (maybeNodeId.isEmpty)
       throw new WrongFileIdException(fileId);
 

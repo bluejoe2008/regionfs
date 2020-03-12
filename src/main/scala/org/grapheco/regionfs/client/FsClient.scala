@@ -44,6 +44,16 @@ class FsClient(zks: String) extends Logging {
         }
       }
 
+      def onUpdated(t: (Int, RpcAddress)): Unit = {
+      }
+
+      def onInitialized(batch: Iterable[(Int, RpcAddress)]): Unit = {
+        this.synchronized {
+          mapNodeWithAddress ++= batch
+          ring ++= batch.map(_._1)
+        }
+      }
+
       override def onDeleted(t: (Int, RpcAddress)): Unit = {
         mapNodeWithAddress.synchronized {
           mapNodeWithAddress -= t._1
@@ -60,22 +70,33 @@ class FsClient(zks: String) extends Logging {
 
   //get all regions
   //32768->(1,2), 32769->(1), ...
-  val arrayRegionWithNode = ArrayBuffer[(Long, Int)]()
-  val mapRegionWithNodes = mutable.Map[Long, ArrayBuffer[Int]]()
+  val arrayRegionWithNode = ArrayBuffer[(Long, Int, Long)]()
+  val mapRegionWithNodes = mutable.Map[Long, mutable.Map[Int, Long]]()
 
   val regionsWatcher = zookeeper.watchRegionList(
-    new ParsedChildNodeEventHandler[(Long, Int)] {
-      override def onCreated(t: (Long, Int)): Unit = {
+    new ParsedChildNodeEventHandler[(Long, Int, Long)] {
+      override def onCreated(t: (Long, Int, Long)): Unit = {
         arrayRegionWithNode += t
-        mapRegionWithNodes.getOrElseUpdate(t._1, ArrayBuffer()) += t._2
+        mapRegionWithNodes.getOrElseUpdate(t._1, mutable.Map[Int, Long]()) += (t._2 -> t._3)
       }
 
-      override def onDeleted(t: (Long, Int)): Unit = {
+      override def onUpdated(t: (Long, Int, Long)): Unit = {
+      }
+
+      override def onInitialized(batch: Iterable[(Long, Int, Long)]): Unit = {
+        this.synchronized {
+          arrayRegionWithNode ++= batch
+          mapRegionWithNodes ++= batch.groupBy(_._1).map(x =>
+            x._1 -> (mutable.Map[Int, Long]() ++ x._2.map(x => x._2 -> x._3)))
+        }
+      }
+
+      override def onDeleted(t: (Long, Int, Long)): Unit = {
         arrayRegionWithNode -= t
         mapRegionWithNodes -= t._1
       }
 
-      override def accepts(t: (Long, Int)): Boolean = {
+      override def accepts(t: (Long, Int, Long)): Boolean = {
         true
       }
     })
@@ -101,7 +122,7 @@ class FsClient(zks: String) extends Logging {
     val client = getWriterClient
     //prepare
     val (regionId: Long, fileId: FileId, regionOwnerNodes: Array[Int]) =
-      Await.result(client.prepareToWriteFile(content), Duration("1s"))
+      Await.result(client.prepareToWriteFile(content), Duration.Inf)
 
     val crc32 =
       if (globalSetting.enableCrc) {
@@ -111,7 +132,8 @@ class FsClient(zks: String) extends Logging {
         0
       }
 
-    consistencyStrategy.writeFile(fileId, regionOwnerNodes, crc32, content.duplicate());
+    consistencyStrategy.writeFile(fileId, regionOwnerNodes.map(x =>
+      x -> mapRegionWithNodes.get(regionId).map(_.getOrElse(x, 0L)).getOrElse(0L)).toMap, crc32, content.duplicate());
   }
 
   def getWriterClient: FsNodeClient = {
@@ -126,11 +148,11 @@ class FsClient(zks: String) extends Logging {
     if (regionOwnerNodes.isEmpty)
       throw new WrongFileIdException(fileId);
 
-    consistencyStrategy.readFile(fileId, regionOwnerNodes.get.toArray, rpcTimeout)
+    consistencyStrategy.readFile(fileId, regionOwnerNodes.get.toMap, rpcTimeout)
   }
 
   def deleteFile[T](fileId: FileId): Future[Boolean] = {
-    consistencyStrategy.deleteFile(fileId, mapRegionWithNodes(fileId.regionId).toArray)
+    consistencyStrategy.deleteFile(fileId, mapRegionWithNodes(fileId.regionId).toMap)
   }
 
   def close = {
@@ -259,70 +281,4 @@ class WrongFileIdException(fileId: FileId) extends
 class ServerRaisedException(cause: Throwable) extends
   RegionFsClientException(s"got a server side error: ${cause.getMessage}") {
 
-}
-
-trait ConsistencyStrategy {
-  def deleteFile(fileId: FileId, regionOwnerNodes: Array[Int]): Future[Boolean]
-
-  def readFile[T](fileId: FileId, regionOwnerNodes: Array[Int], rpcTimeout: Duration): InputStream
-
-  def writeFile(fileIdExpected: FileId, regionOwnerNodes: Array[Int], crc32: Long, content: ByteBuffer): Future[FileId]
-}
-
-object ConsistencyStrategy {
-  def create(strategyType: Int, clientOf: (Int) => FsNodeClient,
-             chooseNextNode: ((Int) => Boolean) => Option[Int]): ConsistencyStrategy =
-    strategyType match {
-      case Constants.CONSISTENCY_STRATEGY_EVENTUAL =>
-        new EventualConsistencyStrategy(clientOf, chooseNextNode)
-      case Constants.CONSISTENCY_STRATEGY_STRONG =>
-        new StrongConsistencyStrategy(clientOf, chooseNextNode)
-    }
-}
-
-class EventualConsistencyStrategy(clientOf: (Int) => FsNodeClient, chooseNextNode: ((Int) => Boolean) => Option[Int]) extends ConsistencyStrategy {
-  def writeFile(fileIdExpected: FileId, regionOwnerNodes: Array[Int], crc32: Long, content: ByteBuffer): Future[FileId] = {
-    //only primary region's being written is necessary
-    clientOf((fileIdExpected.regionId >> 16).toInt).writeFile(fileIdExpected.regionId, crc32, fileIdExpected, content.duplicate())
-  }
-
-  def readFile[T](fileId: FileId, regionOwnerNodes: Array[Int], rpcTimeout: Duration): InputStream = {
-    clientOf((fileId.regionId >> 16).toInt).readFile(fileId, rpcTimeout)
-  }
-
-  def deleteFile(fileId: FileId, regionOwnerNodes: Array[Int]): Future[Boolean] = {
-    clientOf((fileId.regionId >> 16).toInt).deleteFile(fileId)
-  }
-}
-
-class StrongConsistencyStrategy(clientOf: (Int) => FsNodeClient, chooseNextNode: ((Int) => Boolean) => Option[Int]) extends ConsistencyStrategy {
-  def writeFile(fileIdExpected: FileId, regionOwnerNodes: Array[Int], crc32: Long, content: ByteBuffer): Future[FileId] = {
-    val futures =
-      regionOwnerNodes.map(clientOf(_).writeFile(fileIdExpected.regionId, crc32, fileIdExpected, content.duplicate()))
-
-    Future {
-      //TODO: consistency check
-      futures.map(x => Await.result(x, Duration.Inf)).head
-    }
-  }
-
-  def readFile[T](fileId: FileId, regionOwnerNodes: Array[Int], rpcTimeout: Duration): InputStream = {
-    val map = regionOwnerNodes.map((_, 1)).toMap
-    val maybeNodeId = chooseNextNode(map.contains(_))
-    if (maybeNodeId.isEmpty)
-      throw new WrongFileIdException(fileId);
-
-    clientOf(maybeNodeId.get).readFile(fileId, rpcTimeout)
-  }
-
-  def deleteFile(fileId: FileId, regionOwnerNodes: Array[Int]): Future[Boolean] = {
-    val futures = regionOwnerNodes.map(clientOf(_).deleteFile(fileId))
-
-    if (futures.isEmpty)
-      throw new WrongFileIdException(fileId);
-
-    Future {
-      futures.map(Await.result(_, Duration.Inf)).head
-    }
-  }
 }

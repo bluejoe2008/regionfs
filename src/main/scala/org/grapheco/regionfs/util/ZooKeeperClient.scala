@@ -1,6 +1,6 @@
 package org.grapheco.regionfs.util
 
-import java.io.{ByteArrayInputStream, ByteArrayOutputStream, Closeable}
+import java.io._
 import java.util.Properties
 import java.util.concurrent.Executors
 
@@ -57,9 +57,20 @@ class ZooKeeperClient(curator: CuratorFramework) {
     }
   }
 
+  private def toByteArray(write: (DataOutputStream) => Unit): Array[Byte] = {
+    val baos = new ByteArrayOutputStream()
+    val dos = new DataOutputStream(baos)
+    write(dos)
+    baos.toByteArray
+  }
+
+  def updateRegionNode(nodeId: Int, region: Region) = {
+    curator.setData().forPath(s"/regionfs/regions/${nodeId}_${region.regionId}", toByteArray(_.writeLong(region.revision)))
+  }
+
   def createRegionNode(nodeId: Int, region: Region) = {
     curator.create().withMode(CreateMode.EPHEMERAL).forPath(
-      s"/regionfs/regions/${nodeId}_${region.regionId}")
+      s"/regionfs/regions/${nodeId}_${region.regionId}", toByteArray(_.writeLong(region.revision)))
   }
 
   def createNodeNode(nodeId: Int, address: RpcAddress) = {
@@ -129,11 +140,14 @@ class ZooKeeperClient(curator: CuratorFramework) {
     *    2_65536
     *    ...
     */
-  def watchRegionList(handler: ParsedChildNodeEventHandler[(Long, Int)]): Closeable = {
+  def watchRegionList(handler: ParsedChildNodeEventHandler[(Long, Int, Long)]): Closeable = {
     watchParsedChildrenPath("/regionfs/regions", handler)((data: ChildData) => {
       val path = data.getPath.substring("/regionfs/regions".length + 1)
       val splits = path.split("_")
-      splits(1).toLong -> splits(0).toInt
+      val is = new DataInputStream(new ByteArrayInputStream(data.getData))
+      val revision = is.readLong()
+      is.close()
+      (splits(1).toLong, splits(0).toInt, revision)
     });
   }
 
@@ -145,8 +159,14 @@ class ZooKeeperClient(curator: CuratorFramework) {
           handler.onCreated(t)
       }
 
+      def onChildUpdated(data: ChildData): Unit = {
+        val t = parse(data)
+        if (handler.accepts(t))
+          handler.onUpdated(t)
+      }
+
       def onInitialized(batch: Iterable[ChildData]): Unit = {
-        batch.foreach(onChildAdded(_))
+        handler.onInitialized(batch.map(parse(_)).filter(handler.accepts(_)))
       }
 
       override def onChildRemoved(data: ChildData): Unit = {
@@ -170,6 +190,9 @@ class ZooKeeperClient(curator: CuratorFramework) {
           case PathChildrenCacheEvent.Type.CHILD_REMOVED =>
             handler.onChildRemoved(pathChildrenCacheEvent.getData)
 
+          case PathChildrenCacheEvent.Type.CHILD_UPDATED =>
+            handler.onChildUpdated(pathChildrenCacheEvent.getData)
+
           case _ =>
           //ignore!
         }
@@ -192,6 +215,8 @@ class ZooKeeperClient(curator: CuratorFramework) {
 trait ChildNodeEventHandler {
   def onChildAdded(data: ChildData);
 
+  def onChildUpdated(data: ChildData);
+
   def onInitialized(batch: Iterable[ChildData]);
 
   def onChildRemoved(data: ChildData);
@@ -199,6 +224,10 @@ trait ChildNodeEventHandler {
 
 trait ParsedChildNodeEventHandler[T] {
   def onCreated(t: T);
+
+  def onUpdated(t: T);
+
+  def onInitialized(batch: Iterable[T]);
 
   def accepts(t: T): Boolean;
 

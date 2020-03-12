@@ -16,7 +16,6 @@ import org.grapheco.regionfs.client._
 import org.grapheco.regionfs.util.{CrcUtils, ParsedChildNodeEventHandler, RegionFsException, ZooKeeperClient}
 
 import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
 
@@ -84,7 +83,8 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         }
 
         case WriteRegionEvent(region) => {
-          //
+          if (globalSetting.consistencyStrategy == Constants.CONSISTENCY_STRATEGY_EVENTUAL)
+            zookeeper.updateRegionNode(region.nodeId, region)
         }
       }
     }
@@ -99,6 +99,16 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
     new ParsedChildNodeEventHandler[(Int, RpcAddress)] {
       override def onCreated(t: (Int, RpcAddress)): Unit = {
         mapNeighbourNodeWithAddress += t
+      }
+
+      def onUpdated(t: (Int, RpcAddress)): Unit = {
+      }
+
+      def onInitialized(batch: Iterable[(Int, RpcAddress)]): Unit = {
+        mapNeighbourNodeWithAddress.synchronized {
+          mapNeighbourNodeWithAddress.clear()
+          mapNeighbourNodeWithAddress ++= batch
+        }
       }
 
       override def onDeleted(t: (Int, RpcAddress)): Unit = {
@@ -120,23 +130,44 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
   }
 
   //get regions in neighbour nodes
+  //TODO: unneccesary for secondary regions?
   //32768->(1,2), 32769->(1), ...
-  var mapNeighbourRegionWithNodes = mutable.Map[Long, ArrayBuffer[Int]]()
-  var mapNeighbourNodeWithRegionCount = mutable.ListMap[Int, AtomicInteger]()
+  val mapNeighbourRegionWithNodes = mutable.Map[Long, mutable.Map[Int, Long]]()
+  val mapNeighbourNodeWithRegionCount = mutable.ListMap[Int, AtomicInteger]()
 
   val neighbourRegionsWatcher = zookeeper.watchRegionList(
-    new ParsedChildNodeEventHandler[(Long, Int)] {
-      override def onCreated(t: (Long, Int)): Unit = {
-        mapNeighbourNodeWithRegionCount.getOrElseUpdate(t._2, new AtomicInteger(0)).incrementAndGet()
-        mapNeighbourRegionWithNodes.getOrElseUpdate(t._1, ArrayBuffer()) += t._2
+    new ParsedChildNodeEventHandler[(Long, Int, Long)] {
+      override def onCreated(t: (Long, Int, Long)): Unit = {
+        this.synchronized {
+          mapNeighbourNodeWithRegionCount.getOrElseUpdate(t._2, new AtomicInteger(0)).incrementAndGet()
+          mapNeighbourRegionWithNodes.getOrElseUpdate(t._1, mutable.Map[Int, Long]()) += (t._2 -> t._3)
+        }
       }
 
-      override def onDeleted(t: (Long, Int)): Unit = {
-        mapNeighbourNodeWithRegionCount(t._2).decrementAndGet()
-        mapNeighbourRegionWithNodes(t._1) -= t._2
+      def onUpdated(t: (Long, Int, Long)): Unit = {
+        mapNeighbourRegionWithNodes.synchronized {
+          mapNeighbourRegionWithNodes(t._1).update(t._2, t._3)
+        }
       }
 
-      override def accepts(t: (Long, Int)): Boolean = {
+      def onInitialized(batch: Iterable[(Long, Int, Long)]): Unit = {
+        this.synchronized {
+          mapNeighbourRegionWithNodes.clear()
+          mapNeighbourNodeWithRegionCount.clear()
+          mapNeighbourRegionWithNodes ++= batch.groupBy(_._1).map(x =>
+            x._1 -> (mutable.Map[Int, Long]() ++ x._2.map(y => y._2 -> y._3)))
+          mapNeighbourNodeWithRegionCount ++= batch.groupBy(_._2).map(x => x._1 -> new AtomicInteger(x._2.size))
+        }
+      }
+
+      override def onDeleted(t: (Long, Int, Long)): Unit = {
+        this.synchronized {
+          mapNeighbourNodeWithRegionCount(t._2).decrementAndGet()
+          mapNeighbourRegionWithNodes(t._1) -= t._2
+        }
+      }
+
+      override def accepts(t: (Long, Int, Long)): Boolean = {
         nodeId != t._2
       }
     })
@@ -257,14 +288,14 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
     private def chooseRegionForWrite(): (Region, Array[Int]) = {
       localRegionManager.synchronized {
-        val writableRegions = localRegionManager.regions.values.toArray.filter(x => x.isWritable).sortBy(_.length);
+        val writableRegions = localRegionManager.regions.values.toArray.filter(x => x.isWritable);
         //too few regions
         if (writableRegions.size < globalSetting.minWritableRegions) {
           createNewRegion()
         }
         else {
-          val region = writableRegions(0)
-          region -> mapNeighbourRegionWithNodes.get(region.regionId).map(_.toArray).getOrElse(Array[Int]())
+          val region = writableRegions.sortBy(_.length).head
+          region -> mapNeighbourRegionWithNodes.get(region.regionId).map(_.map(_._1).toArray).getOrElse(Array[Int]())
         }
       }
     }
@@ -362,13 +393,17 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
         try {
           maybeRegion.get.delete(localId)
-          //notify neigbours
-          //TODO: filter(ownsNewVersion)
-          val futures = mapNeighbourRegionWithNodes(regionId).filter(_ => true).map(clientOf(_).endPointRef.ask[CreateRegionResponse](
-            DeleteFileRequest(regionId, localId)))
+          //is a primary region?
+          if ((regionId >> 16) == nodeId) {
+            //notify secondary regions
+            val futures = mapNeighbourRegionWithNodes(regionId).map(x =>
+              clientOf(x._1).endPointRef.ask[DeleteFileResponse](
+                DeleteFileRequest(regionId, localId)))
 
-          //TODO: if fail?
-          futures.foreach(Await.result(_, Duration("4s")))
+            //TODO: if fail?
+            futures.foreach(Await.result(_, Duration.Inf))
+          }
+
           ctx.reply(DeleteFileResponse(true, null))
         }
         catch {

@@ -26,7 +26,7 @@ class FsAdmin(zks: String) extends FsClient(zks: String) {
   }
 
   def getRegionsWithListOfNodes(): Map[Long, Array[Int]] = {
-    mapRegionWithNodes.map(x => x._1 -> x._2.toArray).toMap
+    mapRegionWithNodes.map(x => x._1 -> x._2.map(_._1).toArray).toMap
   }
 
   def getRegions(): Iterable[Long] = {
@@ -38,7 +38,7 @@ class FsAdmin(zks: String) extends FsClient(zks: String) {
   }
 
   def getNodes(regionId: Long): Iterable[Int] = {
-    mapRegionWithNodes(regionId)
+    mapRegionWithNodes(regionId).map(_._1)
   }
 
   def getNodes(): Iterable[Int] = {

@@ -17,7 +17,7 @@ class EventualMultiModeTest extends FileReadWriteTest {
   private def getNodeId(fid: FileId): Int = (fid.regionId >> 16).toInt
 
   @Test
-  def testSync(): Unit = {
+  def testRegionSync(): Unit = {
     //we have started 3 nodes
     Assert.assertEquals(3, admin.getNodes().size)
 

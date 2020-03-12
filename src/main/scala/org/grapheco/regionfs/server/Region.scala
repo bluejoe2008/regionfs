@@ -28,11 +28,11 @@ case class MetaData(localId: Long, offset: Long, length: Long, crc32: Long) {
 }
 
 //[localId:Long][offset:Long][length:Long][crc32:Long][flag:Long]
-class RegionMetaStore(conf: RegionConfig) {
+class RegionMetaStore(conf: RegionConfig) extends Logging {
   lazy val fileMetaFile = new File(conf.regionDir, "meta")
   lazy val fptr = new RandomAccessFile(fileMetaFile, "rw");
 
-  val cache: Cache[Long, Option[MetaData]] = new FixSizedCache[Long, Option[MetaData]](1024);
+  val cache: Cache[Long, MetaData] = new FixSizedCache[Long, MetaData](1024);
 
   def iterator(): Iterator[MetaData] = {
     (0 to cursor.current.toInt - 1).iterator.map(read(_).get)
@@ -41,35 +41,24 @@ class RegionMetaStore(conf: RegionConfig) {
   //local id as offset
   val block = new Array[Byte](Constants.METADATA_ENTRY_LENGTH_WITH_PADDING);
 
-  def markDeleted(localId: Long): Unit = {
-    fptr.synchronized {
-      fptr.seek(Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * localId + 4 * 8)
-      fptr.writeByte(1)
-    }
-    cache.put(localId, None)
-  }
-
   def read(localId: Long): Option[MetaData] = {
-    cache.get(localId).getOrElse {
-      fptr.synchronized {
-        fptr.seek(Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * localId)
-        fptr.readFully(block)
+    if (localId >= cursor.current) {
+      None
+    }
+    else {
+      cache.get(localId).orElse {
+        fptr.synchronized {
+          fptr.seek(Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * localId)
+          fptr.readFully(block)
+        }
+
+        val dis = new DataInputStream(new ByteArrayInputStream(block))
+        val info = MetaData(dis.readLong(), dis.readLong(), dis.readLong(), dis.readLong())
+        dis.close()
+
+        cache.put(localId, info)
+        Some(info)
       }
-
-      val dis = new DataInputStream(new ByteArrayInputStream(block))
-      val info = MetaData(dis.readLong(), dis.readLong(), dis.readLong(), dis.readLong())
-      val entry =
-      //deleted?
-        if (dis.readByte() != 0) {
-          None
-        }
-        else {
-          Some(info)
-        }
-      dis.close()
-
-      cache.put(localId, entry)
-      entry
     }
   }
 
@@ -88,9 +77,9 @@ class RegionMetaStore(conf: RegionConfig) {
       fptr.seek(Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * localId)
       fptr.write(block.toByteArray)
     }
-    dos.close()
 
-    cache.put(localId, Some(MetaData(localId, offset, length, crc32)))
+    dos.close()
+    cache.put(localId, MetaData(localId, offset, length, crc32))
   }
 
   //since=0,tail=1
@@ -128,6 +117,57 @@ class Cursor(position: AtomicLong) {
   def current = position.get()
 
   def close(): Unit = {
+  }
+}
+
+class RegionTrashStore(conf: RegionConfig) {
+  private val fileBody = new File(conf.regionDir, "trash")
+  val cursor = new AtomicLong(fileBody.length())
+  lazy val readerChannel = new RandomAccessFile(fileBody, "r")
+  lazy val appenderChannel = new FileOutputStream(fileBody, true).getChannel
+
+  def length = readerChannel.length()
+  def append(localId: Long): Unit = {
+    val buf = ByteBuffer.allocate(1024)
+    buf.putLong(localId)
+    appenderChannel.synchronized {
+      appenderChannel.write(buf)
+    }
+  }
+
+  def close(): Unit = {
+    appenderChannel.close()
+    readerChannel.close()
+  }
+
+  val bytes = new Array[Byte](8 * 1024);
+
+  def contains(localId: Long): Boolean = {
+    if (length == 0)
+      false
+    else {
+      var off = 0;
+      var nread = 0;
+      var found = false;
+      //TODO: use page-cache
+      readerChannel.synchronized {
+        readerChannel.seek(0)
+        do {
+          nread = readerChannel.read(bytes, off, bytes.length)
+          if (nread > 0) {
+            off += nread;
+            val dis = new DataInputStream(new ByteArrayInputStream(bytes, 0, nread))
+            while (!found) {
+              if (localId == dis.readLong) {
+                found = true;
+              }
+            }
+          }
+        } while (nread > 0 && !found)
+      }
+
+      found
+    }
   }
 }
 
@@ -200,6 +240,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
   //metadata file
   private lazy val fbody = new RegionBodyStore(conf)
   private lazy val fmeta = new RegionMetaStore(conf)
+  private lazy val ftrash = new RegionTrashStore(conf)
   private lazy val cursor = fmeta.cursor
 
   def revision = cursor.current
@@ -236,23 +277,28 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
         logger.trace(s"[region-${regionId}@${nodeId}] written: localId=$id, length=${length}, actual=${actualWritten}")
     })
 
-    //listener.handleRegionEvent(new WriteRegionEvent(this))
+    listener.handleRegionEvent(new WriteRegionEvent(this))
     localId
   }
 
   def close(): Unit = {
     fbody.close()
     fmeta.close()
+    ftrash.close()
     cursor.close()
   }
 
   def read(localId: Long): Option[ByteBuffer] = {
-    val maybeMeta = fmeta.read(localId)
-    maybeMeta.map(meta => fbody.read(meta.offset, meta.length.toInt))
+    if (ftrash.contains(localId))
+      None
+    else {
+      val maybeMeta = fmeta.read(localId)
+      maybeMeta.map(meta => fbody.read(meta.offset, meta.length.toInt))
+    }
   }
 
   def delete(localId: Long): Unit = {
-    fmeta.markDeleted(localId)
+    ftrash.append(localId)
   }
 
   def offerPatch(since: Long): ByteBuf = {
@@ -387,12 +433,10 @@ class RegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetting, l
       //create a new region
       val regionDir = new File(storeDir, s"$regionId")
       regionDir.mkdir()
-      //region file, one file for each region by far
-      val fileBody = new File(regionDir, "body")
-      fileBody.createNewFile()
-      //metadata file
-      val fileMeta = new File(regionDir, "meta")
-      fileMeta.createNewFile()
+
+      new File(regionDir, "body").createNewFile()
+      new File(regionDir, "meta").createNewFile()
+      new File(regionDir, "trash").createNewFile()
 
       if (logger.isTraceEnabled())
         logger.trace(s"[region-${regionId}@${nodeId}] created: dir=$regionDir")

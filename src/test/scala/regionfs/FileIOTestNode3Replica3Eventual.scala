@@ -8,7 +8,7 @@ import org.grapheco.regionfs.FileId
 import org.grapheco.regionfs.server.Region
 import org.junit.{Assert, Test}
 
-class EventualConsistency3NodesFileIOTest extends SingleNodeFileIOTest {
+class FileIOTestNode3Replica3Eventual extends FileIOTestNode1 {
   override val con = new EventualMultiNode
 
   private def assertRegion(nodeId: Int, regionId: Long)(op: (Region) => Unit) = {
@@ -82,7 +82,7 @@ class EventualConsistency3NodesFileIOTest extends SingleNodeFileIOTest {
     //now, we write large files
     (1 to 10).foreach(x => super.writeFile(new File(s"./testdata/inputs/9999999")))
     val fid2 = super.writeFile(new File(s"./testdata/inputs/9999999"))
-    Thread.sleep(10000);
+    Thread.sleep(4000);
 
     (1 to 3).foreach { nodeId =>
       assertRegion(nodeId, fid2.regionId) {

@@ -471,25 +471,32 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         val regionId = region.regionId;
 
         val maybeLocalId = region.revision
-        //i am a primary region
-        if (globalSetting.replicaNum > 1 &&
-          globalSetting.consistencyStrategy == Constants.CONSISTENCY_STRATEGY_STRONG) {
+        val mutex = zookeeper.createRegionLock(regionId)
+        mutex.acquire()
+        try {
+          //i am a primary region
+          if (globalSetting.replicaNum > 1 &&
+            globalSetting.consistencyStrategy == Constants.CONSISTENCY_STRATEGY_STRONG) {
 
-          val futures =
-            neighbourNodeIds.map(x => clientOf(x).endPointRef.askWithStream[CreateFileResponse](
-              CreateSecondaryFileRequest(regionId, maybeLocalId, totalLength, crc32),
-              Unpooled.wrappedBuffer(extraInput.duplicate())))
+            val futures =
+              neighbourNodeIds.map(x => clientOf(x).endPointRef.askWithStream[CreateFileResponse](
+                CreateSecondaryFileRequest(regionId, maybeLocalId, totalLength, crc32),
+                Unpooled.wrappedBuffer(extraInput.duplicate())))
 
-          //TODO: lock first
-          val (localId, revision) = region.write(extraInput.duplicate(), crc32)
+            //TODO: lock first
+            val (localId, revision) = region.write(extraInput.duplicate(), crc32)
 
-          //TODO: consistency check
-          //futures.foreach(x => Await.result(x, Duration.Inf))
-          ctx.reply(CreateFileResponse(nodeId, FileId.make(regionId, localId), revision))
+            //TODO: consistency check
+            //futures.foreach(x => Await.result(x, Duration.Inf))
+            ctx.reply(CreateFileResponse(nodeId, FileId.make(regionId, localId), revision))
+          }
+          else {
+            val (localId, revision) = region.write(extraInput.duplicate(), crc32)
+            ctx.reply(CreateFileResponse(nodeId, FileId.make(regionId, localId), revision))
+          }
         }
-        else {
-          val (localId, revision) = region.write(extraInput.duplicate(), crc32)
-          ctx.reply(CreateFileResponse(nodeId, FileId.make(regionId, localId), revision))
+        finally {
+          mutex.release()
         }
     }
   }
@@ -539,8 +546,6 @@ class PrimaryRegionWatcher(zookeeper: ZooKeeperClient,
             }
             catch {
               case t: Throwable =>
-                t.printStackTrace();
-
                 if (logger.isWarnEnabled())
                   logger.warn(t.getMessage)
             }

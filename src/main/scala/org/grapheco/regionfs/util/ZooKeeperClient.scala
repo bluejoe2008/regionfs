@@ -7,6 +7,7 @@ import java.util.concurrent.Executors
 import net.neoremind.kraps.rpc.RpcAddress
 import org.apache.curator.framework.recipes.cache.PathChildrenCache.StartMode
 import org.apache.curator.framework.recipes.cache.{ChildData, PathChildrenCache, PathChildrenCacheEvent, PathChildrenCacheListener}
+import org.apache.curator.framework.recipes.locks.InterProcessMutex
 import org.apache.curator.framework.{CuratorFramework, CuratorFrameworkFactory}
 import org.apache.curator.retry.ExponentialBackoffRetry
 import org.apache.zookeeper.CreateMode
@@ -43,6 +44,10 @@ object ZooKeeperClient extends Logging {
 
 class ZooKeeperClient(curator: CuratorFramework) {
   val pool = Executors.newFixedThreadPool(5);
+
+  def createRegionLock(regionId: Long): InterProcessMutex = {
+    new InterProcessMutex(curator, s"/regionfs/lock_$regionId");
+  }
 
   def createAbsentNodes() {
     curator.create().orSetData().forPath("/regionfs")

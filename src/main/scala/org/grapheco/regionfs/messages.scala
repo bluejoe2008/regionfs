@@ -47,11 +47,15 @@ case class ListFileResponseDetail(result: (FileId, Long)) {
 
 }
 
-case class SendFileRequest(regionId: Long, fileId: FileId, totalLength: Long, crc32: Long) {
+case class CreateSecondaryFileRequest(regionId: Long, localId: Long, totalLength: Long, crc32: Long) {
 
 }
 
-case class SendFileResponse(nodeId: Int, fileId: FileId, revision: Long) {
+case class CreateFileRequest(totalLength: Long, crc32: Long) {
+
+}
+
+case class CreateFileResponse(nodeId: Int, fileId: FileId, revision: Long) {
 
 }
 

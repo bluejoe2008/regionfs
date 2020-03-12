@@ -6,8 +6,8 @@ import java.nio.ByteBuffer
 import org.grapheco.regionfs.{Constants, FileId}
 
 import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Future
 import scala.concurrent.duration.Duration
-import scala.concurrent.{Await, Future}
 
 /**
   * Created by bluejoe on 2020/3/12.
@@ -17,55 +17,55 @@ trait ConsistencyStrategy {
 
   def readFile[T](fileId: FileId, regionOwnerNodes: Map[Int, Long], rpcTimeout: Duration): InputStream
 
-  def writeFile(fileIdExpected: FileId, regionOwnerNodes: Map[Int, Long], crc32: Long, content: ByteBuffer): Future[FileId]
+  def writeFile(chosedNodeId: Int, crc32: Long, content: ByteBuffer): Future[FileId]
 }
 
 object ConsistencyStrategy {
   def create(strategyType: Int, clientOf: (Int) => FsNodeClient,
-             chooseNextNode: ((Int) => Boolean) => Option[Int]): ConsistencyStrategy =
+             chooseNextNode: ((Int) => Boolean) => Option[Int],
+             updateLocalRegionCache: (Long, Int, Long) => Unit): ConsistencyStrategy =
     strategyType match {
       case Constants.CONSISTENCY_STRATEGY_EVENTUAL =>
-        new EventualConsistencyStrategy(clientOf, chooseNextNode)
+        new EventualConsistencyStrategy(clientOf, chooseNextNode, updateLocalRegionCache)
       case Constants.CONSISTENCY_STRATEGY_STRONG =>
-        new StrongConsistencyStrategy(clientOf, chooseNextNode)
+        new StrongConsistencyStrategy(clientOf, chooseNextNode, updateLocalRegionCache)
     }
 }
 
-class EventualConsistencyStrategy(clientOf: (Int) => FsNodeClient, chooseNextNode: ((Int) => Boolean) => Option[Int]) extends ConsistencyStrategy {
-  val strongOne = new StrongConsistencyStrategy(clientOf, chooseNextNode);
+class EventualConsistencyStrategy(clientOf: (Int) => FsNodeClient,
+                                  chooseNextNode: ((Int) => Boolean) => Option[Int],
+                                  updateLocalRegionCache: (Long, Int, Long) => Unit) extends ConsistencyStrategy {
+  val strongOne = new StrongConsistencyStrategy(clientOf, chooseNextNode, updateLocalRegionCache);
 
-  def writeFile(fileIdExpected: FileId, regionOwnerNodes: Map[Int, Long], crc32: Long, content: ByteBuffer): Future[FileId] = {
-    //only primary region is allowed to write
-    clientOf((fileIdExpected.regionId >> 16).toInt).writeFile(
-      fileIdExpected.regionId, crc32, fileIdExpected, content.duplicate()).map(_._2)
+  def writeFile(chosedNodeId: Int, crc32: Long, content: ByteBuffer): Future[FileId] = {
+    strongOne.writeFile(chosedNodeId, crc32: Long, content)
   }
 
   def readFile[T](fileId: FileId, regionOwnerNodes: Map[Int, Long], rpcTimeout: Duration): InputStream = {
     //nodes who own newer region
-    val maybeNodeId = chooseNextNode(nodeId =>
-      regionOwnerNodes.contains(nodeId) && regionOwnerNodes(nodeId) > fileId.localId)
+    val maybeNodeId =
+      chooseNextNode(nodeId =>
+        regionOwnerNodes.contains(nodeId) && regionOwnerNodes(nodeId) > fileId.localId)
 
     if (maybeNodeId.isEmpty)
       throw new WrongFileIdException(fileId);
-
     clientOf(maybeNodeId.get).readFile(fileId, rpcTimeout)
   }
 
   def deleteFile(fileId: FileId, regionOwnerNodes: Map[Int, Long]): Future[Boolean] = {
-    //clientOf((fileId.regionId >> 16).toInt).deleteFile(fileId)
     strongOne.deleteFile(fileId, regionOwnerNodes)
   }
 }
 
-class StrongConsistencyStrategy(clientOf: (Int) => FsNodeClient, chooseNextNode: ((Int) => Boolean) => Option[Int]) extends ConsistencyStrategy {
-  def writeFile(fileIdExpected: FileId, regionOwnerNodes: Map[Int, Long], crc32: Long, content: ByteBuffer): Future[FileId] = {
-    val futures =
-      regionOwnerNodes.map(x => clientOf(x._1).writeFile(fileIdExpected.regionId, crc32, fileIdExpected, content.duplicate()))
-
-    Future {
-      //TODO: consistency check
-      futures.map(x => Await.result(x, Duration.Inf)).map(_._2).head
-    }
+class StrongConsistencyStrategy(clientOf: (Int) => FsNodeClient,
+                                chooseNextNode: ((Int) => Boolean) => Option[Int],
+                                updateLocalRegionCache: (Long, Int, Long) => Unit) extends ConsistencyStrategy {
+  def writeFile(chosedNodeId: Int, crc32: Long, content: ByteBuffer): Future[FileId] = {
+    //only primary region is allowed to write
+    clientOf(chosedNodeId).writeFile(crc32, content.duplicate()).map(x => {
+      updateLocalRegionCache(x._2.regionId, x._1, x._3)
+      x._2
+    })
   }
 
   def readFile[T](fileId: FileId, regionOwnerNodes: Map[Int, Long], rpcTimeout: Duration): InputStream = {

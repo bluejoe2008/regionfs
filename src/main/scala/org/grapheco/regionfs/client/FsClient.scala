@@ -15,8 +15,8 @@ import org.grapheco.regionfs.util._
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Future
 import scala.concurrent.duration.Duration
-import scala.concurrent.{Await, Future}
 
 /**
   * a client to regionfs servers
@@ -28,7 +28,11 @@ class FsClient(zks: String) extends Logging {
   val ring = new Ring[Int]()
 
   val consistencyStrategy: ConsistencyStrategy = ConsistencyStrategy.create(
-    globalSetting.consistencyStrategy, clientOf(_), ring.!(_));
+    globalSetting.consistencyStrategy,
+    clientOf(_), ring.!(_),
+    (regionId: Long, nodeId: Int, revision: Long) => {
+      mapRegionWithNodes.getOrElse(regionId, mutable.Map()).put(nodeId, revision)
+    });
 
   //get all nodes
   val cachedClients = mutable.Map[Int, FsNodeClient]()
@@ -122,11 +126,7 @@ class FsClient(zks: String) extends Logging {
   }
 
   def writeFile(content: ByteBuffer): Future[FileId] = {
-    val client = getWriterClient
-    //prepare
-    val (regionId: Long, fileId: FileId, regionOwnerNodes: Array[Int]) =
-      Await.result(client.prepareToWriteFile(content), Duration.Inf)
-
+    assertNodesNotEmpty();
     val crc32 =
       if (globalSetting.enableCrc) {
         CrcUtils.computeCrc32(content.duplicate())
@@ -135,13 +135,7 @@ class FsClient(zks: String) extends Logging {
         0
       }
 
-    consistencyStrategy.writeFile(fileId, regionOwnerNodes.map(x =>
-      x -> mapRegionWithNodes.get(regionId).map(_.getOrElse(x, 0L)).getOrElse(0L)).toMap, crc32, content.duplicate());
-  }
-
-  def getWriterClient: FsNodeClient = {
-    assertNodesNotEmpty();
-    clientOf(writerSelector.select())
+    consistencyStrategy.writeFile(writerSelector.select(), crc32, content);
   }
 
   def readFile[T](fileId: FileId, rpcTimeout: Duration): InputStream = {
@@ -213,17 +207,10 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
     }
   }
 
-  def prepareToWriteFile(content: ByteBuffer): Future[(Long, FileId, Array[Int])] = {
+  def writeFile(crc32: Long, content: ByteBuffer): Future[(Int, FileId, Long)] = {
     safeCall {
-      endPointRef.ask[PrepareToWriteFileResponse](
-        PrepareToWriteFileRequest(content.remaining())).map(x => (x.regionId, x.fileId, x.regionOwnerNodes))
-    }
-  }
-
-  def writeFile(regionId: Long, crc32: Long, fileId: FileId, content: ByteBuffer): Future[(Int, FileId, Long)] = {
-    safeCall {
-      endPointRef.askWithStream[SendFileResponse](
-        SendFileRequest(regionId, fileId, content.remaining(), crc32),
+      endPointRef.askWithStream[CreateFileResponse](
+        CreateFileRequest(content.remaining(), crc32),
         (buf: ByteBuf) => {
           buf.writeBytes(content)
         }).map(x => (x.nodeId, x.fileId, x.revision))

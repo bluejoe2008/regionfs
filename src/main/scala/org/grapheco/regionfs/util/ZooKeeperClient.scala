@@ -42,7 +42,7 @@ object ZooKeeperClient extends Logging {
 }
 
 class ZooKeeperClient(curator: CuratorFramework) {
-  val pool = Executors.newFixedThreadPool(2);
+  val pool = Executors.newFixedThreadPool(5);
 
   def createAbsentNodes() {
     curator.create().orSetData().forPath("/regionfs")

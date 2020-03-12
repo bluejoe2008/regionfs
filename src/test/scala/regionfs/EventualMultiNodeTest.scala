@@ -1,7 +1,9 @@
 package regionfs
 
-import java.io.File
+import java.io.{File, FileInputStream}
 
+import org.apache.commons.io.IOUtils
+import org.grapheco.hippo.util.ByteBufferInputStream
 import org.grapheco.regionfs.FileId
 import org.grapheco.regionfs.server.Region
 import org.junit.{Assert, Test}
@@ -61,6 +63,9 @@ class EventualMultiModeTest extends FileReadWriteTest {
         Assert.assertEquals(1, region.fileCount);
         Assert.assertEquals(1, region.revision);
         Assert.assertEquals(false, region.isPrimary);
+
+        Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(new File(s"./testdata/inputs/999"))),
+          IOUtils.toByteArray(new ByteBufferInputStream(region.read(fid1.localId).get)))
     }
 
     assertRegion(3, fid1.regionId) {
@@ -69,6 +74,22 @@ class EventualMultiModeTest extends FileReadWriteTest {
         Assert.assertEquals(1, region.fileCount);
         Assert.assertEquals(1, region.revision);
         Assert.assertEquals(false, region.isPrimary);
+
+        Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(new File(s"./testdata/inputs/999"))),
+          IOUtils.toByteArray(new ByteBufferInputStream(region.read(fid1.localId).get)))
+    }
+
+    //now, we write large files
+    (1 to 10).foreach(x => super.writeFile(new File(s"./testdata/inputs/9999999")))
+    val fid2 = super.writeFile(new File(s"./testdata/inputs/9999999"))
+    Thread.sleep(10000);
+
+    (1 to 3).foreach { nodeId =>
+      assertRegion(nodeId, fid2.regionId) {
+        (region) =>
+          Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(new File(s"./testdata/inputs/9999999"))),
+            IOUtils.toByteArray(new ByteBufferInputStream(region.read(fid1.localId).get)))
+      }
     }
   }
 }

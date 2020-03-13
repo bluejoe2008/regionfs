@@ -3,7 +3,7 @@ package regionfs
 /**
   * Created by bluejoe on 2020/3/8.
   */
-class FileIOWithNode3Replica1Test extends FileIOWithNode1Test {
+class FileIOWith3Node1ReplicaTest extends FileIOWith1Node1ReplicaTest {
   override val con = new StrongMultiNode {
     override val GLOBAL_SETTING = Map[String, String](
       "zookeeper.address" -> zookeeperString,

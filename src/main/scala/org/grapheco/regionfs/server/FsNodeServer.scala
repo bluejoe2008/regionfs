@@ -284,9 +284,12 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
     private def chooseRegionForWrite(): (Region, Array[Int]) = {
       localRegionManager.synchronized {
-        val writableRegions = localRegionManager.regions.values.toArray.filter(x => x.isWritable);
-        //too few regions
-        if (writableRegions.size < globalSetting.minWritableRegions) {
+        val writableRegions = localRegionManager.regions.values.toArray.filter(_.isWritable);
+        val writablePrimaryRegions = writableRegions.filter(_.isPrimary);
+
+        //too few writable regions
+        //or no primary regions on this node (since this node is asked to write, so...)
+        if (writableRegions.size < globalSetting.minWritableRegions || writablePrimaryRegions.isEmpty) {
           createNewRegion()
         }
         else {
@@ -375,12 +378,12 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       case DeleteFileRequest(fileId: FileId) => {
         val maybeRegion = localRegionManager.get(fileId.regionId)
         if (maybeRegion.isEmpty) {
-          throw new WrongRegionIdException(fileId.regionId);
+          throw new WrongRegionIdException(nodeId, fileId.regionId);
         }
 
         try {
           if (maybeRegion.get.revision <= fileId.localId)
-            throw new FileNotFoundException(fileId);
+            throw new FileNotFoundException(nodeId, fileId);
 
           maybeRegion.get.delete(fileId.localId)
           //is a primary region?
@@ -413,12 +416,12 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         val maybeRegion = localRegionManager.get(fileId.regionId)
 
         if (maybeRegion.isEmpty) {
-          throw new WrongRegionIdException(fileId.regionId);
+          throw new WrongRegionIdException(nodeId, fileId.regionId);
         }
 
         val maybeBuffer = maybeRegion.get.read(fileId.localId)
         if (maybeBuffer.isEmpty) {
-          throw new FileNotFoundException(fileId);
+          throw new FileNotFoundException(nodeId, fileId);
         }
 
         CompleteStream.fromByteBuffer(maybeBuffer.get)
@@ -427,7 +430,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       case GetRegionPatchRequest(regionId: Long, since: Long) => {
         val maybeRegion = localRegionManager.get(regionId)
         if (maybeRegion.isEmpty) {
-          throw new WrongRegionIdException(regionId);
+          throw new WrongRegionIdException(nodeId, regionId);
         }
 
         if (traffic.get() > Constants.MAX_BUSY_TRAFFIC) {
@@ -451,43 +454,34 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
     }
 
     private def receiveWithStreamInternal(extraInput: ByteBuffer, ctx: ReceiveContext): PartialFunction[Any, Unit] = {
-      case CreateSecondaryFileRequest(regionId: Long, localIdExpected: Long, totalLength: Long, crc32: Long) => {
-        if (globalSetting.enableCrc && CrcUtils.computeCrc32(extraInput.duplicate()) != crc32) {
-          throw new ReceiveTimeMismatchedCheckSumException();
-        }
-
-        val region = localRegionManager.get(regionId).get
-        val (localId, revision) = region.write(extraInput.duplicate(), crc32)
-        ctx.reply(CreateFileResponse(nodeId, FileId.make(regionId, localId), revision))
-      }
-
       case CreateFileRequest(totalLength: Long, crc32: Long) =>
         //primary region
         if (globalSetting.enableCrc && CrcUtils.computeCrc32(extraInput.duplicate()) != crc32) {
-          throw new ReceiveTimeMismatchedCheckSumException();
+          throw new ReceivedMismatchedStreamException();
         }
 
         val (region: Region, neighbourNodeIds: Array[Int]) = chooseRegionForWrite()
         val regionId = region.regionId;
 
         val maybeLocalId = region.revision
-        val mutex = zookeeper.createRegionLock(regionId)
+        val mutex = zookeeper.createRegionWriteLock(regionId)
+        println(s"to acquire lock region-${regionId}...")
         mutex.acquire()
+        println(s"acquired lock region-${regionId}...")
+
         try {
           //i am a primary region
           if (globalSetting.replicaNum > 1 &&
             globalSetting.consistencyStrategy == Constants.CONSISTENCY_STRATEGY_STRONG) {
 
+            //notify secondary regions
             val futures =
               neighbourNodeIds.map(x => clientOf(x).endPointRef.askWithStream[CreateFileResponse](
                 CreateSecondaryFileRequest(regionId, maybeLocalId, totalLength, crc32),
                 Unpooled.wrappedBuffer(extraInput.duplicate())))
 
-            //TODO: lock first
             val (localId, revision) = region.write(extraInput.duplicate(), crc32)
-
-            //TODO: consistency check
-            //futures.foreach(x => Await.result(x, Duration.Inf))
+            futures.foreach(x => Await.result(x, Duration.Inf))
             ctx.reply(CreateFileResponse(nodeId, FileId.make(regionId, localId), revision))
           }
           else {
@@ -497,7 +491,18 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         }
         finally {
           mutex.release()
+          println(s"released lock region-${regionId}...")
         }
+
+      case CreateSecondaryFileRequest(regionId: Long, localIdExpected: Long, totalLength: Long, crc32: Long) => {
+        if (globalSetting.enableCrc && CrcUtils.computeCrc32(extraInput.duplicate()) != crc32) {
+          throw new ReceivedMismatchedStreamException();
+        }
+
+        val region = localRegionManager.get(regionId).get
+        val (localId, revision) = region.write(extraInput.duplicate(), crc32)
+        ctx.reply(CreateFileResponse(nodeId, FileId.make(regionId, localId), revision))
+      }
     }
   }
 
@@ -537,6 +542,7 @@ class PrimaryRegionWatcher(zookeeper: ZooKeeperClient,
                   is.close();
 
                   if (updated) {
+                    //FIXME: region.close() will cause current writing fail
                     val updatedRegion = localRegionManager.update(localRegion)
                     if (logger.isTraceEnabled())
                       logger.trace(s"[region-${localRegion.regionId}@${nodeId}] updated: ${localRevision}->${updatedRegion.revision}");
@@ -585,17 +591,17 @@ class StoreDirNotExistsException(storeDir: File) extends
 
 }
 
-class WrongRegionIdException(regionId: Long) extends
-  RegionFsServerException(s"region not exist: ${regionId}") {
+class WrongRegionIdException(nodeId: Int, regionId: Long) extends
+  RegionFsServerException(s"region not exist on node-$nodeId: ${regionId}") {
 
 }
 
-class ReceiveTimeMismatchedCheckSumException extends
+class ReceivedMismatchedStreamException extends
   RegionFsServerException(s"mismatched checksum exception on receive time") {
 
 }
 
-class FileNotFoundException(fileId: FileId) extends
-  RegionFsServerException(s"file not found: ${fileId.getBase64String()}") {
+class FileNotFoundException(nodeId: Int, fileId: FileId) extends
+  RegionFsServerException(s"file not found on node-$nodeId: ${fileId}") {
 
 }

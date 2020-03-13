@@ -106,6 +106,7 @@ class RegionMetaStore(conf: RegionConfig) extends Logging {
 }
 
 class Cursor(position: AtomicLong) {
+  //localId starts with 0
   def offerNextId(consume: (Long) => Unit): Long = {
     position.synchronized {
       val id = position.get();
@@ -242,15 +243,13 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
   private lazy val fbody = new RegionBodyStore(conf)
   private lazy val fmeta = new RegionMetaStore(conf)
   private lazy val ftrash = new RegionTrashStore(conf)
-  private lazy val cursor = fmeta.cursor
+  val cursor: Cursor = fmeta.cursor
 
   def revision = cursor.current
 
-  def fileCount = cursor.current
+  def fileCount = cursor.current - ftrash.cursor.get
 
   def length = fbody.cursor.get()
-
-  def peekNextFileId() = FileId(regionId, cursor.current)
 
   def listFiles(): Iterator[(FileId, Long)] = {
     fmeta.iterator.map(meta => FileId.make(regionId, meta.localId) -> meta.length)
@@ -274,11 +273,12 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
     cursor.offerNextId((id: Long) => {
       localId = id
       fmeta.write(id, offset, length, crc32)
-      if (logger.isTraceEnabled())
-        logger.trace(s"[region-${regionId}@${nodeId}] written: localId=$id, length=${length}, actual=${actualWritten}")
     })
 
     listener.handleRegionEvent(new WriteRegionEvent(this))
+    if (logger.isTraceEnabled())
+      logger.trace(s"[region-${regionId}@${nodeId}] written: localId=$localId, length=${length}, actual=${actualWritten}, revision=${revision}")
+
     localId -> revision
   }
 
@@ -421,10 +421,12 @@ class RegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetting, l
   def get(id: Long): Option[Region] = regions.get(id)
 
   def update(region: Region): Region = {
-    region.close()
-
     val newRegion = new Region(nodeId, region.regionId, region.conf, listener)
-    regions(region.regionId) = newRegion
+
+    this.synchronized {
+      region.close()
+      regions(region.regionId) = newRegion
+    }
     newRegion
   }
 

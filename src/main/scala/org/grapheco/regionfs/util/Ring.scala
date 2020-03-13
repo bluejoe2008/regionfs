@@ -43,7 +43,6 @@ class Ring[T]() {
 
     val t = _buffer(pos)
     pos += 1
-
     t
   }
 

@@ -13,7 +13,7 @@ import scala.concurrent.{Await, Future}
 /**
   * Created by bluejoe on 2019/8/23.
   */
-class FileIOWithNode1Test extends FileTestBase {
+class FileIOWith1Node1ReplicaTest extends FileTestBase {
 
   @Test
   def testWrite(): Unit = {
@@ -32,7 +32,7 @@ class FileIOWithNode1Test extends FileTestBase {
   @Test
   def testWriteAsync(): Unit = {
     timing(true) {
-      (1 to 10).map(_ => super.writeFileAsync("hello, world")).map(Await.result(_, Duration("4s")))
+      (1 to 10).map(_ => super.writeFileAsync("hello, world")).map(Await.result(_, Duration("40s")))
     }
 
     for (i <- BLOB_LENGTH) {
@@ -45,10 +45,6 @@ class FileIOWithNode1Test extends FileTestBase {
 
   @Test
   def testReadAsync(): Unit = {
-    timing(true) {
-      (1 to 10).map(_ => super.writeFile("hello, world"))
-    }
-
     for (i <- BLOB_LENGTH) {
       val id = super.writeFile(new File(s"./testdata/inputs/$i"))
 

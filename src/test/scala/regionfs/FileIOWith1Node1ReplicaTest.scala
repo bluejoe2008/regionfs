@@ -32,7 +32,7 @@ class FileIOWith1Node1ReplicaTest extends FileTestBase {
   @Test
   def testWriteAsync(): Unit = {
     timing(true) {
-      (1 to 10).map(_ => super.writeFileAsync("hello, world")).map(Await.result(_, Duration("40s")))
+      (1 to 10).map(_ => super.writeFileAsync("hello, world")).map(Await.result(_, Duration("4s")))
     }
 
     for (i <- BLOB_LENGTH) {

@@ -74,10 +74,9 @@ class FileIOWith3Node3ReplicaStrongConsistencyTest extends FileIOWith1Node1Repli
     Assert.assertEquals(1, (fid4.regionId >> 16).toInt)
     Assert.assertEquals(3, admin.getNodes(fid4.regionId).size)
 
-    //will not increase!!!
-    Assert.assertEquals(3, servers(0).localRegionManager.regions.size)
-    Assert.assertEquals(3, servers(1).localRegionManager.regions.size)
-    Assert.assertEquals(3, servers(2).localRegionManager.regions.size)
+    Assert.assertEquals(4, servers(0).localRegionManager.regions.size)
+    Assert.assertEquals(4, servers(1).localRegionManager.regions.size)
+    Assert.assertEquals(4, servers(2).localRegionManager.regions.size)
 
     for (nodeId <- 1 to 3) {
       assertRegion(nodeId, fid4.regionId) {

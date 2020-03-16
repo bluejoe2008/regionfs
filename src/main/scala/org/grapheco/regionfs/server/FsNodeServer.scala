@@ -284,16 +284,17 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
     private def chooseRegionForWrite(): (Region, Array[Int]) = {
       localRegionManager.synchronized {
-        val writableRegions = localRegionManager.regions.values.toArray.filter(_.isWritable);
-        val writablePrimaryRegions = writableRegions.filter(_.isPrimary);
+        val writableRegions = localRegionManager.regions.values.toArray.filter(_.isWritable).filter(_.isPrimary);
 
         //too few writable regions
-        //or no primary regions on this node (since this node is asked to write, so...)
-        if (writableRegions.size < globalSetting.minWritableRegions || writablePrimaryRegions.isEmpty) {
+        if (writableRegions.size < globalSetting.minWritableRegions) {
           createNewRegion()
         }
         else {
-          val region = writableRegions.sortBy(_.length).head
+          //TODO: ugly code
+          //val region = writableRegions.sortBy(_.length).head
+          val region = localRegionManager.regions(localRegionManager.ring.!(x =>
+            writableRegions.find(_.regionId == x).isDefined).get)
           region -> mapNeighbourRegionWithNodes.get(region.regionId).map(_.map(_._1).toArray).getOrElse(Array[Int]())
         }
       }

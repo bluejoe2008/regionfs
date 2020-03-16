@@ -13,7 +13,6 @@ import org.grapheco.regionfs.server.RegionStatus
 import org.grapheco.regionfs.util._
 
 import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.concurrent.duration.Duration
@@ -30,8 +29,9 @@ class FsClient(zks: String) extends Logging {
   val consistencyStrategy: ConsistencyStrategy = ConsistencyStrategy.create(
     globalSetting.consistencyStrategy,
     clientOf(_), ring.!(_),
-    (regionId: Long, nodeId: Int, revision: Long) => {
-      mapRegionWithNodes.getOrElseUpdate(regionId, mutable.Map()).put(nodeId, revision)
+    (regionId: Long, nodeWithRevisions: Array[(Int, Long)]) => {
+      arrayRegionWithNode ++= nodeWithRevisions.map(regionId -> _._1)
+      mapRegionWithNodes.getOrElseUpdate(regionId, mutable.Map()) ++= nodeWithRevisions
     });
 
   //get all nodes
@@ -74,7 +74,7 @@ class FsClient(zks: String) extends Logging {
 
   //get all regions
   //32768->(1,2), 32769->(1), ...
-  val arrayRegionWithNode = ArrayBuffer[(Long, Int)]()
+  val arrayRegionWithNode = mutable.Set[(Long, Int)]()
   val mapRegionWithNodes = mutable.Map[Long, mutable.Map[Int, Long]]()
 
   val regionsWatcher = zookeeper.watchRegionList(
@@ -207,12 +207,12 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
     }
   }
 
-  def writeFile(crc32: Long, content: ByteBuffer): Future[(Int, FileId, Long)] = {
+  def writeFile(crc32: Long, content: ByteBuffer): Future[(FileId, Array[(Int, Long)])] = {
     safeCall {
       endPointRef.askWithStream[CreateFileResponse](
         CreateFileRequest(content.remaining(), crc32),
         Unpooled.wrappedBuffer(content)
-      ).map(x => (x.nodeId, x.fileId, x.revision))
+      ).map(x => (x.fileId, x.nodes))
     }
   }
 

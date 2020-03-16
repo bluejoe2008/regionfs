@@ -24,18 +24,24 @@ class FileIOWith3Node3ReplicaStrongConsistencyTest extends FileIOWith1Node1Repli
     Assert.assertEquals(3, admin.getNodes().size)
 
     val fid1 = super.writeFile(new File(s"./testdata/inputs/999"))
+    //write on 1st node
     Assert.assertEquals(1, (fid1.regionId >> 16).toInt)
-    //we should have 3 regions
+    //since replica=3, we should have 3 regions now
     Assert.assertEquals(3, admin.getNodes(fid1.regionId).size)
-    //now we have 1 region on node2
+    //now we have 1 region on each node
     Assert.assertEquals(1, admin.getRegions(1).size)
-    //we have 1 region on node1
+    Assert.assertEquals(1, admin.getRegions(2).size)
+    Assert.assertEquals(1, admin.getRegions(3).size)
+    //call localRegionManager.regions to check
     Assert.assertEquals(1, servers(0).localRegionManager.regions.size)
+    Assert.assertEquals(1, servers(1).localRegionManager.regions.size)
+    Assert.assertEquals(1, servers(2).localRegionManager.regions.size)
 
     for (nodeId <- 1 to 3) {
       assertRegion(nodeId, fid1.regionId) {
         (region) =>
-          Assert.assertEquals(65537, region.regionId);
+          //first region on node1
+          Assert.assertEquals((1 << 16) + 1, region.regionId);
           Assert.assertEquals(1, region.fileCount);
           Assert.assertEquals(1, region.revision);
           Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(new File(s"./testdata/inputs/999"))),
@@ -46,7 +52,7 @@ class FileIOWith3Node3ReplicaStrongConsistencyTest extends FileIOWith1Node1Repli
     val fid2 = super.writeFile(new File(s"./testdata/inputs/9999"))
     Assert.assertEquals(2, (fid2.regionId >> 16).toInt)
     Assert.assertEquals(3, admin.getNodes(fid2.regionId).size)
-
+    //now we have 2 region on each node
     Assert.assertEquals(2, admin.getRegions(2).size)
     Assert.assertEquals(2, servers(1).localRegionManager.regions.size)
     Assert.assertEquals(2, servers(0).localRegionManager.regions.size)
@@ -54,7 +60,8 @@ class FileIOWith3Node3ReplicaStrongConsistencyTest extends FileIOWith1Node1Repli
     for (nodeId <- 1 to 3) {
       assertRegion(nodeId, fid2.regionId) {
         (region) =>
-          Assert.assertEquals(131073, region.regionId);
+          //first region on node2
+          Assert.assertEquals((2 << 16) + 1, region.regionId);
           Assert.assertEquals(1, region.fileCount);
           Assert.assertEquals(1, region.revision);
           Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(new File(s"./testdata/inputs/9999"))),
@@ -63,6 +70,7 @@ class FileIOWith3Node3ReplicaStrongConsistencyTest extends FileIOWith1Node1Repli
     }
 
     val fid3 = super.writeFile(new File(s"./testdata/inputs/99999"))
+    //write on node3
     Assert.assertEquals(3, (fid3.regionId >> 16).toInt)
     Assert.assertEquals(3, admin.getNodes(fid3.regionId).size)
 
@@ -71,6 +79,7 @@ class FileIOWith3Node3ReplicaStrongConsistencyTest extends FileIOWith1Node1Repli
     Assert.assertEquals(3, servers(2).localRegionManager.regions.size)
 
     val fid4 = super.writeFile(new File(s"./testdata/inputs/999"))
+    //regionId=65538, nodeId=1
     Assert.assertEquals(1, (fid4.regionId >> 16).toInt)
     Assert.assertEquals(3, admin.getNodes(fid4.regionId).size)
 
@@ -81,22 +90,29 @@ class FileIOWith3Node3ReplicaStrongConsistencyTest extends FileIOWith1Node1Repli
     for (nodeId <- 1 to 3) {
       assertRegion(nodeId, fid4.regionId) {
         (region) =>
-          Assert.assertEquals(65537, region.regionId);
-          Assert.assertEquals(2, region.fileCount);
-          Assert.assertEquals(2, region.revision);
+          Assert.assertEquals(65538, region.regionId);
+          Assert.assertEquals(1, region.fileCount);
+          Assert.assertEquals(1, region.revision);
       }
     }
 
-    Assert.assertEquals(3, servers(0).localRegionManager.regions.size)
+    Assert.assertEquals(4, servers(0).localRegionManager.regions.size)
 
     //write large files
+    //node2
     super.writeFile(new File(s"./testdata/inputs/9999999"))
+    //node3
     super.writeFile(new File(s"./testdata/inputs/9999999"))
+    //node1
     super.writeFile(new File(s"./testdata/inputs/9999999"))
+    //node2
+    super.writeFile(new File(s"./testdata/inputs/9999999"))
+    //node3
     super.writeFile(new File(s"./testdata/inputs/9999999"))
 
-    Assert.assertEquals(6, servers(0).localRegionManager.regions.size)
-    Assert.assertEquals(6, servers(1).localRegionManager.regions.size)
-    Assert.assertEquals(6, servers(2).localRegionManager.regions.size)
+    //3*3=9
+    Assert.assertEquals(9, servers(0).localRegionManager.regions.size)
+    Assert.assertEquals(9, servers(1).localRegionManager.regions.size)
+    Assert.assertEquals(9, servers(2).localRegionManager.regions.size)
   }
 }

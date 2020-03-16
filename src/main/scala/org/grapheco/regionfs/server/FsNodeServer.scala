@@ -272,31 +272,28 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             CreateSecondaryRegionRequest(regionId)))
 
           //hello, pls create a new region with id=regionId
-          futures.foreach(Await.result(_, Duration.Inf))
-          thinNodeIds.toArray
+          futures.map(Await.result(_, Duration.Inf)).map(_.nodeId).toArray
         }
       }
 
       //ok, now I register this region
-      zookeeper.createRegionNode(nodeId, region)
+      nodeIds.foreach(zookeeper.createRegionNode(_, region))
       region -> nodeIds
     }
 
     private def chooseRegionForWrite(): (Region, Array[Int]) = {
-      localRegionManager.synchronized {
-        val writableRegions = localRegionManager.regions.values.toArray.filter(_.isWritable).filter(_.isPrimary);
+      val writableRegions = localRegionManager.regions.values.toArray.filter(_.isWritable).filter(_.isPrimary);
 
-        //too few writable regions
-        if (writableRegions.size < globalSetting.minWritableRegions) {
-          createNewRegion()
-        }
-        else {
-          //TODO: ugly code
-          //val region = writableRegions.sortBy(_.length).head
-          val region = localRegionManager.regions(localRegionManager.ring.!(x =>
-            writableRegions.find(_.regionId == x).isDefined).get)
-          region -> mapNeighbourRegionWithNodes.get(region.regionId).map(_.map(_._1).toArray).getOrElse(Array[Int]())
-        }
+      //too few writable regions
+      if (writableRegions.size < globalSetting.minWritableRegions) {
+        createNewRegion()
+      }
+      else {
+        //TODO: ugly code
+        //val region = writableRegions.sortBy(_.length).head
+        val region = localRegionManager.regions(localRegionManager.ring.!(x =>
+          writableRegions.find(_.regionId == x).isDefined).get)
+        region -> mapNeighbourRegionWithNodes.get(region.regionId).map(_.map(_._1).toArray).getOrElse(Array[Int]())
       }
     }
 
@@ -361,9 +358,8 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
       //create region as replica
       case CreateSecondaryRegionRequest(regionId: Long) => {
-        val region = localRegionManager.createSecondaryRegion(regionId)
-        zookeeper.createRegionNode(nodeId, region)
-        ctx.reply(CreateSecondaryRegionResponse(regionId))
+        localRegionManager.createSecondaryRegion(regionId)
+        ctx.reply(CreateSecondaryRegionResponse(regionId, nodeId))
       }
 
       case ShutdownRequest() => {
@@ -466,9 +462,9 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
         val maybeLocalId = region.revision
         val mutex = zookeeper.createRegionWriteLock(regionId)
-        println(s"to acquire lock region-${regionId}...")
+        println(s"node-${nodeId} to acquire lock region-${regionId}...")
         mutex.acquire()
-        println(s"acquired lock region-${regionId}...")
+        println(s"node-${nodeId} acquired lock region-${regionId}...")
 
         try {
           //i am a primary region
@@ -477,22 +473,26 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
             //notify secondary regions
             val futures =
-              neighbourNodeIds.map(x => clientOf(x).endPointRef.askWithStream[CreateFileResponse](
+              neighbourNodeIds.map(x => clientOf(x).endPointRef.askWithStream[CreateSecondaryFileResponse](
                 CreateSecondaryFileRequest(regionId, maybeLocalId, totalLength, crc32),
                 Unpooled.wrappedBuffer(extraInput.duplicate())))
 
             val (localId, revision) = region.write(extraInput.duplicate(), crc32)
-            futures.foreach(x => Await.result(x, Duration.Inf))
-            ctx.reply(CreateFileResponse(nodeId, FileId.make(regionId, localId), revision))
+            val arrayNodeWithRevision = Set(nodeId -> revision) ++
+              futures.map(Await.result(_, Duration.Inf)).map(x => x.nodeId -> x.revision)
+
+            ctx.reply(CreateFileResponse(FileId.make(regionId, localId), arrayNodeWithRevision.toArray))
           }
           else {
             val (localId, revision) = region.write(extraInput.duplicate(), crc32)
-            ctx.reply(CreateFileResponse(nodeId, FileId.make(regionId, localId), revision))
+            ctx.reply(CreateFileResponse(FileId.make(regionId, localId), Array(nodeId -> revision)))
           }
         }
         finally {
-          mutex.release()
-          println(s"released lock region-${regionId}...")
+          if (mutex.isAcquiredInThisProcess) {
+            mutex.release()
+            println(s"node-${nodeId} released lock region-${regionId}...")
+          }
         }
 
       case CreateSecondaryFileRequest(regionId: Long, localIdExpected: Long, totalLength: Long, crc32: Long) => {
@@ -502,7 +502,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
         val region = localRegionManager.get(regionId).get
         val (localId, revision) = region.write(extraInput.duplicate(), crc32)
-        ctx.reply(CreateFileResponse(nodeId, FileId.make(regionId, localId), revision))
+        ctx.reply(CreateSecondaryFileResponse(FileId.make(regionId, localId), nodeId, revision))
       }
     }
   }

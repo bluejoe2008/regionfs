@@ -452,8 +452,10 @@ class RegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetting, l
     }
 
     listener.handleRegionEvent(CreateRegionEvent(region))
-    regions += (regionId -> region)
-    ring += regionId
+    this.synchronized {
+      regions += (regionId -> region)
+      ring += regionId
+    }
     region
   }
 }

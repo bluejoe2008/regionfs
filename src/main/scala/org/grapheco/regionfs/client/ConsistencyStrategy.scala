@@ -23,7 +23,7 @@ trait ConsistencyStrategy {
 object ConsistencyStrategy {
   def create(strategyType: Int, clientOf: (Int) => FsNodeClient,
              chooseNextNode: ((Int) => Boolean) => Option[Int],
-             updateLocalRegionCache: (Long, Int, Long) => Unit): ConsistencyStrategy =
+             updateLocalRegionCache: (Long, Array[(Int, Long)]) => Unit): ConsistencyStrategy =
     strategyType match {
       case Constants.CONSISTENCY_STRATEGY_EVENTUAL =>
         new EventualConsistencyStrategy(clientOf, chooseNextNode, updateLocalRegionCache)
@@ -34,7 +34,7 @@ object ConsistencyStrategy {
 
 class EventualConsistencyStrategy(clientOf: (Int) => FsNodeClient,
                                   chooseNextNode: ((Int) => Boolean) => Option[Int],
-                                  updateLocalRegionCache: (Long, Int, Long) => Unit) extends ConsistencyStrategy {
+                                  updateLocalRegionCache: (Long, Array[(Int, Long)]) => Unit) extends ConsistencyStrategy {
   val strongOne = new StrongConsistencyStrategy(clientOf, chooseNextNode, updateLocalRegionCache);
 
   def writeFile(chosedNodeId: Int, crc32: Long, content: ByteBuffer): Future[FileId] = {
@@ -59,12 +59,12 @@ class EventualConsistencyStrategy(clientOf: (Int) => FsNodeClient,
 
 class StrongConsistencyStrategy(clientOf: (Int) => FsNodeClient,
                                 chooseNextNode: ((Int) => Boolean) => Option[Int],
-                                updateLocalRegionCache: (Long, Int, Long) => Unit) extends ConsistencyStrategy {
+                                updateLocalRegionCache: (Long, Array[(Int, Long)]) => Unit) extends ConsistencyStrategy {
   def writeFile(chosedNodeId: Int, crc32: Long, content: ByteBuffer): Future[FileId] = {
     //only primary region is allowed to write
     clientOf(chosedNodeId).writeFile(crc32, content.duplicate()).map(x => {
-      updateLocalRegionCache(x._2.regionId, x._1, x._3)
-      x._2
+      updateLocalRegionCache(x._1.regionId, x._2)
+      x._1
     })
   }
 

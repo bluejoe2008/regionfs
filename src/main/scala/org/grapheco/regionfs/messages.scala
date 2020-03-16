@@ -11,7 +11,7 @@ case class CreateSecondaryRegionRequest(regionId: Long) {
 
 }
 
-case class CreateSecondaryRegionResponse(regionId: Long) {
+case class CreateSecondaryRegionResponse(regionId: Long, nodeId: Int) {
 
 }
 
@@ -55,7 +55,11 @@ case class CreateFileRequest(totalLength: Long, crc32: Long) {
 
 }
 
-case class CreateFileResponse(nodeId: Int, fileId: FileId, revision: Long) {
+case class CreateFileResponse(fileId: FileId, nodes: Array[(Int, Long)]) {
+
+}
+
+case class CreateSecondaryFileResponse(fileId: FileId, nodeId: Int, revision: Long) {
 
 }
 

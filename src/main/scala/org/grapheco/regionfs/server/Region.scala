@@ -8,7 +8,7 @@ import java.util.concurrent.atomic.AtomicLong
 import io.netty.buffer.{ByteBuf, Unpooled}
 import org.grapheco.commons.util.Logging
 import org.grapheco.regionfs.client.RegionFsClientException
-import org.grapheco.regionfs.util.{Cache, CrcUtils, FixSizedCache}
+import org.grapheco.regionfs.util.{Cache, CrcUtils, FixSizedCache, Ring}
 import org.grapheco.regionfs.{Constants, FileId, GlobalSetting}
 
 import scala.collection.mutable
@@ -190,7 +190,8 @@ class RegionBodyStore(conf: RegionConfig) {
 
     appenderChannel.synchronized {
       //7-(x+7)%8
-      appenderChannel.write(Array(buf, ByteBuffer.wrap(padding.map(_ => '*'.toByte))))
+      appenderChannel.write(Array(buf, ByteBuffer.wrap(
+        padding.map(_ => '*'.toByte))))
     }
 
     val written = length + padding.length
@@ -385,6 +386,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
 class RegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetting, listener: RegionEventListener) extends Logging {
   val regions = mutable.Map[Long, Region]()
   val regionIdSerial = new AtomicLong(0)
+  val ring = new Ring[Long]();
 
   /*
    layout of storeDir
@@ -404,6 +406,8 @@ class RegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetting, l
       val id = file.getName.toLong
       id -> new Region(nodeId, id, RegionConfig(file, globalSetting), listener)
     }
+
+  ring ++= regions.keys
 
   if (logger.isInfoEnabled())
     logger.info(s"[node-${nodeId}] loaded local regions: ${regions.keySet}")
@@ -449,6 +453,7 @@ class RegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetting, l
 
     listener.handleRegionEvent(CreateRegionEvent(region))
     regions += (regionId -> region)
+    ring += regionId
     region
   }
 }

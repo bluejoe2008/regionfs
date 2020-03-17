@@ -5,7 +5,6 @@ import java.io.{File, FileInputStream}
 import org.apache.commons.io.IOUtils
 import org.grapheco.commons.util.Profiler._
 import org.junit.{Assert, Test}
-
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, Future}

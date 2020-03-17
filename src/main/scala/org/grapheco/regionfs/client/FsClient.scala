@@ -207,12 +207,30 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
     }
   }
 
-  def writeFile(crc32: Long, content: ByteBuffer): Future[(FileId, Array[(Int, Long)])] = {
+  def createFile(crc32: Long, content: ByteBuffer): Future[(FileId, Array[(Int, Long)])] = {
     safeCall {
       endPointRef.askWithStream[CreateFileResponse](
         CreateFileRequest(content.remaining(), crc32),
         Unpooled.wrappedBuffer(content)
       ).map(x => (x.fileId, x.nodes))
+    }
+  }
+
+  def createSecondaryRegion(regionId: Long): Future[CreateSecondaryRegionResponse] = {
+    endPointRef.ask[CreateSecondaryRegionResponse](
+      CreateSecondaryRegionRequest(regionId))
+  }
+
+  def createSecondaryFile(
+                           regionId: Long,
+                           maybeLocalId: Long,
+                           totalLength: Long,
+                           crc32: Long,
+                           content: ByteBuffer): Future[CreateSecondaryFileResponse] = {
+    safeCall {
+      endPointRef.askWithStream[CreateSecondaryFileResponse](
+        CreateSecondaryFileRequest(regionId, maybeLocalId, totalLength, crc32),
+        Unpooled.wrappedBuffer(content))
     }
   }
 

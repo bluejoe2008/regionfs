@@ -5,9 +5,8 @@ import java.nio.ByteBuffer
 
 import org.grapheco.regionfs.{Constants, FileId}
 
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.Future
 import scala.concurrent.duration.Duration
+import scala.concurrent.{ExecutionContext, Future}
 
 /**
   * Created by bluejoe on 2020/3/12.
@@ -62,7 +61,10 @@ class StrongConsistencyStrategy(clientOf: (Int) => FsNodeClient,
                                 updateLocalRegionCache: (Long, Array[(Int, Long)]) => Unit) extends ConsistencyStrategy {
   def writeFile(chosedNodeId: Int, crc32: Long, content: ByteBuffer): Future[FileId] = {
     //only primary region is allowed to write
-    clientOf(chosedNodeId).createFile(crc32, content.duplicate()).map(x => {
+    val client = clientOf(chosedNodeId);
+    implicit val ec: ExecutionContext = client.executionContext
+
+    client.createFile(crc32, content.duplicate()).map(x => {
       updateLocalRegionCache(x._1.regionId, x._2)
       x._1
     })

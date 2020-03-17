@@ -13,9 +13,8 @@ import org.grapheco.regionfs.server.RegionStatus
 import org.grapheco.regionfs.util._
 
 import scala.collection.mutable
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.Future
 import scala.concurrent.duration.Duration
+import scala.concurrent.{ExecutionContext, Future}
 
 /**
   * a client to regionfs servers
@@ -197,7 +196,10 @@ class FsNodeClientFactory(globalSetting: GlobalSetting) {
   * an FsNodeClient is an underline client used by FsClient
   * it sends raw messages (e.g. SendCompleteFileRequest) to NodeServer and handles responses
   */
-class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointRef, val remoteAddress: RpcAddress) extends Logging {
+class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointRef, val remoteAddress: RpcAddress)
+  extends Logging {
+  implicit val executionContext: ExecutionContext = endPointRef.rpcEnv.executionContext
+
   private def safeCall[T](body: => T): T = {
     try {
       body

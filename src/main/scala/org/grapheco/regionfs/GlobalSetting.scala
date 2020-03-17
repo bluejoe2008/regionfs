@@ -2,12 +2,14 @@ package org.grapheco.regionfs
 
 import java.io.{File, FileInputStream}
 import java.util.Properties
+import java.util.concurrent.Executors
 
 import org.grapheco.commons.util.ConfigUtils._
 import org.grapheco.commons.util.{Configuration, ConfigurationEx}
 import org.grapheco.regionfs.util.ZooKeeperClient
 
 import scala.collection.JavaConversions
+import scala.concurrent.ExecutionContext
 
 /**
   * Created by bluejoe on 2020/2/6.
@@ -31,7 +33,8 @@ class GlobalSetting(props: Properties) {
   lazy val replicaNum: Int = conf.get("replica.num").withDefault(1).asInt
   lazy val regionSizeLimit: Long = conf.get("region.size.limit").withDefault(Constants.DEFAULT_REGION_SIZE_LIMIT).asLong
   lazy val enableCrc: Boolean = conf.get("blob.crc.enabled").withDefault(true).asBoolean
-  lazy val regionVersionCheckInterval: Long = conf.get("region.version.check.interval").withDefault(Constants.DEFAULT_REGION_VERSION_CHECK_INTERVAL).asLong
+  lazy val regionVersionCheckInterval: Long = conf.get("region.version.check.interval").withDefault(
+    Constants.DEFAULT_REGION_VERSION_CHECK_INTERVAL).asLong
 }
 
 object GlobalSetting {

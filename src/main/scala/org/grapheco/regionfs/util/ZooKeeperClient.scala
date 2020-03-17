@@ -261,6 +261,6 @@ class GlobalSettingNotFoundException(path: String) extends
 }
 
 class ZNodeAlreadyExistExcetion(path: String) extends
-  RegionFsException(s"find existing node in zookeeper: ${path}") {
+  RegionFsException(s"existing node found in zookeeper: ${path}") {
 
 }

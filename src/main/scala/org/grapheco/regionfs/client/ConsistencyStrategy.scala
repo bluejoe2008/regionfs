@@ -62,7 +62,7 @@ class StrongConsistencyStrategy(clientOf: (Int) => FsNodeClient,
                                 updateLocalRegionCache: (Long, Array[(Int, Long)]) => Unit) extends ConsistencyStrategy {
   def writeFile(chosedNodeId: Int, crc32: Long, content: ByteBuffer): Future[FileId] = {
     //only primary region is allowed to write
-    clientOf(chosedNodeId).writeFile(crc32, content.duplicate()).map(x => {
+    clientOf(chosedNodeId).createFile(crc32, content.duplicate()).map(x => {
       updateLocalRegionCache(x._1.regionId, x._2)
       x._1
     })

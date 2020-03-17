@@ -42,10 +42,9 @@ object FsNodeServer {
       val pid = IOUtils.toString(fis).toInt
       fis.close()
 
-      throw new StoreLockedException(storeDir, pid)
+      throw new RegionStoreLockedException(storeDir, pid)
     }
 
-    //TODO: use a leader node: manages all regions
     new FsNodeServer(
       conf.get("zookeeper.address").asString,
       conf.get("node.id").asInt,
@@ -207,8 +206,10 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
   }
 
   private def clientOf(nodeId: Int): FsNodeClient = {
-    cachedClients.getOrElseUpdate(nodeId,
-      clientFactory.of(mapNeighbourNodeWithAddress(nodeId)))
+    cachedClients.synchronized {
+      cachedClients.getOrElseUpdate(nodeId,
+        clientFactory.of(mapNeighbourNodeWithAddress(nodeId)))
+    }
   }
 
   def cleanData(): Unit = {
@@ -268,8 +269,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             x => x._1 -> mapNeighbourNodeWithRegionCount.getOrElse(x._1, new AtomicInteger(0)).get).
             toList.sortBy(_._2).takeRight(globalSetting.replicaNum - 1).map(_._1)
 
-          val futures = thinNodeIds.map(clientOf(_).endPointRef.ask[CreateSecondaryRegionResponse](
-            CreateSecondaryRegionRequest(regionId)))
+          val futures = thinNodeIds.map(clientOf(_).createSecondaryRegion(regionId))
 
           //hello, pls create a new region with id=regionId
           futures.map(Await.result(_, Duration.Inf)).map(_.nodeId).toArray
@@ -278,6 +278,8 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
       //ok, now I register this region
       nodeIds.foreach(zookeeper.createRegionNode(_, region))
+      zookeeper.createRegionNode(nodeId, region)
+
       region -> nodeIds
     }
 
@@ -291,18 +293,29 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       else {
         //TODO: ugly code
         //val region = writableRegions.sortBy(_.length).head
-        val region = localRegionManager.regions(localRegionManager.ring.!(x =>
-          writableRegions.find(_.regionId == x).isDefined).get)
-        region -> mapNeighbourRegionWithNodes.get(region.regionId).map(_.map(_._1).toArray).getOrElse(Array[Int]())
+        localRegionManager.synchronized {
+          val region = localRegionManager.regions(localRegionManager.ring.!(x =>
+            writableRegions.find(_.regionId == x).isDefined).get)
+          region -> mapNeighbourRegionWithNodes.get(region.regionId).map(_.map(_._1).toArray).getOrElse(Array[Int]())
+        }
       }
     }
 
     override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
       case x: Any => {
-        traffic.incrementAndGet()
-        val t = receiveAndReplyInternal(context).apply(x)
-        traffic.decrementAndGet()
-        t
+        try {
+          traffic.incrementAndGet()
+          val t = receiveAndReplyInternal(context).apply(x)
+          traffic.decrementAndGet()
+          t
+        }
+        catch {
+          case e: Throwable =>
+            context.sendFailure(e)
+        }
+        finally {
+          traffic.decrementAndGet()
+        }
       }
     }
 
@@ -330,10 +343,18 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
     override def receiveWithStream(extraInput: ByteBuffer, context: ReceiveContext): PartialFunction[Any, Unit] = {
       case x: Any => {
-        traffic.incrementAndGet()
-        val t = receiveWithStreamInternal(extraInput, context).apply(x)
-        traffic.decrementAndGet()
-        t
+        try {
+          traffic.incrementAndGet()
+          val t = receiveWithStreamInternal(extraInput, context).apply(x)
+          t
+        }
+        catch {
+          case e: Throwable =>
+            context.sendFailure(e)
+        }
+        finally {
+          traffic.decrementAndGet()
+        }
       }
     }
 
@@ -462,9 +483,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
         val maybeLocalId = region.revision
         val mutex = zookeeper.createRegionWriteLock(regionId)
-        println(s"node-${nodeId} to acquire lock region-${regionId}...")
         mutex.acquire()
-        println(s"node-${nodeId} acquired lock region-${regionId}...")
 
         try {
           //i am a primary region
@@ -473,15 +492,16 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
             //notify secondary regions
             val futures =
-              neighbourNodeIds.map(x => clientOf(x).endPointRef.askWithStream[CreateSecondaryFileResponse](
-                CreateSecondaryFileRequest(regionId, maybeLocalId, totalLength, crc32),
-                Unpooled.wrappedBuffer(extraInput.duplicate())))
+              neighbourNodeIds.map(x => clientOf(x).createSecondaryFile(regionId, maybeLocalId, totalLength, crc32,
+                extraInput.duplicate()))
 
             val (localId, revision) = region.write(extraInput.duplicate(), crc32)
-            val arrayNodeWithRevision = Set(nodeId -> revision) ++
+
+            val arrayNodeWithRevision =
               futures.map(Await.result(_, Duration.Inf)).map(x => x.nodeId -> x.revision)
 
-            ctx.reply(CreateFileResponse(FileId.make(regionId, localId), arrayNodeWithRevision.toArray))
+            ctx.reply(CreateFileResponse(FileId.make(regionId, localId),
+              (Set(nodeId -> revision) ++ arrayNodeWithRevision).toArray))
           }
           else {
             val (localId, revision) = region.write(extraInput.duplicate(), crc32)
@@ -491,7 +511,6 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         finally {
           if (mutex.isAcquiredInThisProcess) {
             mutex.release()
-            println(s"node-${nodeId} released lock region-${regionId}...")
           }
         }
 
@@ -502,6 +521,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
         val region = localRegionManager.get(regionId).get
         val (localId, revision) = region.write(extraInput.duplicate(), crc32)
+
         ctx.reply(CreateSecondaryFileResponse(FileId.make(regionId, localId), nodeId, revision))
       }
     }
@@ -582,7 +602,7 @@ class InsufficientNodeServerException(actual: Int, required: Int) extends
 
 }
 
-class StoreLockedException(storeDir: File, pid: Int) extends
+class RegionStoreLockedException(storeDir: File, pid: Int) extends
   RegionFsServerException(s"store is locked by another node server: node server pid=${pid}, storeDir=${storeDir.getPath}") {
 
 }

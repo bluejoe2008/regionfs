@@ -5,6 +5,10 @@ package org.grapheco.regionfs
   */
 object Constants {
   val DEFAULT_REGION_SIZE_LIMIT: Long = 1024L * 1024 * 1024 * 20
+  val DEFAULT_EXECUTOR_THREAD_POOL_SIZE = 20
+  val DEFAULT_SERVER_HOST = "localhost"
+  val DEFAULT_SERVER_PORT = 1224
+
   //20G
   val WRITE_CHUNK_SIZE: Int = 1024 * 10
   val READ_CHUNK_SIZE: Int = 1024 * 1024 * 10
@@ -14,11 +18,25 @@ object Constants {
   val SERVER_SIDE_READ_BUFFER_SIZE = 4096;
   val DEFAULT_REGION_VERSION_CHECK_INTERVAL: Long = 60000 * 60;
   val DEFAULT_MIN_WRITABLE_REGIONS: Int = 3;
+  val DEFAULT_REPLICA_NUM: Int = 1
   val MARK_GET_REGION_PATCH_SERVER_IS_BUSY: Byte = 1;
   val MARK_GET_REGION_PATCH_ALREADY_UP_TO_DATE: Byte = 2;
   val MARK_GET_REGION_PATCH_OK: Byte = 3;
   val MAX_BUSY_TRAFFIC: Int = 5;
-
+  val MAX_PATCH_SIZE: Long = 100 * 1024 * 1024
   val CONSISTENCY_STRATEGY_EVENTUAL = 1;
   val CONSISTENCY_STRATEGY_STRONG = 0;
+
+  val PARAMETER_KEY_CONSISTENCY_STRATEGY = "consistency.strategy"
+  val PARAMETER_KEY_MIN_WRITABLE_REGIONS = "region.min.writable"
+  val PARAMETER_KEY_REPLICA_NUM = "replica.num"
+  val PARAMETER_KEY_REGION_SIZE_LIMIT = "region.size.limit"
+  val PARAMETER_KEY_BLOB_CRC_ENABLED = "blob.crc.enabled"
+  val PARAMETER_KEY_REGION_VERSION_CHECK_INTERVAL = "region.version.check.interval"
+  val PARAMETER_KEY_EXECUTOR_THREAD_POOL_SIZE = "executor.thread.pool.size"
+  val PARAMETER_KEY_ZOOKEEPER_ADDRESS = "zookeeper.address"
+  val PARAMETER_KEY_NODE_ID = "node.id"
+  val PARAMETER_KEY_SERVER_HOST = "server.host"
+  val PARAMETER_KEY_SERVER_PORT = "server.port"
+  val PARAMETER_KEY_DATA_STORE_DIR = "data.storeDir"
 }

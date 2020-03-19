@@ -30,11 +30,11 @@ object FsNodeServer {
     * create a FsNodeServer with a configuration file, e.g. node1.conf
     */
   private def create(conf: ConfigurationEx, baseDir: File): FsNodeServer = {
-    val storeDir = conf.get("data.storeDir").asFile(baseDir).
+    val storeDir = conf.get(Constants.PARAMETER_KEY_DATA_STORE_DIR).asFile(baseDir).
       getCanonicalFile.getAbsoluteFile
 
     if (!storeDir.exists())
-      throw new StoreDirNotExistsException(storeDir)
+      throw new StoreDirectoryNotExistsException(storeDir)
 
     val lockFile = new File(storeDir, ".lock")
     if (lockFile.exists()) {
@@ -46,11 +46,11 @@ object FsNodeServer {
     }
 
     new FsNodeServer(
-      conf.get("zookeeper.address").asString,
-      conf.get("node.id").asInt,
+      conf.get(Constants.PARAMETER_KEY_ZOOKEEPER_ADDRESS).asString,
+      conf.get(Constants.PARAMETER_KEY_NODE_ID).asInt,
       storeDir,
-      conf.get("server.host").withDefault("localhost").asString,
-      conf.get("server.port").withDefault(1224).asInt
+      conf.get(Constants.PARAMETER_KEY_SERVER_HOST).withDefault(Constants.DEFAULT_SERVER_HOST).asString,
+      conf.get(Constants.PARAMETER_KEY_SERVER_PORT).withDefault(Constants.DEFAULT_SERVER_PORT).asInt
     )
   }
 
@@ -605,7 +605,7 @@ class RegionStoreLockedException(storeDir: File, pid: Int) extends
 
 }
 
-class StoreDirNotExistsException(storeDir: File) extends
+class StoreDirectoryNotExistsException(storeDir: File) extends
   RegionFsServerException(s"store dir does not exist: ${storeDir.getPath}") {
 
 }

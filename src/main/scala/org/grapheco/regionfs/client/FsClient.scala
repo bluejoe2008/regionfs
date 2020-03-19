@@ -2,6 +2,7 @@ package org.grapheco.regionfs.client
 
 import java.io.InputStream
 import java.nio.ByteBuffer
+import java.util.concurrent.Executors
 
 import io.netty.buffer.Unpooled
 import net.neoremind.kraps.RpcConf
@@ -165,6 +166,9 @@ class FsClient(zks: String) extends Logging {
 class FsNodeClientFactory(globalSetting: GlobalSetting) {
   val refs = mutable.Map[RpcAddress, HippoEndpointRef]();
 
+  val pool = Executors.newFixedThreadPool(globalSetting.executorThreadPoolSize)
+  val executionContext: ExecutionContext = ExecutionContext.fromExecutor(pool)
+
   val rpcEnv: HippoRpcEnv = {
     val rpcConf = new RpcConf()
     val config = RpcEnvClientConfig(rpcConf, "regionfs-client")
@@ -177,7 +181,7 @@ class FsNodeClientFactory(globalSetting: GlobalSetting) {
         rpcEnv.setupEndpointRef(RpcAddress(remoteAddress.host, remoteAddress.port), "regionfs-service"));
     }
 
-    new FsNodeClient(globalSetting: GlobalSetting, endPointRef, remoteAddress)
+    new FsNodeClient(globalSetting, endPointRef, remoteAddress, executionContext)
   }
 
   def of(remoteAddress: String): FsNodeClient = {
@@ -189,6 +193,7 @@ class FsNodeClientFactory(globalSetting: GlobalSetting) {
     refs.foreach(x => rpcEnv.stop(x._2))
     refs.clear()
     rpcEnv.shutdown()
+    pool.shutdown()
   }
 }
 
@@ -196,9 +201,8 @@ class FsNodeClientFactory(globalSetting: GlobalSetting) {
   * an FsNodeClient is an underline client used by FsClient
   * it sends raw messages (e.g. SendCompleteFileRequest) to NodeServer and handles responses
   */
-class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointRef, val remoteAddress: RpcAddress)
+class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointRef, val remoteAddress: RpcAddress, implicit val executionContext: ExecutionContext)
   extends Logging {
-  implicit val executionContext: ExecutionContext = endPointRef.rpcEnv.executionContext
 
   private def safeCall[T](body: => T): T = {
     try {

@@ -83,19 +83,41 @@ class RegionMetaStore(conf: RegionConfig) extends Logging {
   }
 
   //since=0,tail=1
-  def unsafeReadBatch(since: Long, tail: Long): ByteBuffer = {
-    fptr.synchronized {
-      fptr.getChannel.map(FileChannel.MapMode.READ_ONLY,
-        Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * since,
-        Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * (tail - since));
+  def offerMetaPatch(sinceRevision: Long): (Long, Long, Long, ByteBuffer) = {
+    //since=10, tail=13
+    val sinceMetaFile = Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * sinceRevision
+    var bodyPatchSize = 0L
+    val tail = cursor.current;
+    assert(sinceRevision < tail)
+
+    val sinceBodyFile = read(sinceRevision).get.offset
+    var n = sinceRevision;
+
+    while (n < tail && bodyPatchSize < Constants.MAX_PATCH_SIZE) {
+      val meta = read(n).get
+      n += 1
+      bodyPatchSize = meta.tail - sinceBodyFile
     }
+
+    //n=13
+    (sinceMetaFile, sinceBodyFile, bodyPatchSize, fptr.synchronized {
+      fptr.getChannel.map(FileChannel.MapMode.READ_ONLY,
+        sinceMetaFile,
+        Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * (n - sinceRevision));
+    })
   }
 
-  def unsafeWriteBatch(buf: ByteBuffer): Unit = {
+  def applyMetaPatch(buf: ByteBuffer, since: Long, size: Long, crc: Long): Unit = {
+    assert(size == buf.remaining())
+
     fptr.synchronized {
-      fptr.seek(fptr.length())
+      fptr.seek(since)
       fptr.getChannel.write(buf)
     }
+
+    fptr.seek(since)
+    val buf2 = fptr.getChannel.map(FileChannel.MapMode.READ_ONLY, since, size)
+    assert(crc == CrcUtils.computeCrc32(buf2))
   }
 
   def close(): Unit = {
@@ -211,15 +233,22 @@ class RegionBodyStore(conf: RegionConfig) {
     (offset, length, written)
   }
 
-  def unsafeWriteBatch(buf: ByteBuffer): Unit = {
+  def applyBodyPatch(buf: ByteBuffer, since: Long, size: Long, crc: Long): Unit = {
+    assert(size == buf.remaining())
+
     fptr.synchronized {
+      fptr.seek(since)
       fptr.getChannel.write(buf)
     }
+
+    fptr.seek(since)
+    val buf2 = fptr.getChannel.map(FileChannel.MapMode.READ_ONLY, since, size)
+    assert(crc == CrcUtils.computeCrc32(buf2))
   }
 
-  def unsafeReadBatch(offset: Long, tail: Long): ByteBuffer = {
+  def offerBodyPatch(offset: Long, length: Long): ByteBuffer = {
     fptr.synchronized {
-      fptr.getChannel.map(FileChannel.MapMode.READ_ONLY, offset, tail - offset);
+      fptr.getChannel.map(FileChannel.MapMode.READ_ONLY, offset, length);
     }
   }
 
@@ -309,15 +338,15 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
     ftrash.append(localId)
   }
 
-  def offerPatch(since: Long): ByteBuf = {
+  def offerPatch(sinceRevision: Long): ByteBuf = {
     val buf = Unpooled.buffer()
 
-    val (rev, len) = this.synchronized {
-      revision -> length
+    val rev = this.synchronized {
+      revision
     }
 
     //1!=0
-    if (rev == since) {
+    if (rev == sinceRevision) {
       buf.writeByte(Constants.MARK_GET_REGION_PATCH_ALREADY_UP_TO_DATE).writeLong(regionId)
       buf
     }
@@ -325,15 +354,20 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
       //current version, length_of_metadata, body
       //write .metadata
       //write .body
-      val meta1 = fmeta.read(since).get
-      val metabuf = Unpooled.wrappedBuffer(fmeta.unsafeReadBatch(since, rev))
-      val bodybuf = Unpooled.wrappedBuffer(fbody.unsafeReadBatch(meta1.offset, len))
+      val (sinceMeta, sinceBody, lengthBody, buf1) = fmeta.offerMetaPatch(sinceRevision)
+      assert(lengthBody != 0)
+      val metabuf = Unpooled.wrappedBuffer(buf1)
+      val buf2: ByteBuffer = fbody.offerBodyPatch(sinceBody, lengthBody)
+      val bodybuf = Unpooled.wrappedBuffer(buf2)
 
-      //TODO: checksum
+      val crc1 = CrcUtils.computeCrc32(buf1)
+      val crc2 = CrcUtils.computeCrc32(buf2)
+
       buf.writeByte(Constants.MARK_GET_REGION_PATCH_OK).
         writeLong(regionId).writeLong(rev).
-        writeLong(metabuf.readableBytes()).
-        writeLong(bodybuf.readableBytes())
+        writeLong(sinceMeta).writeLong(sinceBody).
+        writeLong(metabuf.readableBytes()).writeLong(bodybuf.readableBytes()).
+        writeLong(crc1).writeLong(crc2)
 
       Unpooled.wrappedBuffer(buf, metabuf, bodybuf)
     }
@@ -354,14 +388,20 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
 
         false
       case Constants.MARK_GET_REGION_PATCH_OK =>
-        val regionId = dis.readLong()
-        val lastRevision = dis.readLong()
-        val sizeMeta = dis.readLong()
-        val sizeBody = dis.readLong()
+        val (regionId, _, sinceMeta, sinceBody, sizeMeta, sizeBody, crc1, crc2) =
+          (
+            dis.readLong(), dis.readLong(), dis.readLong(),
+            dis.readLong(), dis.readLong(), dis.readLong(),
+            dis.readLong(), dis.readLong()
+            )
 
         val buf1 = Unpooled.buffer(1024)
         if (buf1.writeBytes(is, sizeMeta.toInt) != sizeMeta.toInt) {
           throw new WrongRegionPatchSizeException();
+        }
+
+        if (crc1 != CrcUtils.computeCrc32(buf1.nioBuffer())) {
+          throw new WrongRegionPatchStreamException();
         }
 
         val buf2 = Unpooled.buffer(1024)
@@ -369,10 +409,14 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
           throw new WrongRegionPatchSizeException();
         }
 
+        if (crc2 != CrcUtils.computeCrc32(buf2.nioBuffer())) {
+          throw new WrongRegionPatchStreamException();
+        }
+
         this.synchronized {
           //TOOD: transaction assurance
-          fmeta.unsafeWriteBatch(buf1.nioBuffer())
-          fbody.unsafeWriteBatch(buf2.nioBuffer())
+          fmeta.applyMetaPatch(buf1.nioBuffer(), sinceMeta, sizeMeta, crc1)
+          fbody.applyBodyPatch(buf2.nioBuffer(), sinceBody, sizeBody, crc2)
 
           if (logger.isDebugEnabled)
             logger.debug(s"[region-${regionId}@${nodeId}] updated: .meta ${sizeMeta} bytes, .body ${sizeBody} bytes")
@@ -502,7 +546,11 @@ trait RegionEventListener {
   def handleRegionEvent(event: RegionEvent): Unit
 }
 
-case class WrongRegionPatchSizeException() extends RegionFsServerException(s"wrong region patch") {
+class WrongRegionPatchSizeException() extends RegionFsServerException(s"wrong region patch") {
+
+}
+
+class WrongRegionPatchStreamException extends RegionFsServerException(s"wrong region patch") {
 
 }
 

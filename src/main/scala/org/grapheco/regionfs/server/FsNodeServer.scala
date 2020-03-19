@@ -546,28 +546,26 @@ class PrimaryRegionWatcher(zookeeper: ZooKeeperClient,
           for (x <- secondaryRegions if (!stopped)) {
             try {
               val regionIds = x._2.map(_.regionId).toArray
-              val statusList = Await.result(clientOf(x._1).getRegionStatus(regionIds), Duration("2s"))
+              val primaryNodeId = x._1
+              val statusList = Await.result(clientOf(primaryNodeId).getRegionStatus(regionIds), Duration("2s"))
               statusList.foreach(status => {
                 val localRegion = localRegionManager.regions(status.regionId)
-                //local is old
+                //local region is old
                 val targetRevision: Long = status.revision
                 val localRevision: Long = localRegion.revision
                 if (targetRevision > localRevision) {
                   if (logger.isTraceEnabled())
-                    logger.trace(s"[region-${localRegion.regionId}@${nodeId}] found new version : ${targetRevision}>${localRevision}");
+                    logger.trace(s"[region-${localRegion.regionId}@${nodeId}] found new version : ${targetRevision}@${primaryNodeId}>${localRevision}@${nodeId}");
 
-                  val is = clientOf(x._1).getPatchInputStream(
+                  val is = clientOf(primaryNodeId).getPatchInputStream(
                     localRegion.regionId, localRevision, Duration("10s"))
 
-                  val updated = localRegion.applyPatch(is);
-                  is.close();
-
-                  if (updated) {
-                    //FIXME: region.close() will cause current writing fail
+                  localRegion.applyPatch(is, {
+                    is.close();
                     val updatedRegion = localRegionManager.update(localRegion)
                     if (logger.isTraceEnabled())
                       logger.trace(s"[region-${localRegion.regionId}@${nodeId}] updated: ${localRevision}->${updatedRegion.revision}");
-                  }
+                  });
                 }
               })
             }

@@ -6,7 +6,7 @@ import org.apache.commons.io.IOUtils
 import org.grapheco.hippo.util.ByteBufferInputStream
 import org.grapheco.regionfs.FileId
 import org.grapheco.regionfs.server.Region
-import org.junit.{Assert, Test}
+import org.junit.{After, Assert, Test}
 
 class FileIOWith3Node3ReplicaEventualConsistencyTest extends FileIOWith1Node1ReplicaTest {
   override val con = new EventualMultiNode
@@ -17,6 +17,12 @@ class FileIOWith3Node3ReplicaEventualConsistencyTest extends FileIOWith1Node1Rep
   }
 
   private def getNodeId(fid: FileId): Int = (fid.regionId >> 16).toInt
+
+  @After
+  def sleepBeforeShutdown(): Unit = {
+    println("wait PrimaryRegionWatcher to sync regions...")
+    servers.foreach(_.primaryRegionWatcher.foreach(_.stop()))
+  }
 
   @Test
   def testRegionSync(): Unit = {

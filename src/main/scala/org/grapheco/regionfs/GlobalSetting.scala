@@ -2,14 +2,12 @@ package org.grapheco.regionfs
 
 import java.io.{File, FileInputStream}
 import java.util.Properties
-import java.util.concurrent.Executors
 
 import org.grapheco.commons.util.ConfigUtils._
 import org.grapheco.commons.util.{Configuration, ConfigurationEx}
 import org.grapheco.regionfs.util.ZooKeeperClient
 
 import scala.collection.JavaConversions
-import scala.concurrent.ExecutionContext
 
 /**
   * Created by bluejoe on 2020/2/6.
@@ -24,17 +22,19 @@ class GlobalSetting(props: Properties) {
       }
   }
 
-  lazy val consistencyStrategy: Int = conf.get("consistency.strategy").
+  lazy val consistencyStrategy: Int = conf.get(Constants.PARAMETER_KEY_CONSISTENCY_STRATEGY).
     withDefault(Constants.CONSISTENCY_STRATEGY_STRONG).
     withOptions(Map("strong" -> Constants.CONSISTENCY_STRATEGY_STRONG,
       "eventual" -> Constants.CONSISTENCY_STRATEGY_EVENTUAL)).asInt
 
-  lazy val minWritableRegions: Int = conf.get("region.min.writable").withDefault(Constants.DEFAULT_MIN_WRITABLE_REGIONS).asInt
-  lazy val replicaNum: Int = conf.get("replica.num").withDefault(1).asInt
-  lazy val regionSizeLimit: Long = conf.get("region.size.limit").withDefault(Constants.DEFAULT_REGION_SIZE_LIMIT).asLong
-  lazy val enableCrc: Boolean = conf.get("blob.crc.enabled").withDefault(true).asBoolean
-  lazy val regionVersionCheckInterval: Long = conf.get("region.version.check.interval").withDefault(
+  lazy val minWritableRegions: Int = conf.get(Constants.PARAMETER_KEY_MIN_WRITABLE_REGIONS).withDefault(Constants.DEFAULT_MIN_WRITABLE_REGIONS).asInt
+  lazy val replicaNum: Int = conf.get(Constants.PARAMETER_KEY_REPLICA_NUM).withDefault(Constants.DEFAULT_REPLICA_NUM).asInt
+  lazy val regionSizeLimit: Long = conf.get(Constants.PARAMETER_KEY_REGION_SIZE_LIMIT).withDefault(Constants.DEFAULT_REGION_SIZE_LIMIT).asLong
+  lazy val enableCrc: Boolean = conf.get(Constants.PARAMETER_KEY_BLOB_CRC_ENABLED).withDefault(true).asBoolean
+  lazy val regionVersionCheckInterval: Long = conf.get(Constants.PARAMETER_KEY_REGION_VERSION_CHECK_INTERVAL).withDefault(
     Constants.DEFAULT_REGION_VERSION_CHECK_INTERVAL).asLong
+  lazy val executorThreadPoolSize: Int = conf.get(Constants.PARAMETER_KEY_EXECUTOR_THREAD_POOL_SIZE).withDefault(
+    Constants.DEFAULT_EXECUTOR_THREAD_POOL_SIZE).asInt
 }
 
 object GlobalSetting {
@@ -45,7 +45,7 @@ class GlobalSettingWriter {
   def write(props: Properties): Unit = {
     val conf = new ConfigurationEx(props)
 
-    val zks = conf.get("zookeeper.address").asString
+    val zks = conf.get(Constants.PARAMETER_KEY_ZOOKEEPER_ADDRESS).asString
     val zk = ZooKeeperClient.create(zks)
 
     zk.createAbsentNodes();

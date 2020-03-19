@@ -10,6 +10,7 @@ import java.util.zip.{CRC32, CheckedInputStream}
 object CrcUtils {
   def computeCrc32(buf: ByteBuffer): Long = {
     //get crc32
+    assert(buf.remaining() > 0)
     val crc32 = new CRC32()
     crc32.update(buf)
     crc32.getValue

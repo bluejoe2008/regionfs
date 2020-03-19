@@ -83,7 +83,7 @@ class RegionMetaStore(conf: RegionConfig) extends Logging {
   }
 
   //since=0,tail=1
-  def unsafeRead(since: Long, tail: Long): ByteBuffer = {
+  def unsafeReadBatch(since: Long, tail: Long): ByteBuffer = {
     fptr.synchronized {
       fptr.getChannel.map(FileChannel.MapMode.READ_ONLY,
         Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * since,
@@ -91,7 +91,7 @@ class RegionMetaStore(conf: RegionConfig) extends Logging {
     }
   }
 
-  def unsafeWrite(buf: ByteBuffer): Unit = {
+  def unsafeWriteBatch(buf: ByteBuffer): Unit = {
     fptr.synchronized {
       fptr.seek(fptr.length())
       fptr.getChannel.write(buf)
@@ -176,57 +176,60 @@ class RegionTrashStore(conf: RegionConfig) {
 class RegionBodyStore(conf: RegionConfig) {
   //region file, one file for each region by far
   private val fileBody = new File(conf.regionDir, "body")
-  val cursor = new AtomicLong(fileBody.length())
-  lazy val readerChannel = new RandomAccessFile(fileBody, "r").getChannel
-  lazy val appenderChannel = new FileOutputStream(fileBody, true).getChannel
+  lazy val fptr = new RandomAccessFile(fileBody, "rw")
 
   /**
     * @return (offset: Long, length: Long, actualWritten: Long)
     */
   def write(buf: ByteBuffer, crc: Long): (Long, Long, Long) = {
     val length = buf.remaining()
+    //7-(x+7)%8
     val padding = new Array[Byte](Constants.REGION_FILE_ALIGNMENT_SIZE - 1 -
       (length + Constants.REGION_FILE_ALIGNMENT_SIZE - 1) % Constants.REGION_FILE_ALIGNMENT_SIZE)
 
-    appenderChannel.synchronized {
-      //7-(x+7)%8
-      appenderChannel.write(Array(buf, ByteBuffer.wrap(
-        padding.map(_ => '*'.toByte))))
-    }
+    val (offset, written) =
+      fptr.synchronized {
+        val offset = fptr.length()
+        fptr.seek(offset)
+        fptr.getChannel.write(buf.duplicate())
 
-    val written = length + padding.length
-    val offset = cursor.getAndAdd(written)
+        //write padding
+        fptr.write(padding.map(_ => '*'.toByte))
+        (offset, length + padding.length)
+      }
 
     if (conf.globalSetting.enableCrc) {
-      val buf = read(offset, length)
-      if (crc != CrcUtils.computeCrc32(buf)) {
-        throw new WriteTimeMismatchedCheckSumException();
+      val rbuf = read(offset, length)
+
+      val crc2 = CrcUtils.computeCrc32(rbuf)
+
+      if (crc != crc2) {
+        throw new WrittenMismatchedStreamException();
       }
     }
 
     (offset, length, written)
   }
 
-  def unsafeWrite(buf: ByteBuffer): Unit = {
-    appenderChannel.synchronized {
-      appenderChannel.write(buf)
+  def unsafeWriteBatch(buf: ByteBuffer): Unit = {
+    fptr.synchronized {
+      fptr.getChannel.write(buf)
     }
   }
 
-  def unsafeRead(offset: Long, tail: Long): ByteBuffer = {
-    readerChannel.synchronized {
-      readerChannel.map(FileChannel.MapMode.READ_ONLY, offset, tail - offset);
+  def unsafeReadBatch(offset: Long, tail: Long): ByteBuffer = {
+    fptr.synchronized {
+      fptr.getChannel.map(FileChannel.MapMode.READ_ONLY, offset, tail - offset);
     }
   }
 
   def close(): Unit = {
-    appenderChannel.close()
-    readerChannel.close()
+    fptr.close()
   }
 
   def read(offset: Long, length: Int): ByteBuffer = {
-    readerChannel.synchronized {
-      readerChannel.map(FileChannel.MapMode.READ_ONLY, offset, length);
+    fptr.synchronized {
+      fptr.getChannel.map(FileChannel.MapMode.READ_ONLY, offset, length);
     }
   }
 }
@@ -239,7 +242,6 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
   def isWritable = length <= conf.globalSetting.regionSizeLimit
 
   val isPrimary = (regionId >> 16) == nodeId
-
   //metadata file
   private lazy val fbody = new RegionBodyStore(conf)
   private lazy val fmeta = new RegionMetaStore(conf)
@@ -250,7 +252,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
 
   def fileCount = cursor.current - ftrash.cursor.get
 
-  def length = fbody.cursor.get()
+  def length = fbody.fptr.length()
 
   def listFiles(): Iterator[(FileId, Long)] = {
     fmeta.iterator.map(meta => FileId.make(regionId, meta.localId) -> meta.length)
@@ -266,21 +268,25 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
       }
 
     //TODO: transaction assurance
-    val (offset: Long, length: Long, actualWritten: Long) =
-      fbody.write(buf, crc32)
+    this.synchronized {
 
-    //get local id
-    var localId = -1L
-    cursor.offerNextId((id: Long) => {
-      localId = id
-      fmeta.write(id, offset, length, crc32)
-    })
+      val (offset: Long, length: Long, actualWritten: Long) =
+        fbody.write(buf, crc32)
 
-    listener.handleRegionEvent(new WriteRegionEvent(this))
-    if (logger.isTraceEnabled())
-      logger.trace(s"[region-${regionId}@${nodeId}] written: localId=$localId, length=${length}, actual=${actualWritten}, revision=${revision}")
+      //get local id
+      var localId = -1L
+      cursor.offerNextId((id: Long) => {
+        localId = id
+        fmeta.write(id, offset, length, crc32)
+      })
 
-    localId -> revision
+
+      listener.handleRegionEvent(new WriteRegionEvent(this))
+      if (logger.isTraceEnabled())
+        logger.trace(s"[region-${regionId}@${nodeId}] written: localId=$localId, length=${length}, actual=${actualWritten}, revision=${revision}")
+
+      localId -> revision
+    }
   }
 
   def close(): Unit = {
@@ -320,8 +326,8 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
       //write .metadata
       //write .body
       val meta1 = fmeta.read(since).get
-      val metabuf = Unpooled.wrappedBuffer(fmeta.unsafeRead(since, rev))
-      val bodybuf = Unpooled.wrappedBuffer(fbody.unsafeRead(meta1.offset, len))
+      val metabuf = Unpooled.wrappedBuffer(fmeta.unsafeReadBatch(since, rev))
+      val bodybuf = Unpooled.wrappedBuffer(fbody.unsafeReadBatch(meta1.offset, len))
 
       //TODO: checksum
       buf.writeByte(Constants.MARK_GET_REGION_PATCH_OK).
@@ -334,7 +340,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
   }
 
   //return value means if update is ok
-  def applyPatch(is: InputStream): Boolean = {
+  def applyPatch(is: InputStream, callbackOnUpdated: => Unit): Boolean = {
     val dis = new DataInputStream(is)
     val mark = dis.readByte()
     mark match {
@@ -365,12 +371,14 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
 
         this.synchronized {
           //TOOD: transaction assurance
-          fmeta.unsafeWrite(buf1.nioBuffer())
-          fbody.unsafeWrite(buf2.nioBuffer())
-        }
+          fmeta.unsafeWriteBatch(buf1.nioBuffer())
+          fbody.unsafeWriteBatch(buf2.nioBuffer())
 
-        if (logger.isDebugEnabled)
-          logger.debug(s"[region-${regionId}@${nodeId}] updated: .meta ${sizeMeta} bytes, .body ${sizeBody} bytes")
+          if (logger.isDebugEnabled)
+            logger.debug(s"[region-${regionId}@${nodeId}] updated: .meta ${sizeMeta} bytes, .body ${sizeBody} bytes")
+
+          callbackOnUpdated;
+        }
 
         true
     }
@@ -428,9 +436,11 @@ class RegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetting, l
     val newRegion = new Region(nodeId, region.regionId, region.conf, listener)
 
     this.synchronized {
-      region.close()
       regions(region.regionId) = newRegion
+      //TODO: should close this object
+      //region.close()
     }
+
     newRegion
   }
 
@@ -452,15 +462,13 @@ class RegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetting, l
     }
 
     listener.handleRegionEvent(CreateRegionEvent(region))
-    this.synchronized {
-      regions += (regionId -> region)
-      ring += regionId
-    }
+    regions += (regionId -> region)
+    ring += regionId
     region
   }
 }
 
-class WriteTimeMismatchedCheckSumException extends RegionFsServerException("mismatched checksum exception on write time") {
+class WrittenMismatchedStreamException extends RegionFsServerException("mismatched checksum exception on write time") {
 
 }
 

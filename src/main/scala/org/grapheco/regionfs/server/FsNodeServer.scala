@@ -2,7 +2,7 @@ package org.grapheco.regionfs.server
 
 import java.io._
 import java.nio.ByteBuffer
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger}
 
 import io.netty.buffer.Unpooled
 import net.neoremind.kraps.RpcConf
@@ -196,7 +196,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       neighbourNodesWatcher.close()
       neighbourRegionsWatcher.close()
 
-      new File(storeDir, ".lock").delete();
+      new File(storeDir, ".lock").delete()
       primaryRegionWatcher.foreach(_.stop())
       env.shutdown()
       zookeeper.close()
@@ -232,6 +232,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
     zookeeper.assertPathNotExists(path) {
       env.shutdown()
     }
+
     env -> address;
   }
 
@@ -240,7 +241,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       with HippoRpcHandler
       with Logging {
 
-    val traffic = new AtomicInteger(0);
+    private val traffic = new AtomicInteger(0);
 
     //NOTE: register only on started up
     override def onStart(): Unit = {
@@ -535,15 +536,15 @@ class PrimaryRegionWatcher(zookeeper: ZooKeeperClient,
                            localRegionManager: RegionManager,
                            clientOf: (Int) => FsNodeClient)
   extends Logging {
-  var stopped: Boolean = false;
+  var stopped = new AtomicBoolean(false);
   val thread: Thread = new Thread(new Runnable() {
     override def run(): Unit = {
-      while (!stopped) {
+      while (!stopped.get()) {
         Thread.sleep(conf.regionVersionCheckInterval)
-        if (!stopped) {
+        if (!stopped.get()) {
           val secondaryRegions = localRegionManager.regions.values.filter(!_.isPrimary).groupBy(x =>
             (x.regionId >> 16).toInt)
-          for (x <- secondaryRegions if (!stopped)) {
+          for (x <- secondaryRegions if (!stopped.get())) {
             try {
               val regionIds = x._2.map(_.regionId).toArray
               val primaryNodeId = x._1
@@ -586,7 +587,7 @@ class PrimaryRegionWatcher(zookeeper: ZooKeeperClient,
   }
 
   def stop(): Unit = {
-    stopped = true;
+    stopped.set(true)
     thread.join()
   }
 }

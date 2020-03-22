@@ -13,9 +13,10 @@ import org.apache.curator.retry.ExponentialBackoffRetry
 import org.apache.zookeeper.CreateMode
 import org.grapheco.commons.util.Logging
 import org.grapheco.regionfs.GlobalSetting
-import org.grapheco.regionfs.server.Region
+import org.grapheco.regionfs.server.LocalRegionManager
 
 import scala.collection.JavaConversions
+import scala.collection.mutable.ArrayBuffer
 
 /**
   * Created by bluejoe on 2020/2/26.
@@ -69,18 +70,20 @@ class ZooKeeperClient(curator: CuratorFramework) {
     baos.toByteArray
   }
 
-  def updateRegionNode(nodeId: Int, region: Region) = {
-    curator.setData().forPath(s"/regionfs/regions/${nodeId}_${region.regionId}", toByteArray(_.writeLong(region.revision)))
+  private def parseByteArray[T](bytes: Array[Byte], read: (DataInputStream) => T): T = {
+    val bais = new ByteArrayInputStream(bytes)
+    val dis = new DataInputStream(bais)
+    read(dis)
   }
 
-  def createRegionNode(nodeId: Int, region: Region) = {
-    curator.create().withMode(CreateMode.EPHEMERAL).forPath(
-      s"/regionfs/regions/${nodeId}_${region.regionId}", toByteArray(_.writeLong(region.revision)))
+  def updateNodeData(nodeId: Int, address: RpcAddress, localRegionManager: LocalRegionManager) = {
+    curator.setData().forPath(
+      s"/regionfs/nodes/${nodeId}_${address.host}_${address.port}", toByteArray(_.writeInt(localRegionManager.regions.size)))
   }
 
-  def createNodeNode(nodeId: Int, address: RpcAddress) = {
+  def createNodeNode(nodeId: Int, address: RpcAddress, localRegionManager: LocalRegionManager) = {
     curator.create().withMode(CreateMode.EPHEMERAL).forPath(
-      s"/regionfs/nodes/${nodeId}_${address.host}_${address.port}")
+      s"/regionfs/nodes/${nodeId}_${address.host}_${address.port}", toByteArray(_.writeInt(localRegionManager.regions.size)))
   }
 
   def close(): Unit = {
@@ -101,7 +104,7 @@ class ZooKeeperClient(curator: CuratorFramework) {
     new GlobalSetting(props)
   }
 
-  def saveglobalSetting(props: Properties): Unit = {
+  def saveGlobalSetting(props: Properties): Unit = {
     val baos = new ByteArrayOutputStream();
     props.store(baos, "global setting of region-fs")
     val bytes = baos.toByteArray
@@ -113,70 +116,40 @@ class ZooKeeperClient(curator: CuratorFramework) {
     JavaConversions.iterableAsScalaIterable(curator.getChildren.forPath("/regionfs/nodes"))
   }
 
-  def readRegionList(): Iterable[String] = {
-    JavaConversions.iterableAsScalaIterable(curator.getChildren.forPath("/regionfs/regions"))
-  }
-
-  /**
-    * watches on nodes registered in zookeeper
-    * filters node list by parameter filter
-    * layout of zookeepper:
-    *  /regionfs/nodes
-    *    1_192.168.100.1_1224
-    *    2_192.168.100.1_1225
-    *    3_192.168.100.2_1224
-    *    ...
-    */
-  def watchNodeList(handler: ParsedChildNodeEventHandler[(Int, RpcAddress)]): Closeable = {
-    watchParsedChildrenPath("/regionfs/nodes", handler)((data: ChildData) => {
+  def watchNodeList(accepts: (NodeServerInfo) => Boolean,
+                    handler: ParsedChildNodeEventHandler[NodeServerInfo]) = {
+    watchParsedChildrenPath[NodeServerInfo]("/regionfs/nodes", (data: ChildData) => {
       val path = data.getPath.substring("/regionfs/nodes".length + 1)
       val splits = path.split("_")
-      splits(0).toInt -> (RpcAddress(splits(1), splits(2).toInt))
-    });
+      NodeServerInfo(splits(0).toInt, (RpcAddress(splits(1), splits(2).toInt)), parseByteArray(data.getData, _.readInt()))
+    }, accepts, handler);
   }
 
-  /**
-    * watches on regions registered in zookeeper
-    * filters region list by parameter filter
-    * layout of zookeepper:
-    *  /regionfs/regions
-    *    1_32768
-    *    1_32769
-    *    2_65536
-    *    ...
-    */
-  def watchRegionList(handler: ParsedChildNodeEventHandler[(Long, Int, Long)]): Closeable = {
-    watchParsedChildrenPath("/regionfs/regions", handler)((data: ChildData) => {
-      val path = data.getPath.substring("/regionfs/regions".length + 1)
-      val splits = path.split("_")
-      val is = new DataInputStream(new ByteArrayInputStream(data.getData))
-      val revision = is.readLong()
-      is.close()
-      (splits(1).toLong, splits(0).toInt, revision)
-    });
-  }
-
-  private def watchParsedChildrenPath[T](parentPath: String, handler: ParsedChildNodeEventHandler[T])(parse: (ChildData) => T): Closeable = {
+  def watchParsedChildrenPath[T](
+                                  parentPath: String,
+                                  parse: (ChildData) => T,
+                                  accepts: T => Boolean,
+                                  handler: ParsedChildNodeEventHandler[T]): Closeable = {
     watchChildrenPath(parentPath, new ChildNodeEventHandler() {
       override def onChildAdded(data: ChildData): Unit = {
         val t = parse(data)
-        if (handler.accepts(t))
+        if (accepts(t))
           handler.onCreated(t)
       }
 
-      def onChildUpdated(data: ChildData): Unit = {
+      override def onChildUpdated(data: ChildData): Unit = {
         val t = parse(data)
-        if (handler.accepts(t))
+        if (accepts(t))
           handler.onUpdated(t)
       }
 
-      def onInitialized(batch: Iterable[ChildData]): Unit = {
-        handler.onInitialized(batch.map(parse(_)).filter(handler.accepts(_)))
+      override def onInitialized(batch: Iterable[ChildData]): Unit = {
+        handler.onInitialized(batch.map(parse(_)).filter(accepts(_)))
       }
 
       override def onChildRemoved(data: ChildData): Unit = {
         val t = parse(data)
-        if (handler.accepts(t))
+        if (accepts(t))
           handler.onCreated(t)
       }
     })
@@ -217,6 +190,32 @@ class ZooKeeperClient(curator: CuratorFramework) {
   }
 }
 
+/**
+  * watches on nodes registered in zookeeper
+  * filters node list by parameter filter
+  * layout of zookeepper:
+  *  /regionfs/nodes
+  *    1_192.168.100.1_1224
+  *    2_192.168.100.1_1225
+  *    3_192.168.100.2_1224
+  *    ...
+  */
+class CompositeParsedChildNodeEventHandler[T](handlers: ParsedChildNodeEventHandler[T]*) extends ParsedChildNodeEventHandler[T] {
+  private val _handlers = ArrayBuffer[ParsedChildNodeEventHandler[T]](handlers: _*);
+
+  def addHandler(handler: ParsedChildNodeEventHandler[T]) = {
+    _handlers += handler
+  }
+
+  override def onCreated(t: T): Unit = _handlers.foreach(_.onCreated(t))
+
+  override def onUpdated(t: T): Unit = _handlers.foreach(_.onUpdated(t))
+
+  override def onInitialized(batch: Iterable[T]): Unit = _handlers.foreach(_.onInitialized(batch))
+
+  override def onDeleted(t: T): Unit = _handlers.foreach(_.onDeleted(t))
+}
+
 trait ChildNodeEventHandler {
   def onChildAdded(data: ChildData);
 
@@ -234,11 +233,12 @@ trait ParsedChildNodeEventHandler[T] {
 
   def onInitialized(batch: Iterable[T]);
 
-  def accepts(t: T): Boolean;
-
   def onDeleted(t: T);
 }
 
+case class NodeServerInfo(nodeId: Int, address: RpcAddress, regionCount: Int) {
+
+}
 
 class RegionFsException(msg: String, cause: Throwable = null)
   extends RuntimeException(msg, cause) {

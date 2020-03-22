@@ -46,13 +46,13 @@ class Ring[T]() {
     t
   }
 
-  def !(): T = {
+  def take(): T = {
     this.synchronized {
       unsafeTakeOne()
     }
   }
 
-  def !(filter: (T) => Boolean): Option[T] = {
+  def take(filter: (T) => Boolean): Option[T] = {
     this.synchronized {
       var n = _buffer.length;
       var t: T = null.asInstanceOf[T];

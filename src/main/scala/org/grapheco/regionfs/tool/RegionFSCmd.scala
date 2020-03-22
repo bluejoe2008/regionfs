@@ -2,12 +2,14 @@ package org.grapheco.regionfs.tool
 
 import java.io.{File, FileOutputStream, InputStream}
 
+import net.neoremind.kraps.rpc.RpcAddress
 import org.apache.commons.cli._
 import org.apache.commons.io.IOUtils
 import org.grapheco.regionfs.client.FsAdmin
-import org.grapheco.regionfs.server.FsNodeServer
-import org.grapheco.regionfs.{FileId, GlobalSettingWriter}
+import org.grapheco.regionfs.server.{FsNodeServer, RegionInfo}
 import org.grapheco.regionfs.util.ByteBufferConversions._
+import org.grapheco.regionfs.{FileId, GlobalSettingWriter}
+
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
@@ -18,17 +20,15 @@ import scala.concurrent.duration.Duration
 object RegionFSCmd {
   val commands = Array[(String, String, ShellCommandExecutor)](
     ("help", "print usage information", null),
-    ("stat-all", "report statistics of all nodes", new StatAllShellCommandExecutor()),
-    ("greet", "notify a node server to print a message to be noticed", new GreetShellCommandExecutor()),
-    ("stat-node", "report statistics of a node", new StatNodeShellCommandExecutor()),
-    ("start-local-node", "start a local node server", new StartNodeShellCommandExecutor()),
+    ("stat", "report statistics of all nodes (or a given node)", new StatShellCommandExecutor()),
+    ("greet", "notify all nodes (or a given node) to print a message to be noticed", new GreetShellCommandExecutor()),
+    ("start", "start a local node server", new StartNodeShellCommandExecutor()),
     ("config", "configure global setting", new ConfigShellCommandExecutor()),
-    ("clean-all", "clean data on a node", new CleanAllShellCommandExecutor()),
-    ("clean-node", "clean data on all nodes", new CleanNodeShellCommandExecutor()),
-    ("shutdown-all", "shutdown all nodes", new ShutdownAllShellCommandExecutor()),
-    ("shutdown-node", "shutdown a node", new ShutdownNodeShellCommandExecutor()),
+    ("clean", "clean data on all nodes (or a given node)", new CleanDataShellCommandExecutor()),
+    ("shutdown", "shutdown all nodes (or a given node)", new ShutdownShellCommandExecutor()),
     ("put", "put local files into regionfs", new PutFilesShellCommandExecutor()),
     ("get", "get remote files", new GetFilesShellCommandExecutor()),
+    ("regions", "list regions on all nodes (or a given node)", new ListRegionsShellCommandExecutor()),
     ("delete", "delete remote files", new DeleteFilesShellCommandExecutor())
   )
 
@@ -127,7 +127,7 @@ class ConfigShellCommandExecutor extends ShellCommandExecutor {
   }
 }
 
-class StatAllShellCommandExecutor extends ShellCommandExecutor {
+private class StatShellCommandExecutor extends ShellCommandExecutor {
   override def buildOptions(options: Options): Unit = {
     options.addOption(Option.builder("zk")
       .argName("zkString")
@@ -135,15 +135,30 @@ class StatAllShellCommandExecutor extends ShellCommandExecutor {
       .hasArg
       .required(true)
       .build())
+
+    options.addOption(Option.builder("node")
+      .argName("nodeid")
+      .desc("node id, e.g 1")
+      .hasArg
+      .required(false)
+      .build())
   }
 
   override def run(commandLine: CommandLine): Unit = {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
-    println(s"[region-fs]")
-    admin.stat(Duration("4s")).nodeStats.foreach { x =>
-      println(s"    ╰┈┈┈[node-${x.nodeId}](address=${x.address})")
-      x.regionStats.foreach { y =>
-        println(s"    ┆       ╰┈┈┈[region-${y.regionId}](file number=${y.fileCount}, total size=${y.totalSize})")
+    val list =
+      if (commandLine.hasOption("node")) {
+        val nodeId: Int = commandLine.getOptionValue("node").toInt
+        List(admin.statNode(nodeId, Duration("4s")))
+      }
+      else {
+        admin.stat(Duration("4s")).nodeStats
+      }
+
+    for (ns <- list) {
+      println(s"[node-${ns.nodeId}](address=${ns.address})")
+      ns.regionStats.foreach { y =>
+        println(s"    ╰┈┈┈[region-${y.regionId}](file number=${y.fileCount}, total size=${y.totalSize})")
       }
     }
 
@@ -151,7 +166,7 @@ class StatAllShellCommandExecutor extends ShellCommandExecutor {
   }
 }
 
-class StatNodeShellCommandExecutor extends ShellCommandExecutor {
+private class ListRegionsShellCommandExecutor extends ShellCommandExecutor {
   override def buildOptions(options: Options): Unit = {
     options.addOption(Option.builder("zk")
       .argName("zkString")
@@ -164,23 +179,36 @@ class StatNodeShellCommandExecutor extends ShellCommandExecutor {
       .argName("nodeid")
       .desc("node id, e.g 1")
       .hasArg
-      .required(true)
+      .required(false)
       .build())
   }
 
   override def run(commandLine: CommandLine): Unit = {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
-    val ns = admin.statNode(commandLine.getOptionValue("node").toInt, Duration("4s"));
-    println(s"[node-${ns.nodeId}](address=${ns.address})")
-    ns.regionStats.foreach { y =>
-      println(s"    ╰┈┈┈[region-${y.regionId}](file number=${y.fileCount}, total size=${y.totalSize})")
+    val list: Array[(Int, RpcAddress, Array[RegionInfo])] =
+      if (commandLine.hasOption("node")) {
+        val nodeId: Int = commandLine.getOptionValue("node").toInt
+        Array(Tuple3(nodeId, admin.mapNodeWithAddress(nodeId),
+          admin.askRegionsOnNode(nodeId, Duration("4s"))))
+      }
+      else {
+        admin.getAvaliableNodes().map { nodeId =>
+          Tuple3(nodeId, admin.mapNodeWithAddress(nodeId), admin.askRegionsOnNode(nodeId, Duration("4s")))
+        }.toArray
+      }
+
+    for (ns <- list) {
+      println(s"[node-${ns._1}](address=${ns._2})")
+      ns._3.foreach { ri =>
+        println(s"    ╰┈┈┈[region-${ri.regionId}](cursor=${ri.revision}, total size=${ri.length}, primary=${ri.isPrimary}, writable=${ri.isWritable})")
+      }
     }
 
     admin.close
   }
 }
 
-class GreetShellCommandExecutor extends ShellCommandExecutor {
+private class GreetShellCommandExecutor extends ShellCommandExecutor {
   override def buildOptions(options: Options): Unit = {
     options.addOption(Option.builder("zk")
       .argName("zkString")
@@ -193,20 +221,30 @@ class GreetShellCommandExecutor extends ShellCommandExecutor {
       .argName("nodeid")
       .desc("node id, e.g 1")
       .hasArg
-      .required(true)
+      .required(false)
       .build())
   }
 
   override def run(commandLine: CommandLine): Unit = {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
-    val (nodeId, addr) = admin.greet(commandLine.getOptionValue("node").toInt, Duration("4s"))
-    println(s"greeted node-${nodeId} on ${addr}.")
+    val list: Array[Int] =
+      if (commandLine.hasOption("node")) {
+        Array(commandLine.getOptionValue("node").toInt)
+      }
+      else {
+        admin.getAvaliableNodes().toArray
+      }
+
+    for (ns <- list) {
+      val (nodeId, addr) = admin.greet(ns, Duration("4s"))
+      println(s"greeted node-${nodeId} on ${addr}.")
+    }
 
     admin.close
   }
 }
 
-class StartNodeShellCommandExecutor extends ShellCommandExecutor {
+private class StartNodeShellCommandExecutor extends ShellCommandExecutor {
   override def buildOptions(options: Options): Unit = {
     options.addOption(Option.builder("conf")
       .argName("nodeConfigFile")
@@ -222,7 +260,7 @@ class StartNodeShellCommandExecutor extends ShellCommandExecutor {
   }
 }
 
-class ShutdownAllShellCommandExecutor extends ShellCommandExecutor {
+private class ShutdownShellCommandExecutor extends ShellCommandExecutor {
   override def buildOptions(options: Options): Unit = {
     options.addOption(Option.builder("zk")
       .argName("zkString")
@@ -237,107 +275,78 @@ class ShutdownAllShellCommandExecutor extends ShellCommandExecutor {
       .hasArg(false)
       .required(true)
       .build())
+
+    options.addOption(Option.builder("node")
+      .argName("nodeid")
+      .desc("node id, e.g 1")
+      .hasArg
+      .required(false)
+      .build())
   }
 
   override def run(commandLine: CommandLine): Unit = {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
-    admin.shutdownAllNodes(Duration("4s")).foreach { x =>
-      println(s"shutdowning node-${x._1} on ${x._2}...")
+    val list: Array[Int] =
+      if (commandLine.hasOption("node")) {
+        Array(commandLine.getOptionValue("node").toInt)
+      }
+      else {
+        admin.getAvaliableNodes().toArray
+      }
+
+    list.foreach { nodeId =>
+      val (nodeId, address) = admin.shutdownNode(commandLine.getOptionValue("node").toInt, Duration("4s"))
+      println(s"shutdowning node-$nodeId on $address...")
     }
+
     admin.close
   }
 }
 
-class ShutdownNodeShellCommandExecutor extends ShellCommandExecutor {
+private class CleanDataShellCommandExecutor extends ShellCommandExecutor {
   override def buildOptions(options: Options): Unit = {
     options.addOption(Option.builder("zk")
       .argName("zkString")
       .desc("zookeeper address, e.g localhost:2181")
       .hasArg
       .required(true)
+      .build())
+
+    options.addOption(Option.builder("f")
+      .argName("force")
+      .desc("force this operation")
+      .hasArg(false)
+      .required(false)
       .build())
 
     options.addOption(Option.builder("node")
       .argName("nodeid")
       .desc("node id, e.g 1")
       .hasArg
-      .required(true)
-      .build())
-
-    options.addOption(Option.builder("f")
-      .argName("force")
-      .desc("force this operation")
-      .hasArg(false)
-      .required(true)
+      .required(false)
       .build())
   }
 
   override def run(commandLine: CommandLine): Unit = {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
-    val (nodeId, address) = admin.shutdownNode(commandLine.getOptionValue("node").toInt, Duration("4s"))
-    println(s"shutdowning node-$nodeId on address...")
+    val list: Array[Int] =
+      if (commandLine.hasOption("node")) {
+        Array(commandLine.getOptionValue("node").toInt)
+      }
+      else {
+        admin.getAvaliableNodes().toArray
+      }
+
+    list.foreach { nodeId =>
+      val addr = admin.cleanNodeData(nodeId, Duration("4s"))
+      println(s"cleaned data on $addr...")
+    }
+
     admin.close
   }
 }
 
-class CleanAllShellCommandExecutor extends ShellCommandExecutor {
-  override def buildOptions(options: Options): Unit = {
-    options.addOption(Option.builder("zk")
-      .argName("zkString")
-      .desc("zookeeper address, e.g localhost:2181")
-      .hasArg
-      .required(true)
-      .build())
-
-    options.addOption(Option.builder("f")
-      .argName("force")
-      .desc("force this operation")
-      .hasArg(false)
-      .required(true)
-      .build())
-  }
-
-  override def run(commandLine: CommandLine): Unit = {
-    val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
-    val addrs = admin.cleanAllData(Duration("4s"))
-    addrs.foreach(addr => println(s"cleaned data on $addr..."))
-    admin.close
-  }
-}
-
-class CleanNodeShellCommandExecutor extends ShellCommandExecutor {
-  override def buildOptions(options: Options): Unit = {
-    options.addOption(Option.builder("zk")
-      .argName("zkString")
-      .desc("zookeeper address, e.g localhost:2181")
-      .hasArg
-      .required(true)
-      .build())
-
-    options.addOption(Option.builder("node")
-      .argName("nodeid")
-      .desc("node id, e.g 1")
-      .hasArg
-      .required(true)
-      .build())
-
-    options.addOption(Option.builder("f")
-      .argName("force")
-      .desc("force this operation")
-      .hasArg(false)
-      .required(true)
-      .build())
-  }
-
-  override def run(commandLine: CommandLine): Unit = {
-    val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
-    val addr = admin.cleanNodeData(commandLine.getOptionValue("node").toInt, Duration("4s"))
-    println(s"cleaned data on $addr...")
-    admin.close
-  }
-}
-
-class PutFilesShellCommandExecutor extends ShellCommandExecutor {
+private class PutFilesShellCommandExecutor extends ShellCommandExecutor {
   override def buildOptions(options: Options): Unit = {
     options.addOption(Option.builder("zk")
       .argName("zkString")
@@ -372,7 +381,7 @@ class PutFilesShellCommandExecutor extends ShellCommandExecutor {
   }
 }
 
-class DeleteFilesShellCommandExecutor extends ShellCommandExecutor {
+private class DeleteFilesShellCommandExecutor extends ShellCommandExecutor {
   override def buildOptions(options: Options): Unit = {
     options.addOption(Option.builder("zk")
       .argName("zkString")
@@ -401,7 +410,7 @@ class DeleteFilesShellCommandExecutor extends ShellCommandExecutor {
   }
 }
 
-class GetFilesShellCommandExecutor extends ShellCommandExecutor {
+private class GetFilesShellCommandExecutor extends ShellCommandExecutor {
   override def buildOptions(options: Options): Unit = {
     options.addOption(Option.builder("zk")
       .argName("zkString")

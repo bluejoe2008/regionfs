@@ -1,0 +1,140 @@
+package org.grapheco.regionfs.server
+
+import java.util.concurrent.atomic.AtomicBoolean
+
+import org.grapheco.commons.util.Logging
+import org.grapheco.regionfs.client.FsNodeClient
+import org.grapheco.regionfs.util.{CompositeParsedChildNodeEventHandler, NodeServerInfo, ParsedChildNodeEventHandler}
+import org.grapheco.regionfs.{Constants, GlobalSetting}
+
+import scala.collection.mutable
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
+
+/**
+  * Created by bluejoe on 2020/3/20.
+  */
+//report local secondary regions
+//stores remote secondary regions
+class RemoteRegionWatcher(nodeId: Int, globalSetting: GlobalSetting,
+                          zkNodeEventHandlers: CompositeParsedChildNodeEventHandler[NodeServerInfo],
+                          localRegionManager: LocalRegionManager,
+                          clientOf: (Int) => FsNodeClient) {
+  val cachedRemoteSecondaryRegions = mutable.Map[Long, mutable.Set[RegionInfo]]();
+
+  def cacheRemoteSeconaryRegions(regions: Array[RegionInfo]): Unit = {
+    regions.
+      filter(info => localRegionManager.get(info.regionId).isDefined).
+      groupBy(_.regionId).
+      foreach(x =>
+        cachedRemoteSecondaryRegions.getOrElseUpdate(x._1, mutable.Set[RegionInfo]()) ++= x._2)
+  }
+
+  //watch zknodes
+  zkNodeEventHandlers.addHandler(new ParsedChildNodeEventHandler[NodeServerInfo] {
+    override def onCreated(t: NodeServerInfo): Unit = {
+      reportLocalSeconaryRegions(t.nodeId)
+    }
+
+    override def onUpdated(t: NodeServerInfo): Unit = {
+
+    }
+
+    override def onInitialized(batch: Iterable[NodeServerInfo]): Unit = {
+      batch.foreach(t => reportLocalSeconaryRegions(t.nodeId))
+    }
+
+    override def onDeleted(t: NodeServerInfo): Unit = {
+      cachedRemoteSecondaryRegions.foreach {
+        kv =>
+          kv._2.retain(_.nodeId != t.nodeId)
+      }
+    }
+  })
+
+  private def reportLocalSeconaryRegions(nodeId: Int): Unit = {
+    val regions = localRegionManager.regions.values.filter(region => region.nodeId == nodeId && region.isSecondary)
+    if (!regions.isEmpty) {
+      val client = clientOf(nodeId)
+      client.registerSeconaryRegions(regions.map(_.info).toArray);
+    }
+  }
+
+  val primaryRegionWatcher: Option[PrimaryRegionWatcher] = {
+    if (globalSetting.consistencyStrategy == Constants.CONSISTENCY_STRATEGY_EVENTUAL) {
+      Some(new PrimaryRegionWatcher(globalSetting, nodeId, localRegionManager, clientOf(_)).start)
+    }
+    else {
+      None
+    }
+  }
+
+  def getAvailableRegions(regionId: Long): Array[RegionInfo] = {
+    cachedRemoteSecondaryRegions.get(regionId).map(_.toArray).getOrElse(Array())
+  }
+
+  def close(): Unit = {
+    primaryRegionWatcher.foreach(_.stop())
+  }
+}
+
+class PrimaryRegionWatcher(conf: GlobalSetting,
+                           nodeId: Int,
+                           localRegionManager: LocalRegionManager,
+                           clientOf: (Int) => FsNodeClient)
+  extends Logging {
+  var stopped = new AtomicBoolean(false);
+  val thread: Thread = new Thread(new Runnable() {
+    override def run(): Unit = {
+      while (!stopped.get()) {
+        Thread.sleep(conf.regionVersionCheckInterval)
+        if (!stopped.get()) {
+          val secondaryRegions = localRegionManager.regions.values.filter(!_.isPrimary).groupBy(x =>
+            (x.regionId >> 16).toInt)
+          for (x <- secondaryRegions if (!stopped.get())) {
+            try {
+              val regionIds = x._2.map(_.regionId).toArray
+              val primaryNodeId = x._1
+              val infos = Await.result(clientOf(primaryNodeId).getRegionInfos(regionIds), Duration("2s"))
+              infos.foreach(status => {
+                val localRegion = localRegionManager.regions(status.regionId)
+                //local region is old
+                val targetRevision: Long = status.revision
+                val localRevision: Long = localRegion.revision
+                if (targetRevision > localRevision) {
+                  if (logger.isTraceEnabled())
+                    logger.trace(s"[region-${localRegion.regionId}@${nodeId}] found new version : ${targetRevision}@${primaryNodeId}>${localRevision}@${nodeId}");
+
+                  val is = clientOf(primaryNodeId).getPatchInputStream(
+                    localRegion.regionId, localRevision, Duration("10s"))
+
+                  localRegion.applyPatch(is, {
+                    is.close();
+                    val updatedRegion = localRegionManager.update(localRegion)
+                    if (logger.isTraceEnabled())
+                      logger.trace(s"[region-${localRegion.regionId}@${nodeId}] updated: ${localRevision}->${updatedRegion.revision}");
+                  });
+                }
+              })
+            }
+            catch {
+              case t: Throwable =>
+                if (logger.isWarnEnabled())
+                  logger.warn(t.getMessage)
+            }
+          }
+        }
+      }
+    }
+  })
+
+  def start(): PrimaryRegionWatcher = {
+    thread.start();
+    this;
+  }
+
+  def stop(): Unit = {
+    stopped.set(true)
+    thread.join()
+  }
+}

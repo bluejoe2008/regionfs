@@ -49,7 +49,7 @@ class GlobalSettingWriter {
     val zk = ZooKeeperClient.create(zks)
 
     zk.createAbsentNodes();
-    zk.saveglobalSetting(props)
+    zk.saveGlobalSetting(props)
 
     zk.close()
   }

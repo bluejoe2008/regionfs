@@ -25,7 +25,7 @@ class FileTestBase extends Logging {
     override def handleRegionEvent(event: RegionEvent): Unit = {}
   }
 
-  val BLOB_LENGTH = Array[Long](999, 9999, 99999, 999999, 9999999)
+  val BLOB_LENGTH = Array[Long](999, 9999, 99999, 999999, 9999999, 9999999 + 100)
 
   var servers = ArrayBuffer[FsNodeServer]()
   var client: FsClient = null

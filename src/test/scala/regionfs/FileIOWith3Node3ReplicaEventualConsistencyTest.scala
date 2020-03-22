@@ -8,6 +8,8 @@ import org.grapheco.regionfs.FileId
 import org.grapheco.regionfs.server.Region
 import org.junit.{After, Assert, Test}
 
+import scala.concurrent.duration.Duration
+
 class FileIOWith3Node3ReplicaEventualConsistencyTest extends FileIOWith1Node1ReplicaTest {
   override val con = new EventualMultiNode
 
@@ -21,18 +23,18 @@ class FileIOWith3Node3ReplicaEventualConsistencyTest extends FileIOWith1Node1Rep
   @After
   def sleepBeforeShutdown(): Unit = {
     println("wait PrimaryRegionWatcher to sync regions...")
-    servers.foreach(_.primaryRegionWatcher.foreach(_.stop()))
+    servers.foreach(_.remoteRegionWatcher.close())
   }
 
   @Test
   def testRegionSync(): Unit = {
     //we have started 3 nodes
-    Assert.assertEquals(3, admin.getNodes().size)
+    Assert.assertEquals(3, admin.getAvaliableNodes().size)
 
     val fid1 = super.writeFile(new File(s"./testdata/inputs/999"))
     Assert.assertEquals(1, getNodeId(fid1))
-    Assert.assertEquals(3, admin.getNodes(fid1.regionId).size)
-    Assert.assertEquals(1, admin.getRegions(1).size)
+    Assert.assertEquals(3, admin.askRegionOwnerNodes(fid1.regionId, Duration("2s")).size)
+    Assert.assertEquals(1, admin.askRegionsOnNode(1, Duration("2s")).size)
     Assert.assertEquals(1, servers(0).localRegionManager.regions.size)
 
     assertRegion(1, fid1.regionId) {

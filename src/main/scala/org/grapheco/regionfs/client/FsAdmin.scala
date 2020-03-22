@@ -3,6 +3,7 @@ package org.grapheco.regionfs.client
 import net.neoremind.kraps.rpc.RpcAddress
 import org.grapheco.commons.util.IteratorUtils
 import org.grapheco.regionfs._
+import org.grapheco.regionfs.server.RegionInfo
 
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
@@ -25,23 +26,16 @@ class FsAdmin(zks: String) extends FsClient(zks: String) {
     mapNodeWithAddress.toMap
   }
 
-  def getRegionsWithListOfNodes(): Map[Long, Array[Int]] = {
-    mapRegionWithNodes.map(x => x._1 -> x._2.map(_._1).toArray).toMap
+  def askRegionsOnNode(nodeId: Int, rpcTimeout: Duration): Array[RegionInfo] = {
+    Await.result(clientOf(nodeId).endPointRef.ask[GetRegionsOnNodeResponse](GetRegionsOnNodeRequest()), rpcTimeout).infos
   }
 
-  def getRegions(): Iterable[Long] = {
-    mapRegionWithNodes.keys
+  def askRegionOwnerNodes(regionId: Long, rpcTimeout: Duration): Array[RegionInfo] = {
+    Await.result(clientOf((regionId >> 16).toInt).endPointRef.ask[GetRegionOwnerNodesResponse](
+      GetRegionOwnerNodesRequest(regionId)), rpcTimeout).infos
   }
 
-  def getRegions(nodeId: Int): Iterable[Long] = {
-    arrayRegionWithNode.filter(_._2 == nodeId).map(_._1)
-  }
-
-  def getNodes(regionId: Long): Iterable[Int] = {
-    mapRegionWithNodes(regionId).map(_._1)
-  }
-
-  def getNodes(): Iterable[Int] = {
+  def getAvaliableNodes(): Iterable[Int] = {
     mapNodeWithAddress.keys
   }
 

@@ -10,7 +10,7 @@ import net.neoremind.kraps.rpc.netty.{HippoEndpointRef, HippoRpcEnv, HippoRpcEnv
 import net.neoremind.kraps.rpc.{RpcAddress, RpcEnvClientConfig}
 import org.grapheco.commons.util.Logging
 import org.grapheco.regionfs._
-import org.grapheco.regionfs.server.RegionStatus
+import org.grapheco.regionfs.server.RegionInfo
 import org.grapheco.regionfs.util._
 
 import scala.collection.mutable
@@ -24,91 +24,45 @@ class FsClient(zks: String) extends Logging {
   val zookeeper = ZooKeeperClient.create(zks)
   val globalSetting = zookeeper.loadGlobalSetting()
   val clientFactory = new FsNodeClientFactory(globalSetting);
-  val ring = new Ring[Int]()
-
-  val consistencyStrategy: ConsistencyStrategy = ConsistencyStrategy.create(
-    globalSetting.consistencyStrategy,
-    clientOf(_), ring.!(_),
-    (regionId: Long, nodeWithRevisions: Array[(Int, Long)]) => {
-      arrayRegionWithNode ++= nodeWithRevisions.map(regionId -> _._1)
-      mapRegionWithNodes.getOrElseUpdate(regionId, mutable.Map()) ++= nodeWithRevisions
-    });
+  val ringNodes = new Ring[Int]()
 
   //get all nodes
   val cachedClients = mutable.Map[Int, FsNodeClient]()
   val mapNodeWithAddress = mutable.Map[Int, RpcAddress]()
-  val nodesWatcher = zookeeper.watchNodeList(
-    new ParsedChildNodeEventHandler[(Int, RpcAddress)] {
-      override def onCreated(t: (Int, RpcAddress)): Unit = {
+  val nodesWatcher = zookeeper.watchNodeList(_ => true,
+    new ParsedChildNodeEventHandler[NodeServerInfo] {
+      override def onCreated(t: NodeServerInfo): Unit = {
         mapNodeWithAddress.synchronized {
-          mapNodeWithAddress += t
+          mapNodeWithAddress += t.nodeId -> t.address
         }
-        ring.synchronized {
-          ring += t._1
+        ringNodes.synchronized {
+          ringNodes += t.nodeId
         }
       }
 
-      def onUpdated(t: (Int, RpcAddress)): Unit = {
+      def onUpdated(t: NodeServerInfo): Unit = {
       }
 
-      def onInitialized(batch: Iterable[(Int, RpcAddress)]): Unit = {
+      def onInitialized(batch: Iterable[NodeServerInfo]): Unit = {
         this.synchronized {
-          mapNodeWithAddress ++= batch
-          ring ++= batch.map(_._1)
+          mapNodeWithAddress ++= batch.map(t => t.nodeId -> t.address)
+          ringNodes ++= batch.map(_.nodeId)
         }
       }
 
-      override def onDeleted(t: (Int, RpcAddress)): Unit = {
+      override def onDeleted(t: NodeServerInfo): Unit = {
         mapNodeWithAddress.synchronized {
-          mapNodeWithAddress -= t._1
+          mapNodeWithAddress -= t.nodeId
         }
-        ring.synchronized {
-          ring -= t._1
+        ringNodes.synchronized {
+          ringNodes -= t.nodeId
         }
-      }
-
-      override def accepts(t: (Int, RpcAddress)): Boolean = {
-        true
       }
     })
 
   //get all regions
   //32768->(1,2), 32769->(1), ...
-  val arrayRegionWithNode = mutable.Set[(Long, Int)]()
-  val mapRegionWithNodes = mutable.Map[Long, mutable.Map[Int, Long]]()
-
-  val regionsWatcher = zookeeper.watchRegionList(
-    new ParsedChildNodeEventHandler[(Long, Int, Long)] {
-      override def onCreated(t: (Long, Int, Long)): Unit = {
-        arrayRegionWithNode += t._1 -> t._2
-        mapRegionWithNodes.getOrElseUpdate(t._1, mutable.Map[Int, Long]()) += (t._2 -> t._3)
-      }
-
-      override def onUpdated(t: (Long, Int, Long)): Unit = {
-        mapRegionWithNodes.synchronized {
-          mapRegionWithNodes(t._1).update(t._2, t._3)
-        }
-      }
-
-      override def onInitialized(batch: Iterable[(Long, Int, Long)]): Unit = {
-        this.synchronized {
-          arrayRegionWithNode ++= batch.map(x => x._1 -> x._2)
-          mapRegionWithNodes ++= batch.groupBy(_._1).map(x =>
-            x._1 -> (mutable.Map[Int, Long]() ++ x._2.map(x => x._2 -> x._3)))
-        }
-      }
-
-      override def onDeleted(t: (Long, Int, Long)): Unit = {
-        arrayRegionWithNode -= t._1 -> t._2
-        mapRegionWithNodes -= t._1
-      }
-
-      override def accepts(t: (Long, Int, Long)): Boolean = {
-        true
-      }
-    })
-
-  val writerSelector = new RoundRobinSelector(ring);
+  private val cachedRegionMap = mutable.Map[Long, Array[RegionInfo]]()
 
   def clientOf(nodeId: Int): FsNodeClient = {
     cachedClients.getOrElseUpdate(nodeId,
@@ -117,10 +71,6 @@ class FsClient(zks: String) extends Logging {
 
   private def assertNodesNotEmpty() {
     if (mapNodeWithAddress.isEmpty) {
-      if (logger.isTraceEnabled) {
-        logger.trace(zookeeper.readNodeList().mkString(","))
-      }
-
       throw new RegionFsClientException("no serving data nodes")
     }
   }
@@ -135,26 +85,74 @@ class FsClient(zks: String) extends Logging {
         0
       }
 
-    consistencyStrategy.writeFile(writerSelector.select(), crc32, content);
+    val chosenNodeId: Int = ringNodes.take()
+    val client = clientOf(chosenNodeId);
+    implicit val ec: ExecutionContext = client.executionContext
+    client.createFile(crc32, content.duplicate()).map(
+      x => {
+        //update local cache
+        cachedRegionMap(x.fileId.regionId) = x.regions
+        x.fileId
+      })
   }
 
   def readFile[T](fileId: FileId, rpcTimeout: Duration): InputStream = {
     assertNodesNotEmpty()
 
-    val regionOwnerNodes = mapRegionWithNodes.get(fileId.regionId)
-    if (regionOwnerNodes.isEmpty)
-      throw new WrongFileIdException(fileId);
+    val chosenNodeId = if (globalSetting.replicaNum > 1) {
+      val regionOwnerNodes = cachedRegionMap.get(fileId.regionId).map(
+        _.map(_.nodeId))
 
-    consistencyStrategy.readFile(fileId, regionOwnerNodes.get.toMap, rpcTimeout)
+      if (regionOwnerNodes.isEmpty) {
+        val nodeId = (fileId.regionId >> 16).toInt;
+        if (!mapNodeWithAddress.contains(nodeId))
+          throw new WrongFileIdException(fileId);
+
+        nodeId;
+      }
+      else {
+        val maybeNodeId = ringNodes.take(regionOwnerNodes.contains(_))
+        if (maybeNodeId.isEmpty)
+          throw new WrongFileIdException(fileId);
+
+        maybeNodeId.get
+      }
+    }
+    else {
+      val nodeId = (fileId.regionId >> 16).toInt;
+      if (!mapNodeWithAddress.contains(nodeId))
+        throw new WrongFileIdException(fileId);
+
+      nodeId;
+    }
+
+    clientOf(chosenNodeId).readFile(
+      fileId,
+      (head: ReadFileResponseHead) => {
+        cacheAliveRegions(fileId.regionId, head.availableRegions)
+      },
+      rpcTimeout
+    )
+  }
+
+  private def cacheAliveRegions(regionId: Long, regions: Array[RegionInfo]): Unit = {
+    cachedRegionMap(regionId) = regions
   }
 
   def deleteFile[T](fileId: FileId): Future[Boolean] = {
-    consistencyStrategy.deleteFile(fileId, mapRegionWithNodes(fileId.regionId).toMap)
+    //primary node
+    val client = clientOf((fileId.regionId >> 16).toInt)
+    val future = client.deleteFile(fileId)
+    implicit val ec: ExecutionContext = client.executionContext
+
+    future.map { x =>
+      cacheAliveRegions(fileId.regionId, x.infos)
+      x.success
+    }
   }
 
   def close = {
     nodesWatcher.close()
-    regionsWatcher.close()
     clientFactory.close()
     zookeeper.close()
   }
@@ -213,13 +211,17 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
     }
   }
 
-  def createFile(crc32: Long, content: ByteBuffer): Future[(FileId, Array[(Int, Long)])] = {
+  def createFile(crc32: Long, content: ByteBuffer): Future[CreateFileResponse] = {
     safeCall {
       endPointRef.askWithStream[CreateFileResponse](
         CreateFileRequest(content.remaining(), crc32),
         Unpooled.wrappedBuffer(content)
-      ).map(x => (x.fileId, x.nodes))
+      )
     }
+  }
+
+  def registerSeconaryRegions(regions: Array[RegionInfo]) = {
+    endPointRef.send(RegisterSeconaryRegionsRequest(regions))
   }
 
   def createSecondaryRegion(regionId: Long): Future[CreateSecondaryRegionResponse] = {
@@ -240,18 +242,16 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
     }
   }
 
-  def deleteFile(fileId: FileId): Future[Boolean] = {
+  def deleteFile(fileId: FileId): Future[DeleteFileResponse] = {
     safeCall {
       endPointRef.ask[DeleteFileResponse](
-        DeleteFileRequest(fileId)).map(_.success)
+        DeleteFileRequest(fileId))
     }
   }
 
-  def readFile[T](fileId: FileId, rpcTimeout: Duration): InputStream = {
+  def readFile[T](fileId: FileId, consumeHead: (ReadFileResponseHead) => Unit, rpcTimeout: Duration): InputStream = {
     safeCall {
-      endPointRef.getInputStream(
-        ReadFileRequest(fileId),
-        rpcTimeout)
+      endPointRef.getInputStream(ReadFileRequest(fileId), consumeHead, rpcTimeout)
     }
   }
 
@@ -263,21 +263,11 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
     }
   }
 
-  def getRegionStatus(regionIds: Array[Long]): Future[Array[RegionStatus]] = {
+  def getRegionInfos(regionIds: Array[Long]): Future[Array[RegionInfo]] = {
     safeCall {
-      endPointRef.ask[GetRegionStatusResponse](
-        GetRegionStatusRequest(regionIds)).map(_.statusList)
+      endPointRef.ask[GetRegionInfoResponse](
+        GetRegionInfoRequest(regionIds)).map(_.infos)
     }
-  }
-}
-
-trait FsNodeSelector {
-  def select(): Int;
-}
-
-class RoundRobinSelector(nodes: Ring[Int]) extends FsNodeSelector {
-  def select(): Int = {
-    nodes !
   }
 }
 

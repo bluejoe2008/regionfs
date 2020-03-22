@@ -23,25 +23,25 @@ case class RegionConfig(regionDir: File, globalSetting: GlobalSetting) {
 /**
   * metadata of a region
   */
-case class MetaData(localId: Long, offset: Long, length: Long, crc32: Long) {
+case class FileMetadata(localId: Long, offset: Long, length: Long, crc32: Long) {
   def tail = offset + length
 }
 
 //[localId:Long][offset:Long][length:Long][crc32:Long][flag:Long]
-class RegionMetaStore(conf: RegionConfig) extends Logging {
+class RegionMetadataStore(conf: RegionConfig) extends Logging {
   lazy val fileMetaFile = new File(conf.regionDir, "meta")
   lazy val fptr = new RandomAccessFile(fileMetaFile, "rw");
 
-  val cache: Cache[Long, MetaData] = new FixSizedCache[Long, MetaData](1024);
+  val cache: Cache[Long, FileMetadata] = new FixSizedCache[Long, FileMetadata](1024);
 
-  def iterator(): Iterator[MetaData] = {
+  def iterator(): Iterator[FileMetadata] = {
     (0 to cursor.current.toInt - 1).iterator.map(read(_).get)
   }
 
   //local id as offset
   val block = new Array[Byte](Constants.METADATA_ENTRY_LENGTH_WITH_PADDING);
 
-  def read(localId: Long): Option[MetaData] = {
+  def read(localId: Long): Option[FileMetadata] = {
     if (localId >= cursor.current) {
       None
     }
@@ -53,7 +53,7 @@ class RegionMetaStore(conf: RegionConfig) extends Logging {
         }
 
         val dis = new DataInputStream(new ByteArrayInputStream(block))
-        val info = MetaData(dis.readLong(), dis.readLong(), dis.readLong(), dis.readLong())
+        val info = FileMetadata(dis.readLong(), dis.readLong(), dis.readLong(), dis.readLong())
         dis.close()
 
         cache.put(localId, info)
@@ -79,7 +79,7 @@ class RegionMetaStore(conf: RegionConfig) extends Logging {
     }
 
     dos.close()
-    cache.put(localId, MetaData(localId, offset, length, crc32))
+    cache.put(localId, FileMetadata(localId, offset, length, crc32))
   }
 
   //since=0,tail=1
@@ -271,9 +271,11 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
   def isWritable = length <= conf.globalSetting.regionSizeLimit
 
   val isPrimary = (regionId >> 16) == nodeId
+  val isSecondary = !isPrimary
+
   //metadata file
   private lazy val fbody = new RegionBodyStore(conf)
-  private lazy val fmeta = new RegionMetaStore(conf)
+  private lazy val fmeta = new RegionMetadataStore(conf)
   private lazy val ftrash = new RegionTrashStore(conf)
   val cursor: Cursor = fmeta.cursor
 
@@ -287,7 +289,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
     fmeta.iterator.map(meta => FileId.make(regionId, meta.localId) -> meta.length)
   }
 
-  def write(buf: ByteBuffer, crc: Long): (Long, Long) = {
+  def write(buf: ByteBuffer, crc: Long): Long = {
     val crc32 =
       if (conf.globalSetting.enableCrc) {
         crc
@@ -314,7 +316,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
       if (logger.isTraceEnabled())
         logger.trace(s"[region-${regionId}@${nodeId}] written: localId=$localId, length=${length}, actual=${actualWritten}, revision=${revision}")
 
-      localId -> revision
+      localId
     }
   }
 
@@ -369,7 +371,9 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
         writeLong(metabuf.readableBytes()).writeLong(bodybuf.readableBytes()).
         writeLong(crc1).writeLong(crc2)
 
-      Unpooled.wrappedBuffer(buf, metabuf, bodybuf)
+      //composite buffer costs more time!!!
+      //Unpooled.wrappedBuffer(buf, metabuf, bodybuf)
+      buf.writeBytes(metabuf).writeBytes(bodybuf)
     }
   }
 
@@ -428,14 +432,13 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
     }
   }
 
-  def status = RegionStatus(nodeId: Long, regionId: Long,
-    revision: Long, isPrimary: Boolean, isWritable: Boolean, length: Long)
+  def info = RegionInfo(nodeId, regionId, revision, isPrimary, isWritable, length)
 }
 
 /**
   * RegionManager manages local regions stored in storeDir
   */
-class RegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetting, listener: RegionEventListener) extends Logging {
+class LocalRegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetting, listener: RegionEventListener) extends Logging {
   val regions = mutable.Map[Long, Region]()
   val regionIdSerial = new AtomicLong(0)
   val ring = new Ring[Long]();
@@ -554,6 +557,6 @@ class WrongRegionPatchStreamException extends RegionFsServerException(s"wrong re
 
 }
 
-case class RegionStatus(nodeId: Long, regionId: Long, revision: Long, isPrimary: Boolean, isWritable: Boolean, length: Long) {
+case class RegionInfo(nodeId: Int, regionId: Long, revision: Long, isPrimary: Boolean, isWritable: Boolean, length: Long) {
 
 }

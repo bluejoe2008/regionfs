@@ -1,7 +1,7 @@
 package regionfs
 
-import org.grapheco.regionfs.client.FsAdmin
-import org.junit.{After, Before, Test}
+import net.neoremind.kraps.rpc.RpcAddress
+import org.junit.{Assert, Test}
 
 import scala.concurrent.duration.Duration
 
@@ -13,6 +13,6 @@ class FileAdminTest extends FileTestBase {
   def test1(): Unit = {
     println(admin.stat(Duration("4s")));
     println(admin.listFiles(Duration("4s")).take(100).toList)
-    //Assert.assertEquals(1 -> RpcAddress("localhost", 1224), admin.greet(1, Duration("4s")));
+    Assert.assertEquals(1 -> RpcAddress("localhost", 1224), admin.greet(1, Duration("4s")));
   }
 }

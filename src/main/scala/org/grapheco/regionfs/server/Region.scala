@@ -222,9 +222,7 @@ class RegionBodyStore(conf: RegionConfig) {
 
     if (conf.globalSetting.enableCrc) {
       val rbuf = read(offset, length)
-
       val crc2 = CrcUtils.computeCrc32(rbuf)
-
       if (crc != crc2) {
         throw new WrittenMismatchedStreamException();
       }

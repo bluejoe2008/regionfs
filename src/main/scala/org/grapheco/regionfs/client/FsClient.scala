@@ -91,7 +91,7 @@ class FsClient(zks: String) extends Logging {
     client.createFile(crc32, content.duplicate()).map(
       x => {
         //update local cache
-        cachedRegionMap(x.fileId.regionId) = x.regions
+        cacheAliveRegions(x.fileId.regionId, x.infos)
         x.fileId
       })
   }
@@ -100,10 +100,10 @@ class FsClient(zks: String) extends Logging {
     assertNodesNotEmpty()
 
     val chosenNodeId = if (globalSetting.replicaNum > 1) {
-      val regionOwnerNodes = cachedRegionMap.get(fileId.regionId).map(
-        _.map(_.nodeId))
+      val maybeRegionOwnerNodes = cachedRegionMap.get(fileId.regionId).map(
+        _.filter(_.revision > fileId.localId).map(_.nodeId))
 
-      if (regionOwnerNodes.isEmpty) {
+      if (maybeRegionOwnerNodes.isEmpty) {
         val nodeId = (fileId.regionId >> 16).toInt;
         if (!mapNodeWithAddress.contains(nodeId))
           throw new WrongFileIdException(fileId);
@@ -111,7 +111,9 @@ class FsClient(zks: String) extends Logging {
         nodeId;
       }
       else {
+        val regionOwnerNodes = maybeRegionOwnerNodes.get
         val maybeNodeId = ringNodes.take(regionOwnerNodes.contains(_))
+
         if (maybeNodeId.isEmpty)
           throw new WrongFileIdException(fileId);
 
@@ -129,14 +131,17 @@ class FsClient(zks: String) extends Logging {
     clientOf(chosenNodeId).readFile(
       fileId,
       (head: ReadFileResponseHead) => {
-        cacheAliveRegions(fileId.regionId, head.availableRegions)
+        if (chosenNodeId == (fileId.regionId >> 16)) {
+          cacheAliveRegions(fileId.regionId, head.infos)
+        }
       },
       rpcTimeout
     )
   }
 
   private def cacheAliveRegions(regionId: Long, regions: Array[RegionInfo]): Unit = {
-    cachedRegionMap(regionId) = regions
+    if (!regions.isEmpty)
+      cachedRegionMap(regionId) = regions
   }
 
   def deleteFile[T](fileId: FileId): Future[Boolean] = {
@@ -220,8 +225,8 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
     }
   }
 
-  def registerSeconaryRegions(regions: Array[RegionInfo]) = {
-    endPointRef.send(RegisterSeconaryRegionsRequest(regions))
+  def registerSeconaryRegions(localSecondaryRegions: Array[RegionInfo]) = {
+    endPointRef.send(RegisterSeconaryRegionsRequest(localSecondaryRegions))
   }
 
   def createSecondaryRegion(regionId: Long): Future[CreateSecondaryRegionResponse] = {

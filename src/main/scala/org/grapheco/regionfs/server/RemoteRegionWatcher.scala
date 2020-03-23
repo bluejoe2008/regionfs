@@ -20,14 +20,17 @@ class RemoteRegionWatcher(nodeId: Int, globalSetting: GlobalSetting,
                           zkNodeEventHandlers: CompositeParsedChildNodeEventHandler[NodeServerInfo],
                           localRegionManager: LocalRegionManager,
                           clientOf: (Int) => FsNodeClient) {
-  val cachedRemoteSecondaryRegions = mutable.Map[Long, mutable.Set[RegionInfo]]();
+  private val _mapRemoteSecondaryRegions = mutable.Map[Long, mutable.Map[Int, RegionInfo]]();
+
+  def cachedRemoteSecondaryRegions(regionId: Long) = _mapRemoteSecondaryRegions(regionId).values
 
   def cacheRemoteSeconaryRegions(regions: Array[RegionInfo]): Unit = {
     regions.
       filter(info => localRegionManager.get(info.regionId).isDefined).
       groupBy(_.regionId).
       foreach(x =>
-        cachedRemoteSecondaryRegions.getOrElseUpdate(x._1, mutable.Set[RegionInfo]()) ++= x._2)
+        _mapRemoteSecondaryRegions.getOrElseUpdate(
+          x._1, mutable.Map[Int, RegionInfo]()) ++= x._2.map(t => t.nodeId -> t))
   }
 
   //watch zknodes
@@ -45,22 +48,21 @@ class RemoteRegionWatcher(nodeId: Int, globalSetting: GlobalSetting,
     }
 
     override def onDeleted(t: NodeServerInfo): Unit = {
-      cachedRemoteSecondaryRegions.foreach {
-        kv =>
-          kv._2.retain(_.nodeId != t.nodeId)
+      _mapRemoteSecondaryRegions.foreach {
+        _._2 -= t.nodeId
       }
     }
   })
 
   private def reportLocalSeconaryRegions(nodeId: Int): Unit = {
-    val regions = localRegionManager.regions.values.filter(region => region.nodeId == nodeId && region.isSecondary)
-    if (!regions.isEmpty) {
+    val localRegions = localRegionManager.regions.values.filter(region => region.nodeId == nodeId && region.isSecondary)
+    if (!localRegions.isEmpty) {
       val client = clientOf(nodeId)
-      client.registerSeconaryRegions(regions.map(_.info).toArray);
+      client.registerSeconaryRegions(localRegions.map(_.info).toArray);
     }
   }
 
-  val primaryRegionWatcher: Option[PrimaryRegionWatcher] = {
+  private val _primaryRegionWatcher: Option[PrimaryRegionWatcher] = {
     if (globalSetting.consistencyStrategy == Constants.CONSISTENCY_STRATEGY_EVENTUAL) {
       Some(new PrimaryRegionWatcher(globalSetting, nodeId, localRegionManager, clientOf(_)).start)
     }
@@ -69,12 +71,12 @@ class RemoteRegionWatcher(nodeId: Int, globalSetting: GlobalSetting,
     }
   }
 
-  def getAvailableRegions(regionId: Long): Array[RegionInfo] = {
-    cachedRemoteSecondaryRegions.get(regionId).map(_.toArray).getOrElse(Array())
+  def getSecondaryRegions(regionId: Long): Array[RegionInfo] = {
+    _mapRemoteSecondaryRegions.get(regionId).map(_.values.toArray).getOrElse(Array())
   }
 
   def close(): Unit = {
-    primaryRegionWatcher.foreach(_.stop())
+    _primaryRegionWatcher.foreach(_.stop())
   }
 }
 

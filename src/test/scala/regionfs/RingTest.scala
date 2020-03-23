@@ -21,6 +21,7 @@ class RingTest {
   def test2() {
     val ring = new Ring[Int]();
     ring ++= (1 to 3);
+    //1,2,3
     Assert.assertEquals(Some(2), ring.take(_ % 2 == 0))
     Assert.assertEquals(Some(2), ring.take(_ % 2 == 0))
     Assert.assertEquals(Some(3), ring.take(_ % 2 == 1))

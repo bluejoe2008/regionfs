@@ -55,15 +55,15 @@ case class CreateFileRequest(totalLength: Long, crc32: Long) {
 
 }
 
-case class CreateFileResponse(fileId: FileId, regions: Array[RegionInfo]) {
+case class CreateFileResponse(fileId: FileId, infos: Array[RegionInfo]) {
 
 }
 
-case class CreateSecondaryFileResponse(fileId: FileId, region: RegionInfo) {
+case class CreateSecondaryFileResponse(fileId: FileId, info: RegionInfo) {
 
 }
 
-case class RegisterSeconaryRegionsRequest(regions: Array[RegionInfo]) {
+case class RegisterSeconaryRegionsRequest(infos: Array[RegionInfo]) {
 
 }
 
@@ -107,7 +107,7 @@ case class GetRegionPatchRequest(regionId: Long, since: Long) {
 
 }
 
-case class ReadFileResponseHead(length: Long, crc32: Long, availableRegions: Array[RegionInfo]) {
+case class ReadFileResponseHead(length: Long, crc32: Long, infos: Array[RegionInfo]) {
 
 }
 

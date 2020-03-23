@@ -150,7 +150,7 @@ class ZooKeeperClient(curator: CuratorFramework) {
       override def onChildRemoved(data: ChildData): Unit = {
         val t = parse(data)
         if (accepts(t))
-          handler.onCreated(t)
+          handler.onDeleted(t)
       }
     })
   }

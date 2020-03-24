@@ -88,8 +88,8 @@ class FsAdmin(zks: String) extends FsClient(zks: String) {
   }
 }
 
-case class Stat(nodeStats: List[NodeStat]);
+case class Stat(nodeStats: List[NodeStat])
 
-case class NodeStat(nodeId: Long, address: RpcAddress, regionStats: List[RegionStat]);
+case class NodeStat(nodeId: Long, address: RpcAddress, regionStats: List[RegionStat])
 
 case class RegionStat(regionId: Long, fileCount: Long, totalSize: Long);

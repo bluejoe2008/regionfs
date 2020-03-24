@@ -30,16 +30,16 @@ case class FileMetadata(localId: Long, offset: Long, length: Long, crc32: Long) 
 //[localId:Long][offset:Long][length:Long][crc32:Long][flag:Long]
 class RegionMetadataStore(conf: RegionConfig) extends Logging {
   lazy val fileMetaFile = new File(conf.regionDir, "meta")
-  lazy val fptr = new RandomAccessFile(fileMetaFile, "rw");
+  lazy val fptr = new RandomAccessFile(fileMetaFile, "rw")
 
-  val cache: Cache[Long, FileMetadata] = new FixSizedCache[Long, FileMetadata](1024);
+  val cache: Cache[Long, FileMetadata] = new FixSizedCache[Long, FileMetadata](1024)
 
   def iterator(): Iterator[FileMetadata] = {
     (0 to cursor.current.toInt - 1).iterator.map(read(_).get)
   }
 
   //local id as offset
-  val block = new Array[Byte](Constants.METADATA_ENTRY_LENGTH_WITH_PADDING);
+  val block = new Array[Byte](Constants.METADATA_ENTRY_LENGTH_WITH_PADDING)
 
   def read(localId: Long): Option[FileMetadata] = {
     if (localId >= cursor.current) {
@@ -87,11 +87,11 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
     //since=10, tail=13
     val sinceMetaFile = Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * sinceRevision
     var bodyPatchSize = 0L
-    val tail = cursor.current;
+    val tail = cursor.current
     assert(sinceRevision < tail)
 
     val sinceBodyFile = read(sinceRevision).get.offset
-    var n = sinceRevision;
+    var n = sinceRevision
 
     while (n < tail && bodyPatchSize < Constants.MAX_PATCH_SIZE) {
       val meta = read(n).get
@@ -103,7 +103,7 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
     (sinceMetaFile, sinceBodyFile, bodyPatchSize, fptr.synchronized {
       fptr.getChannel.map(FileChannel.MapMode.READ_ONLY,
         sinceMetaFile,
-        Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * (n - sinceRevision));
+        Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * (n - sinceRevision))
     })
   }
 
@@ -131,7 +131,7 @@ class Cursor(position: AtomicLong) {
   //localId starts with 0
   def offerNextId(consume: (Long) => Unit): Long = {
     position.synchronized {
-      val id = position.get();
+      val id = position.get()
       consume(id)
       position.incrementAndGet()
     }
@@ -175,7 +175,7 @@ class RegionTrashStore(conf: RegionConfig) {
     }
   }
 
-  lazy val cache = new Cache();
+  lazy val cache = new Cache()
   lazy val appender = new DataOutputStream(new FileOutputStream(fileBody, true))
 
   def count = cache._ids.size
@@ -192,7 +192,7 @@ class RegionTrashStore(conf: RegionConfig) {
     appender.close()
   }
 
-  val bytes = new Array[Byte](8 * 1024);
+  val bytes = new Array[Byte](8 * 1024)
 
   def contains(localId: Long): Boolean = {
     cache._ids.contains(localId)
@@ -228,7 +228,7 @@ class RegionBodyStore(conf: RegionConfig) {
       val rbuf = read(offset, length)
       val crc2 = CrcUtils.computeCrc32(rbuf)
       if (crc != crc2) {
-        throw new WrittenMismatchedStreamException();
+        throw new WrittenMismatchedStreamException()
       }
     }
 
@@ -250,7 +250,7 @@ class RegionBodyStore(conf: RegionConfig) {
 
   def offerBodyPatch(offset: Long, length: Long): ByteBuffer = {
     fptr.synchronized {
-      fptr.getChannel.map(FileChannel.MapMode.READ_ONLY, offset, length);
+      fptr.getChannel.map(FileChannel.MapMode.READ_ONLY, offset, length)
     }
   }
 
@@ -260,7 +260,7 @@ class RegionBodyStore(conf: RegionConfig) {
 
   def read(offset: Long, length: Int): ByteBuffer = {
     fptr.synchronized {
-      fptr.getChannel.map(FileChannel.MapMode.READ_ONLY, offset, length);
+      fptr.getChannel.map(FileChannel.MapMode.READ_ONLY, offset, length)
     }
   }
 }
@@ -288,7 +288,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
   def length = fbody.fptr.length()
 
   def listFiles(): Iterator[(FileId, Long)] = {
-    fmeta.iterator.map(meta => FileId.make(regionId, meta.localId) -> meta.length)
+    fmeta.iterator().map(meta => FileId.make(regionId, meta.localId) -> meta.length)
   }
 
   def write(buf: ByteBuffer, crc: Long): Long = {
@@ -316,7 +316,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
 
       listener.handleRegionEvent(new WriteRegionEvent(this))
       if (logger.isTraceEnabled())
-        logger.trace(s"[region-${regionId}@${nodeId}] written: localId=$localId, length=${length}, actual=${actualWritten}, revision=${revision}")
+        logger.trace(s"[region-$regionId@$nodeId] written: localId=$localId, length=$length, actual=$actualWritten, revision=$revision")
 
       localId
     }
@@ -404,20 +404,20 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
 
         val buf1 = Unpooled.buffer(1024)
         if (buf1.writeBytes(is, sizeMeta.toInt) != sizeMeta.toInt) {
-          throw new WrongRegionPatchSizeException();
+          throw new WrongRegionPatchSizeException()
         }
 
         if (crc1 != CrcUtils.computeCrc32(buf1.nioBuffer())) {
-          throw new WrongRegionPatchStreamException();
+          throw new WrongRegionPatchStreamException()
         }
 
         val buf2 = Unpooled.buffer(1024)
         if (buf2.writeBytes(is, sizeBody.toInt) != sizeBody.toInt) {
-          throw new WrongRegionPatchSizeException();
+          throw new WrongRegionPatchSizeException()
         }
 
         if (crc2 != CrcUtils.computeCrc32(buf2.nioBuffer())) {
-          throw new WrongRegionPatchStreamException();
+          throw new WrongRegionPatchStreamException()
         }
 
         this.synchronized {
@@ -426,9 +426,9 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
           fbody.applyBodyPatch(buf2.nioBuffer(), sinceBody, sizeBody, crc2)
 
           if (logger.isDebugEnabled)
-            logger.debug(s"[region-${regionId}@${nodeId}] updated: .meta ${sizeMeta} bytes, .body ${sizeBody} bytes")
+            logger.debug(s"[region-$regionId@$nodeId] updated: .meta $sizeMeta bytes, .body $sizeBody bytes")
 
-          callbackOnUpdated;
+          callbackOnUpdated
         }
 
         true
@@ -444,7 +444,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
 class LocalRegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetting, listener: RegionEventListener) extends Logging {
   val regions = mutable.Map[Long, Region]()
   val regionIdSerial = new AtomicLong(0)
-  val ring = new Ring[Long]();
+  val ring = new Ring[Long]()
 
   /*
    layout of storeDir
@@ -468,16 +468,16 @@ class LocalRegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetti
   ring ++= regions.keys
 
   if (logger.isInfoEnabled())
-    logger.info(s"[node-${nodeId}] loaded local regions: ${regions.keySet}")
+    logger.info(s"[node-$nodeId] loaded local regions: ${regions.keySet}")
 
-  regionIdSerial.set((List(0L) ++ regions.map(_._1 >> 16).toList).max);
+  regionIdSerial.set((List(0L) ++ regions.map(_._1 >> 16).toList).max)
 
   def createNew() = {
-    _createNewRegion((nodeId << 16) + regionIdSerial.incrementAndGet());
+    _createNewRegion((nodeId << 16) + regionIdSerial.incrementAndGet())
   }
 
   def createSecondaryRegion(regionId: Long) = {
-    _createNewRegion(regionId);
+    _createNewRegion(regionId)
   }
 
   def get(id: Long): Option[Region] = regions.get(id)
@@ -506,7 +506,7 @@ class LocalRegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetti
       new File(regionDir, "trash").createNewFile()
 
       if (logger.isTraceEnabled())
-        logger.trace(s"[region-${regionId}@${nodeId}] created: dir=$regionDir")
+        logger.trace(s"[region-$regionId@$nodeId] created: dir=$regionDir")
 
       new Region(nodeId, regionId, RegionConfig(regionDir, globalSetting), listener)
     }
@@ -522,7 +522,7 @@ class WrittenMismatchedStreamException extends RegionFsServerException("mismatch
 
 }
 
-class ServerIsBudyException(nodeId: Int) extends RegionFsClientException(s"server is busy: ${nodeId}") {
+class ServerIsBudyException(nodeId: Int) extends RegionFsClientException(s"server is busy: $nodeId") {
 
 }
 
@@ -549,7 +549,7 @@ case class RefactorRegionEvent(region: Region) extends RegionEvent {
 }
 
 trait RegionEventListener {
-  def handleRegionEvent(event: RegionEvent): Unit
+  def handleRegionEvent(event: RegionEvent)
 }
 
 class WrongRegionPatchSizeException() extends RegionFsServerException(s"wrong region patch") {

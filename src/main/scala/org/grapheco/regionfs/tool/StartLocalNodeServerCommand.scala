@@ -9,7 +9,7 @@ import org.grapheco.regionfs.server.FsNodeServer
   * Created by bluejoe on 2020/2/25.
   */
 object StartLocalNodeServerCommand {
-  def main(args: Array[String]) {
+  def main(args: Array[String]): Unit = {
     new StartNodeShellCommandExecutor().init(Array("start-node")).parseAndRun(args)
   }
 }

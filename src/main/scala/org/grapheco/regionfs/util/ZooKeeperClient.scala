@@ -23,20 +23,20 @@ import scala.collection.mutable.ArrayBuffer
   */
 object ZooKeeperClient extends Logging {
   def create(zks: String, connectionTimeout: Int = 3000, sessionTimeout: Int = 30000): ZooKeeperClient = {
-    val retryPolicy = new ExponentialBackoffRetry(1000, 10);
+    val retryPolicy = new ExponentialBackoffRetry(1000, 10)
     val curator =
       CuratorFrameworkFactory.builder()
         .connectString(zks)
         .connectionTimeoutMs(connectionTimeout)
         .sessionTimeoutMs(sessionTimeout)
         .retryPolicy(retryPolicy)
-        .build();
+        .build()
 
-    curator.start();
+    curator.start()
 
     //check root ZNode
     if (curator.checkExists().forPath("/regionfs") == null) {
-      throw new RegionFsNotInitializedException();
+      throw new RegionFsNotInitializedException()
     }
 
     new ZooKeeperClient(curator)
@@ -44,13 +44,13 @@ object ZooKeeperClient extends Logging {
 }
 
 class ZooKeeperClient(curator: CuratorFramework) {
-  val pool = Executors.newFixedThreadPool(5);
+  val pool = Executors.newFixedThreadPool(5)
 
   def createRegionWriteLock(regionId: Long): InterProcessSemaphoreMutex = {
-    new InterProcessSemaphoreMutex(curator, s"/regionfs/region_write_lock_$regionId");
+    new InterProcessSemaphoreMutex(curator, s"/regionfs/region_write_lock_$regionId")
   }
 
-  def createAbsentNodes() {
+  def createAbsentNodes(): Unit = {
     curator.create().orSetData().forPath("/regionfs")
     curator.create().orSetData().forPath("/regionfs/nodes")
     curator.create().orSetData().forPath("/regionfs/regions")
@@ -86,11 +86,11 @@ class ZooKeeperClient(curator: CuratorFramework) {
 
   def loadGlobalSetting(): GlobalSetting = {
     if (curator.checkExists().forPath("/regionfs/config") == null) {
-      throw new GlobalSettingNotFoundException("/regionfs/config");
+      throw new GlobalSettingNotFoundException("/regionfs/config")
     }
 
     val bytes = curator.getData.forPath("/regionfs/config")
-    val bais = new ByteArrayInputStream(bytes);
+    val bais = new ByteArrayInputStream(bytes)
     val props = new Properties()
     props.load(bais)
 
@@ -98,7 +98,7 @@ class ZooKeeperClient(curator: CuratorFramework) {
   }
 
   def saveGlobalSetting(props: Properties): Unit = {
-    val baos = new ByteArrayOutputStream();
+    val baos = new ByteArrayOutputStream()
     props.store(baos, "global setting of region-fs")
     val bytes = baos.toByteArray
 
@@ -113,8 +113,8 @@ class ZooKeeperClient(curator: CuratorFramework) {
     watchParsedChildrenPath[NodeServerInfo]("/regionfs/nodes", (data: ChildData) => {
       val path = data.getPath.substring("/regionfs/nodes".length + 1)
       val splits = path.split("_")
-      NodeServerInfo(splits(0).toInt, (RpcAddress(splits(1), splits(2).toInt)), parseByteArray(data.getData, _.readInt()))
-    }, handler);
+      NodeServerInfo(splits(0).toInt, RpcAddress(splits(1), splits(2).toInt), parseByteArray(data.getData, _.readInt()))
+    }, handler)
   }
 
   def watchParsedChildrenPath[T](
@@ -143,10 +143,10 @@ class ZooKeeperClient(curator: CuratorFramework) {
     })
   }
 
-  val currentClient = this;
+  val currentClient = this
 
   def watchChildrenPath(parentPath: String, handler: ChildNodeEventHandler): Closeable = {
-    val childrenCache = new PathChildrenCache(curator, parentPath, true);
+    val childrenCache = new PathChildrenCache(curator, parentPath, true)
     childrenCache.getListenable().addListener(new PathChildrenCacheListener with Logging {
       override def childEvent(curatorFramework: CuratorFramework, pathChildrenCacheEvent: PathChildrenCacheEvent): Unit = {
         pathChildrenCacheEvent.getType match {
@@ -163,10 +163,10 @@ class ZooKeeperClient(curator: CuratorFramework) {
           //ignore!
         }
       }
-    }, pool);
+    }, pool)
 
     //read initial cache
-    childrenCache.start(StartMode.BUILD_INITIAL_CACHE);
+    childrenCache.start(StartMode.BUILD_INITIAL_CACHE)
     //parse initial cache
     handler.onInitialized(JavaConversions.iterableAsScalaIterable(childrenCache.getCurrentData))
 
@@ -189,7 +189,7 @@ class ZooKeeperClient(curator: CuratorFramework) {
   *    ...
   */
 class CompositeParsedChildNodeEventHandler[T](handlers: ParsedChildNodeEventHandler[T]*) extends ParsedChildNodeEventHandler[T] {
-  private val _handlers = ArrayBuffer[ParsedChildNodeEventHandler[T]](handlers: _*);
+  private val _handlers = ArrayBuffer[ParsedChildNodeEventHandler[T]](handlers: _*)
 
   def addHandler(handler: ParsedChildNodeEventHandler[T]): this.type = {
     _handlers += handler
@@ -208,25 +208,25 @@ class CompositeParsedChildNodeEventHandler[T](handlers: ParsedChildNodeEventHand
 }
 
 trait ChildNodeEventHandler {
-  def onChildAdded(data: ChildData);
+  def onChildAdded(data: ChildData)
 
-  def onChildUpdated(data: ChildData);
+  def onChildUpdated(data: ChildData)
 
-  def onInitialized(batch: Iterable[ChildData]);
+  def onInitialized(batch: Iterable[ChildData])
 
-  def onChildRemoved(data: ChildData);
+  def onChildRemoved(data: ChildData)
 }
 
 trait ParsedChildNodeEventHandler[T] {
-  def accepts(t: T): Boolean;
+  def accepts(t: T): Boolean
 
-  def onCreated(t: T);
+  def onCreated(t: T)
 
-  def onUpdated(t: T);
+  def onUpdated(t: T)
 
-  def onInitialized(batch: Iterable[T]);
+  def onInitialized(batch: Iterable[T])
 
-  def onDeleted(t: T);
+  def onDeleted(t: T)
 }
 
 case class NodeServerInfo(nodeId: Int, address: RpcAddress, regionCount: Int) {
@@ -254,6 +254,6 @@ class GlobalSettingNotFoundException(path: String) extends
 }
 
 class ZNodeAlreadyExistExcetion(path: String) extends
-  RegionFsException(s"existing node found in zookeeper: ${path}") {
+  RegionFsException(s"existing node found in zookeeper: $path") {
 
 }

@@ -8,8 +8,10 @@ import org.apache.commons.io.IOUtils
 import org.grapheco.regionfs.client.FsAdmin
 import org.grapheco.regionfs.server.RegionInfo
 import org.grapheco.regionfs.util.ByteBufferConversions._
+import org.grapheco.regionfs.util.ZooKeeperClient
 import org.grapheco.regionfs.{FileId, GlobalSettingWriter}
 
+import scala.collection.JavaConversions
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
 
@@ -21,7 +23,7 @@ object RegionFsCmd {
     ("help", "print usage information", null),
     ("stat", "report statistics of all nodes (or a given node)", new StatShellCommandExecutor()),
     ("greet", "notify all nodes (or a given node) to print a message to be noticed", new GreetShellCommandExecutor()),
-    ("config", "configure global setting", new ConfigShellCommandExecutor()),
+    ("config", "dispaly (or set) global setting", new ConfigShellCommandExecutor()),
     ("clean", "clean data on all nodes (or a given node)", new CleanDataShellCommandExecutor()),
     ("shutdown", "shutdown all nodes (or a given node)", new ShutdownShellCommandExecutor()),
     ("put", "put local files into regionfs", new PutFilesShellCommandExecutor()),
@@ -33,9 +35,9 @@ object RegionFsCmd {
   commands.filter(_._3 != null).foreach(x => x._3.init(Array("rfs", x._1)))
 
   //mvn exec:java -Dexec.mainClass="org.grapheco.regionfs.tool.RegionFSCmd" -Dexec.args="stat" -DskipTests
-  def main(args: Array[String]) {
+  def main(args: Array[String]): Unit = {
     if (args.length < 1) {
-      printError("no command designated");
+      printError("no command designated")
     }
     else {
       args(0).toLowerCase() match {
@@ -44,10 +46,20 @@ object RegionFsCmd {
         case cmd: String =>
           val opt = commands.find(_._1.equals(cmd.toLowerCase()))
           if (opt.isDefined) {
+            val t1 = System.nanoTime()
             opt.get._3.parseAndRun(args.takeRight(args.length - 1))
+            val t2 = System.nanoTime()
+            val elapsed = t2 - t1
+            if (elapsed > 1000000) {
+              println(s"time cost: ${elapsed / 1000000}ms")
+            }
+            else {
+              println(s"time cost: ${elapsed / 1000}us")
+            }
+
           }
           else {
-            printError(s"unrecognized command: $cmd");
+            printError(s"unrecognized command: $cmd")
           }
       }
     }
@@ -66,7 +78,7 @@ object RegionFsCmd {
       val space = {
         (1 to (maxlen + 4 - en._1.length)).map(_ => " ").mkString("")
       }
-      println(s"\t${en._1}${space}${en._2}")
+      println(s"\t${en._1}$space${en._2}")
     }
   }
 }
@@ -77,13 +89,33 @@ class ConfigShellCommandExecutor extends ShellCommandExecutor {
       .argName("globalSettingFile")
       .desc("conf file path of global setting, e.g conf/global.conf")
       .hasArg
-      .required(true)
+      .required(false)
+      .build())
+
+    options.addOption(Option.builder("zk")
+      .argName("zkString")
+      .desc("zookeeper address, e.g localhost:2181")
+      .hasArg
+      .required(false)
       .build())
   }
 
   override def run(commandLine: CommandLine): Unit = {
-    new GlobalSettingWriter().write(new File(commandLine.getOptionValue("conf")))
-    println("cluster is successfully configured.");
+    (commandLine.hasOption("conf"), commandLine.hasOption("zk")) match {
+      case (true, _) =>
+        new GlobalSettingWriter().write(new File(commandLine.getOptionValue("conf")))
+        println("cluster is successfully configured.");
+
+      case (_, true) =>
+        val zk = ZooKeeperClient.create(commandLine.getOptionValue("zk"))
+        println("global setting {")
+        JavaConversions.mapAsScalaMap(zk.loadGlobalSetting().props).foreach(x => {
+          println(s"\t${x._1} = ${x._2}")
+        })
+        println("}");
+      case (false, false) =>
+        println("either `-conf` or `-zk` is required");
+    }
   }
 }
 
@@ -197,7 +229,7 @@ private class GreetShellCommandExecutor extends ShellCommandExecutor {
 
     for (ns <- list) {
       val (nodeId, addr) = admin.greet(ns, Duration("4s"))
-      println(s"greeted node-${nodeId} on ${addr}.")
+      println(s"greeted node-$nodeId on $addr.")
     }
 
     admin.close
@@ -302,17 +334,19 @@ private class PutFilesShellCommandExecutor extends ShellCommandExecutor {
 
   override def run(commandLine: CommandLine): Unit = {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
-    val args = commandLine.getArgs;
-    if (args.length == 0) {
-      throw new ParseException(s"file path is required");
+    val args = commandLine.getArgs
+    //noinspection EmptyCheck
+    if (args.isEmpty) {
+      throw new ParseException(s"file path is required")
     }
 
     val wrongs = args.map(new File(_)).find(!_.exists())
-    if (!wrongs.isEmpty) {
-      throw new ParseException(s"wrong file path: ${wrongs.map(_.getCanonicalFile.getAbsolutePath).mkString(",")}");
+    //noinspection EmptyCheck
+    if (wrongs.isDefined) {
+      throw new ParseException(s"wrong file path: ${wrongs.map(_.getCanonicalFile.getAbsolutePath).mkString(",")}")
     }
 
-    println(s"putting ${args.length} file(s):");
+    println(s"putting ${args.length} file(s):")
 
     for (path <- args) {
       val file = new File(path)
@@ -337,17 +371,18 @@ private class DeleteFilesShellCommandExecutor extends ShellCommandExecutor {
 
   override def run(commandLine: CommandLine): Unit = {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
-    val args = commandLine.getArgs;
-    if (args.length == 0) {
-      throw new ParseException(s"file id is required");
+    val args = commandLine.getArgs
+    //noinspection EmptyCheck
+    if (args.isEmpty) {
+      throw new ParseException(s"file id is required")
     }
 
-    println(s"deleting ${args.length} file(s):");
+    println(s"deleting ${args.length} file(s):")
 
     for (arg <- args) {
       val id = FileId.fromBase64String(arg)
-      Await.result(admin.deleteFile(id), Duration("4s"));
-      println(s"${arg}");
+      Await.result(admin.deleteFile(id), Duration("4s"))
+      println(s"$arg")
     }
 
     admin.close
@@ -372,32 +407,33 @@ private class GetFilesShellCommandExecutor extends ShellCommandExecutor {
   }
 
   trait FileOutput {
-    def write(label: String, id: FileId, is: InputStream);
+    def write(label: String, id: FileId, is: InputStream)
 
-    def done();
+    def done()
   }
 
   override def run(commandLine: CommandLine): Unit = {
     val admin: FsAdmin = new FsAdmin(commandLine.getOptionValue("zk"))
-    val args = commandLine.getArgs;
-    if (args.length == 0) {
-      throw new ParseException(s"file id is required");
+    val args = commandLine.getArgs
+    //noinspection EmptyCheck
+    if (args.isEmpty) {
+      throw new ParseException(s"file id is required")
     }
 
     val output: FileOutput =
       if (commandLine.hasOption("dir")) {
         val dir = new File(commandLine.getOptionValue("dir"))
         if (!dir.exists()) {
-          throw new ParseException(s"wrong file dir: ${dir.getCanonicalFile.getAbsolutePath}");
+          throw new ParseException(s"wrong file dir: ${dir.getCanonicalFile.getAbsolutePath}")
         }
 
         new FileOutput {
           override def write(label: String, id: FileId, is: InputStream): Unit = {
             val file = new File(dir, label)
-            val os = new FileOutputStream(file);
+            val os = new FileOutputStream(file)
             IOUtils.copy(is, os)
             os.close()
-            println(s"\t${label}->${file.getAbsoluteFile.getCanonicalPath}")
+            println(s"\t$label->${file.getAbsoluteFile.getCanonicalPath}")
           }
 
           override def done(): Unit = {
@@ -419,7 +455,7 @@ private class GetFilesShellCommandExecutor extends ShellCommandExecutor {
         }
       }
 
-    println(s"getting ${args.length} file(s):");
+    println(s"getting ${args.length} file(s):")
 
     for (arg <- args) {
       val id = FileId.fromBase64String(arg)

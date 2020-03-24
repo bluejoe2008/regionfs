@@ -12,7 +12,7 @@ trait Cache[K, V] {
 }
 
 class FixSizedCache[K, V](capacity: Int) extends Cache[K, V] {
-  val queue = mutable.ListMap[K, V]();
+  val queue = mutable.ListMap[K, V]()
 
   def get(key: K): Option[V] = queue.get(key)
 

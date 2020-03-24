@@ -20,7 +20,7 @@ class RemoteRegionWatcher(nodeId: Int, globalSetting: GlobalSetting,
                           zkNodeEventHandlers: CompositeParsedChildNodeEventHandler[NodeServerInfo],
                           localRegionManager: LocalRegionManager,
                           clientOf: (Int) => FsNodeClient) {
-  private val _mapRemoteSecondaryRegions = mutable.Map[Long, mutable.Map[Int, RegionInfo]]();
+  private val _mapRemoteSecondaryRegions = mutable.Map[Long, mutable.Map[Int, RegionInfo]]()
 
   def cachedRemoteSecondaryRegions(regionId: Long) = _mapRemoteSecondaryRegions(regionId).values
 
@@ -58,15 +58,16 @@ class RemoteRegionWatcher(nodeId: Int, globalSetting: GlobalSetting,
 
   private def reportLocalSeconaryRegions(nodeId: Int): Unit = {
     val localRegions = localRegionManager.regions.values.filter(region => region.nodeId == nodeId && region.isSecondary)
-    if (!localRegions.isEmpty) {
+    //noinspection EmptyCheck
+    if (localRegions.nonEmpty) {
       val client = clientOf(nodeId)
-      client.registerSeconaryRegions(localRegions.map(_.info).toArray);
+      client.registerSeconaryRegions(localRegions.map(_.info).toArray)
     }
   }
 
   private val _primaryRegionWatcher: Option[PrimaryRegionWatcher] = {
     if (globalSetting.consistencyStrategy == Constants.CONSISTENCY_STRATEGY_EVENTUAL) {
-      Some(new PrimaryRegionWatcher(globalSetting, nodeId, localRegionManager, clientOf(_)).start)
+      Some(new PrimaryRegionWatcher(globalSetting, nodeId, localRegionManager, clientOf(_)).start())
     }
     else {
       None
@@ -87,7 +88,7 @@ class PrimaryRegionWatcher(conf: GlobalSetting,
                            localRegionManager: LocalRegionManager,
                            clientOf: (Int) => FsNodeClient)
   extends Logging {
-  var stopped = new AtomicBoolean(false);
+  var stopped = new AtomicBoolean(false)
   val thread: Thread = new Thread(new Runnable() {
     override def run(): Unit = {
       while (!stopped.get()) {
@@ -95,7 +96,7 @@ class PrimaryRegionWatcher(conf: GlobalSetting,
         if (!stopped.get()) {
           val secondaryRegions = localRegionManager.regions.values.filter(!_.isPrimary).groupBy(x =>
             (x.regionId >> 16).toInt)
-          for (x <- secondaryRegions if (!stopped.get())) {
+          for (x <- secondaryRegions if !stopped.get()) {
             try {
               val regionIds = x._2.map(_.regionId).toArray
               val primaryNodeId = x._1
@@ -107,17 +108,17 @@ class PrimaryRegionWatcher(conf: GlobalSetting,
                 val localRevision: Long = localRegion.revision
                 if (targetRevision > localRevision) {
                   if (logger.isTraceEnabled())
-                    logger.trace(s"[region-${localRegion.regionId}@${nodeId}] found new version : ${targetRevision}@${primaryNodeId}>${localRevision}@${nodeId}");
+                    logger.trace(s"[region-${localRegion.regionId}@$nodeId] found new version : $targetRevision@$primaryNodeId>$localRevision@$nodeId")
 
                   val is = clientOf(primaryNodeId).getPatchInputStream(
                     localRegion.regionId, localRevision, Duration("10s"))
 
                   localRegion.applyPatch(is, {
-                    is.close();
+                    is.close()
                     val updatedRegion = localRegionManager.update(localRegion)
                     if (logger.isTraceEnabled())
-                      logger.trace(s"[region-${localRegion.regionId}@${nodeId}] updated: ${localRevision}->${updatedRegion.revision}");
-                  });
+                      logger.trace(s"[region-${localRegion.regionId}@$nodeId] updated: $localRevision->${updatedRegion.revision}")
+                  })
                 }
               })
             }
@@ -133,8 +134,8 @@ class PrimaryRegionWatcher(conf: GlobalSetting,
   })
 
   def start(): PrimaryRegionWatcher = {
-    thread.start();
-    this;
+    thread.start()
+    this
   }
 
   def stop(): Unit = {

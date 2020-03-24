@@ -48,20 +48,20 @@ class GlobalSettingWriter {
     val zks = conf.get(Constants.PARAMETER_KEY_ZOOKEEPER_ADDRESS).asString
     val zk = ZooKeeperClient.create(zks)
 
-    zk.createAbsentNodes();
+    zk.createAbsentNodes()
     zk.saveGlobalSetting(props)
 
     zk.close()
   }
 
   def write(map: Map[String, String]): Unit = {
-    val props = new Properties();
+    val props = new Properties()
     props.putAll(JavaConversions.mapAsJavaMap(map))
     write(props)
   }
 
   def write(configFile: File): Unit = {
-    val props = new Properties();
+    val props = new Properties()
     val fis = new FileInputStream(configFile)
     props.load(fis)
     write(props)

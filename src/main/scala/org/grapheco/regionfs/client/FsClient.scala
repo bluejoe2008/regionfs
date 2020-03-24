@@ -23,7 +23,7 @@ import scala.concurrent.{ExecutionContext, Future}
 class FsClient(zks: String) extends Logging {
   val zookeeper = ZooKeeperClient.create(zks)
   val globalSetting = zookeeper.loadGlobalSetting()
-  val clientFactory = new FsNodeClientFactory(globalSetting);
+  val clientFactory = new FsNodeClientFactory(globalSetting)
   val ringNodes = new Ring[Int]()
 
   //get all nodes
@@ -71,14 +71,14 @@ class FsClient(zks: String) extends Logging {
       clientFactory.of(mapNodeWithAddress(nodeId)))
   }
 
-  private def assertNodesNotEmpty() {
+  private def assertNodesNotEmpty(): Unit = {
     if (mapNodeWithAddress.isEmpty) {
       throw new RegionFsClientException("no serving data nodes")
     }
   }
 
   def writeFile(content: ByteBuffer): Future[FileId] = {
-    assertNodesNotEmpty();
+    assertNodesNotEmpty()
     val crc32 =
       if (globalSetting.enableCrc) {
         CrcUtils.computeCrc32(content.duplicate())
@@ -88,7 +88,7 @@ class FsClient(zks: String) extends Logging {
       }
 
     val chosenNodeId: Int = ringNodes.take()
-    val client = clientOf(chosenNodeId);
+    val client = clientOf(chosenNodeId)
     implicit val ec: ExecutionContext = client.executionContext
     client.createFile(crc32, content.duplicate()).map(
       x => {
@@ -106,28 +106,28 @@ class FsClient(zks: String) extends Logging {
         _.filter(_.revision > fileId.localId).map(_.nodeId))
 
       if (maybeRegionOwnerNodes.isEmpty) {
-        val nodeId = (fileId.regionId >> 16).toInt;
+        val nodeId = (fileId.regionId >> 16).toInt
         if (!mapNodeWithAddress.contains(nodeId))
-          throw new WrongFileIdException(fileId);
+          throw new WrongFileIdException(fileId)
 
-        nodeId;
+        nodeId
       }
       else {
         val regionOwnerNodes = maybeRegionOwnerNodes.get
         val maybeNodeId = ringNodes.take(regionOwnerNodes.contains(_))
 
         if (maybeNodeId.isEmpty)
-          throw new WrongFileIdException(fileId);
+          throw new WrongFileIdException(fileId)
 
         maybeNodeId.get
       }
     }
     else {
-      val nodeId = (fileId.regionId >> 16).toInt;
+      val nodeId = (fileId.regionId >> 16).toInt
       if (!mapNodeWithAddress.contains(nodeId))
-        throw new WrongFileIdException(fileId);
+        throw new WrongFileIdException(fileId)
 
-      nodeId;
+      nodeId
     }
 
     clientOf(chosenNodeId).readFile(
@@ -158,7 +158,7 @@ class FsClient(zks: String) extends Logging {
     }
   }
 
-  def close = {
+  def close() = {
     nodesWatcher.close()
     clientFactory.close()
     zookeeper.close()
@@ -169,7 +169,7 @@ class FsClient(zks: String) extends Logging {
   * FsNodeClient factory
   */
 class FsNodeClientFactory(globalSetting: GlobalSetting) {
-  val refs = mutable.Map[RpcAddress, HippoEndpointRef]();
+  val refs = mutable.Map[RpcAddress, HippoEndpointRef]()
 
   val pool = Executors.newFixedThreadPool(globalSetting.executorThreadPoolSize)
   val executionContext: ExecutionContext = ExecutionContext.fromExecutor(pool)
@@ -183,7 +183,7 @@ class FsNodeClientFactory(globalSetting: GlobalSetting) {
   def of(remoteAddress: RpcAddress): FsNodeClient = {
     val endPointRef = rpcEnv.synchronized {
       refs.getOrElseUpdate(remoteAddress,
-        rpcEnv.setupEndpointRef(RpcAddress(remoteAddress.host, remoteAddress.port), "regionfs-service"));
+        rpcEnv.setupEndpointRef(RpcAddress(remoteAddress.host, remoteAddress.port), "regionfs-service"))
     }
 
     new FsNodeClient(globalSetting, endPointRef, remoteAddress, executionContext)

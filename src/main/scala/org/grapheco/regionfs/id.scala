@@ -9,17 +9,17 @@ import org.apache.commons.codec.binary.Base64
   */
 
 object FileId {
-  val base64 = new Base64();
+  val base64 = new Base64()
 
   def make(regionId: Long, localId: Long): FileId = {
     new FileId(regionId, localId)
   }
 
   def toBase64String(id: FileId): String = {
-    val baos = new ByteArrayOutputStream();
-    val dos = new DataOutputStream(baos);
-    dos.writeLong(id.regionId);
-    dos.writeLong(id.localId);
+    val baos = new ByteArrayOutputStream()
+    val dos = new DataOutputStream(baos)
+    dos.writeLong(id.regionId)
+    dos.writeLong(id.localId)
 
     base64.encodeAsString(baos.toByteArray)
   }

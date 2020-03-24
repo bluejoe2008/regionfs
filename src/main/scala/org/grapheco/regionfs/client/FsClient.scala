@@ -29,7 +29,7 @@ class FsClient(zks: String) extends Logging {
   //get all nodes
   val cachedClients = mutable.Map[Int, FsNodeClient]()
   val mapNodeWithAddress = mutable.Map[Int, RpcAddress]()
-  val nodesWatcher = zookeeper.watchNodeList(_ => true,
+  val nodesWatcher = zookeeper.watchNodeList(
     new ParsedChildNodeEventHandler[NodeServerInfo] {
       override def onCreated(t: NodeServerInfo): Unit = {
         mapNodeWithAddress.synchronized {
@@ -58,6 +58,8 @@ class FsClient(zks: String) extends Logging {
           ringNodes -= t.nodeId
         }
       }
+
+      override def accepts(t: NodeServerInfo): Boolean = true
     })
 
   //get all regions

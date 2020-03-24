@@ -75,10 +75,14 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
   val globalSetting = zookeeper.loadGlobalSetting()
 
-  val localRegionManager = new LocalRegionManager(nodeId, storeDir, globalSetting, new RegionEventListener {
-    override def handleRegionEvent(event: RegionEvent): Unit = {
-    }
-  })
+  val localRegionManager = new LocalRegionManager(
+    nodeId,
+    storeDir,
+    globalSetting,
+    new RegionEventListener {
+      override def handleRegionEvent(event: RegionEvent): Unit = {
+      }
+    })
 
   val clientFactory = new FsNodeClientFactory(globalSetting);
 
@@ -88,52 +92,77 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
   val mapNeighbourNodeWithRegionCount = mutable.Map[Int, Int]()
   val zkNodeEventHandlers = new CompositeParsedChildNodeEventHandler[NodeServerInfo]();
 
-  zkNodeEventHandlers.addHandler(new ParsedChildNodeEventHandler[NodeServerInfo] {
-    override def onCreated(t: NodeServerInfo): Unit = {
-      mapNeighbourNodeWithAddress += t.nodeId -> t.address
-      mapNeighbourNodeWithRegionCount += t.nodeId -> t.regionCount
-      if (logger.isTraceEnabled) {
-        logger.trace(s"[node-${nodeId}] onCreated: ${t}")
+  zkNodeEventHandlers.addHandler(
+    new ParsedChildNodeEventHandler[NodeServerInfo] {
+      override def accepts(t: NodeServerInfo): Boolean = true
+
+      override def onUpdated(t: NodeServerInfo): Unit = {
+
       }
-    }
 
-    def onUpdated(t: NodeServerInfo): Unit = {
-      mapNeighbourNodeWithRegionCount += t.nodeId -> t.regionCount
-      if (logger.isTraceEnabled) {
-        logger.trace(s"[node-${nodeId}] onUpdated: ${t}")
+      override def onCreated(t: NodeServerInfo): Unit = {
+
       }
-    }
 
-    def onInitialized(batch: Iterable[NodeServerInfo]): Unit = {
-      mapNeighbourNodeWithAddress.synchronized {
-        mapNeighbourNodeWithAddress ++= batch.map(t => t.nodeId -> t.address)
-        mapNeighbourNodeWithRegionCount ++= batch.map(t => t.nodeId -> t.regionCount)
-
-        if (logger.isTraceEnabled) {
-          logger.trace(s"[node-${nodeId}] onInitialized: ${batch.mkString(",")}")
+      override def onInitialized(batch: Iterable[NodeServerInfo]): Unit = {
+        batch.find(_.nodeId == nodeId).headOption.foreach { x =>
+          throw new NodeIdAlreadyExistExcetion(x)
         }
       }
-    }
 
-    override def onDeleted(t: NodeServerInfo): Unit = {
-      mapNeighbourNodeWithAddress -= t.nodeId
-      mapNeighbourNodeWithRegionCount -= t.nodeId
-      if (logger.isTraceEnabled) {
-        logger.trace(s"[node-${nodeId}] onDeleted: ${t}")
+      override def onDeleted(t: NodeServerInfo): Unit = {
+
       }
-    }
-  })
+    }).addHandler(
+    new ParsedChildNodeEventHandler[NodeServerInfo] {
+      override def onCreated(t: NodeServerInfo): Unit = {
+        mapNeighbourNodeWithAddress += t.nodeId -> t.address
+        mapNeighbourNodeWithRegionCount += t.nodeId -> t.regionCount
+        if (logger.isTraceEnabled) {
+          logger.trace(s"[node-${nodeId}] onCreated: ${t}")
+        }
+      }
+
+      def onUpdated(t: NodeServerInfo): Unit = {
+        mapNeighbourNodeWithRegionCount += t.nodeId -> t.regionCount
+        if (logger.isTraceEnabled) {
+          logger.trace(s"[node-${nodeId}] onUpdated: ${t}")
+        }
+      }
+
+      def onInitialized(batch: Iterable[NodeServerInfo]): Unit = {
+        mapNeighbourNodeWithAddress.synchronized {
+          mapNeighbourNodeWithAddress ++= batch.map(t => t.nodeId -> t.address)
+          mapNeighbourNodeWithRegionCount ++= batch.map(t => t.nodeId -> t.regionCount)
+
+          if (logger.isTraceEnabled) {
+            logger.trace(s"[node-${nodeId}] onInitialized: ${batch.mkString(",")}")
+          }
+        }
+      }
+
+      override def onDeleted(t: NodeServerInfo): Unit = {
+        mapNeighbourNodeWithAddress -= t.nodeId
+        mapNeighbourNodeWithRegionCount -= t.nodeId
+        if (logger.isTraceEnabled) {
+          logger.trace(s"[node-${nodeId}] onDeleted: ${t}")
+        }
+      }
+
+      override def accepts(t: NodeServerInfo): Boolean = t.nodeId != nodeId
+    })
 
   var alive: Boolean = true
-  val endpoint = new FileRpcEndpoint(env)
-  env.setupEndpoint("regionfs-service", endpoint)
-  env.setRpcHandler(endpoint)
-  writeLockFile(new File(storeDir, ".lock"))
 
   val remoteRegionWatcher: RemoteRegionWatcher = new RemoteRegionWatcher(nodeId,
     globalSetting, zkNodeEventHandlers, localRegionManager, clientOf);
 
-  val neighbourNodesWatcher = zookeeper.watchNodeList(nodeId != _.nodeId, zkNodeEventHandlers)
+  val neighbourNodesWatcher = zookeeper.watchNodeList(zkNodeEventHandlers)
+
+  val endpoint = new FileRpcEndpoint(env)
+  env.setupEndpoint("regionfs-service", endpoint)
+  env.setRpcHandler(endpoint)
+  writeLockFile(new File(storeDir, ".lock"))
 
   def awaitTermination(): Unit = {
     println(IOUtils.toString(this.getClass.getClassLoader.getResourceAsStream("logo.txt"), "utf-8"))
@@ -186,10 +215,6 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
     val address = env.address
     val path = s"/regionfs/nodes/${nodeId}_${address.host}_${address.port}"
-    zookeeper.assertPathNotExists(path) {
-      env.shutdown()
-    }
-
     env -> address;
   }
 
@@ -553,5 +578,10 @@ class ReceivedMismatchedStreamException extends
 
 class FileNotFoundException(nodeId: Int, fileId: FileId) extends
   RegionFsServerException(s"file not found on node-$nodeId: ${fileId}") {
+
+}
+
+class NodeIdAlreadyExistExcetion(nodeServerInfo: NodeServerInfo) extends
+  RegionFsServerException(s"node id already exist: ${nodeServerInfo}") {
 
 }

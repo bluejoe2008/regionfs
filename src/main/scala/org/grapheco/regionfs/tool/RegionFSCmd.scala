@@ -6,23 +6,21 @@ import net.neoremind.kraps.rpc.RpcAddress
 import org.apache.commons.cli._
 import org.apache.commons.io.IOUtils
 import org.grapheco.regionfs.client.FsAdmin
-import org.grapheco.regionfs.server.{FsNodeServer, RegionInfo}
+import org.grapheco.regionfs.server.RegionInfo
 import org.grapheco.regionfs.util.ByteBufferConversions._
 import org.grapheco.regionfs.{FileId, GlobalSettingWriter}
 
-import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
 
 /**
   * Created by bluejoe on 2020/2/25.
   */
-object RegionFSCmd {
+object RegionFsCmd {
   val commands = Array[(String, String, ShellCommandExecutor)](
     ("help", "print usage information", null),
     ("stat", "report statistics of all nodes (or a given node)", new StatShellCommandExecutor()),
     ("greet", "notify all nodes (or a given node) to print a message to be noticed", new GreetShellCommandExecutor()),
-    ("start", "start a local node server", new StartNodeShellCommandExecutor()),
     ("config", "configure global setting", new ConfigShellCommandExecutor()),
     ("clean", "clean data on all nodes (or a given node)", new CleanDataShellCommandExecutor()),
     ("shutdown", "shutdown all nodes (or a given node)", new ShutdownShellCommandExecutor()),
@@ -70,44 +68,6 @@ object RegionFSCmd {
       }
       println(s"\t${en._1}${space}${en._2}")
     }
-  }
-}
-
-trait ShellCommandExecutor {
-  val commandNamePath = ArrayBuffer[String]()
-
-  def init(cmds: Array[String]): Unit = {
-    commandNamePath ++= cmds
-  }
-
-  lazy val OPTIONS: Options = {
-    val ops = new Options();
-    buildOptions(ops);
-    ops
-  }
-
-  def buildOptions(options: Options)
-
-  def parseAndRun(args: Array[String]): Unit = {
-    val commandLineParser = new DefaultParser();
-
-    try {
-      val commandLine = commandLineParser.parse(OPTIONS, args);
-      run(commandLine)
-    }
-    catch {
-      case e: ParseException =>
-        println(e.getMessage());
-        printUsage();
-    }
-  }
-
-  def run(commandLine: CommandLine)
-
-  private def printUsage(): Unit = {
-    val formatter = new HelpFormatter();
-    formatter.printHelp(s"${commandNamePath.mkString(" ")}", OPTIONS, true);
-    System.out.println();
   }
 }
 
@@ -241,22 +201,6 @@ private class GreetShellCommandExecutor extends ShellCommandExecutor {
     }
 
     admin.close
-  }
-}
-
-private class StartNodeShellCommandExecutor extends ShellCommandExecutor {
-  override def buildOptions(options: Options): Unit = {
-    options.addOption(Option.builder("conf")
-      .argName("nodeConfigFile")
-      .desc("conf file path of local node server, e.g conf/node.conf")
-      .hasArg
-      .required(true)
-      .build())
-  }
-
-  override def run(commandLine: CommandLine): Unit = {
-    val server = FsNodeServer.create(new File(commandLine.getOptionValue("conf")))
-    server.awaitTermination()
   }
 }
 

@@ -56,13 +56,6 @@ class ZooKeeperClient(curator: CuratorFramework) {
     curator.create().orSetData().forPath("/regionfs/regions")
   }
 
-  def assertPathNotExists(path: String)(onAssertFailed: => Unit) = {
-    if (curator.checkExists.forPath(path) != null) {
-      onAssertFailed
-      throw new ZNodeAlreadyExistExcetion(path);
-    }
-  }
-
   private def toByteArray(write: (DataOutputStream) => Unit): Array[Byte] = {
     val baos = new ByteArrayOutputStream()
     val dos = new DataOutputStream(baos)
@@ -116,41 +109,36 @@ class ZooKeeperClient(curator: CuratorFramework) {
     JavaConversions.iterableAsScalaIterable(curator.getChildren.forPath("/regionfs/nodes"))
   }
 
-  def watchNodeList(accepts: (NodeServerInfo) => Boolean,
-                    handler: ParsedChildNodeEventHandler[NodeServerInfo]) = {
+  def watchNodeList(handler: ParsedChildNodeEventHandler[NodeServerInfo]) = {
     watchParsedChildrenPath[NodeServerInfo]("/regionfs/nodes", (data: ChildData) => {
       val path = data.getPath.substring("/regionfs/nodes".length + 1)
       val splits = path.split("_")
       NodeServerInfo(splits(0).toInt, (RpcAddress(splits(1), splits(2).toInt)), parseByteArray(data.getData, _.readInt()))
-    }, accepts, handler);
+    }, handler);
   }
 
   def watchParsedChildrenPath[T](
                                   parentPath: String,
                                   parse: (ChildData) => T,
-                                  accepts: T => Boolean,
                                   handler: ParsedChildNodeEventHandler[T]): Closeable = {
     watchChildrenPath(parentPath, new ChildNodeEventHandler() {
       override def onChildAdded(data: ChildData): Unit = {
         val t = parse(data)
-        if (accepts(t))
-          handler.onCreated(t)
+        handler.onCreated(t)
       }
 
       override def onChildUpdated(data: ChildData): Unit = {
         val t = parse(data)
-        if (accepts(t))
-          handler.onUpdated(t)
+        handler.onUpdated(t)
       }
 
       override def onInitialized(batch: Iterable[ChildData]): Unit = {
-        handler.onInitialized(batch.map(parse(_)).filter(accepts(_)))
+        handler.onInitialized(batch.map(parse(_)))
       }
 
       override def onChildRemoved(data: ChildData): Unit = {
         val t = parse(data)
-        if (accepts(t))
-          handler.onDeleted(t)
+        handler.onDeleted(t)
       }
     })
   }
@@ -203,17 +191,20 @@ class ZooKeeperClient(curator: CuratorFramework) {
 class CompositeParsedChildNodeEventHandler[T](handlers: ParsedChildNodeEventHandler[T]*) extends ParsedChildNodeEventHandler[T] {
   private val _handlers = ArrayBuffer[ParsedChildNodeEventHandler[T]](handlers: _*);
 
-  def addHandler(handler: ParsedChildNodeEventHandler[T]) = {
+  def addHandler(handler: ParsedChildNodeEventHandler[T]): this.type = {
     _handlers += handler
+    this
   }
 
-  override def onCreated(t: T): Unit = _handlers.foreach(_.onCreated(t))
+  override def accepts(t: T): Boolean = true
 
-  override def onUpdated(t: T): Unit = _handlers.foreach(_.onUpdated(t))
+  override def onCreated(t: T): Unit = _handlers.foreach(x => if (x.accepts(t)) x.onCreated(t))
 
-  override def onInitialized(batch: Iterable[T]): Unit = _handlers.foreach(_.onInitialized(batch))
+  override def onUpdated(t: T): Unit = _handlers.foreach(x => if (x.accepts(t)) x.onUpdated(t))
 
-  override def onDeleted(t: T): Unit = _handlers.foreach(_.onDeleted(t))
+  override def onInitialized(batch: Iterable[T]): Unit = _handlers.foreach(x => x.onInitialized(batch.filter(x.accepts(_))))
+
+  override def onDeleted(t: T): Unit = _handlers.foreach(x => if (x.accepts(t)) x.onDeleted(t))
 }
 
 trait ChildNodeEventHandler {
@@ -227,6 +218,8 @@ trait ChildNodeEventHandler {
 }
 
 trait ParsedChildNodeEventHandler[T] {
+  def accepts(t: T): Boolean;
+
   def onCreated(t: T);
 
   def onUpdated(t: T);

@@ -145,53 +145,57 @@ class Cursor(position: AtomicLong) {
 
 class RegionTrashStore(conf: RegionConfig) {
   private val fileBody = new File(conf.regionDir, "trash")
-  val cursor = new AtomicLong(fileBody.length() / 32)
-  lazy val readerChannel = new RandomAccessFile(fileBody, "r")
-  lazy val appenderChannel = new FileOutputStream(fileBody, true).getChannel
 
-  def length = readerChannel.length()
+  class Cache {
+    val _ids = mutable.Map[Long, Byte]();
+    {
+      var eof = false
+      val dis = new DataInputStream(new BufferedInputStream(new FileInputStream(fileBody)))
+      while (!eof) {
+        try {
+          _ids += dis.readLong() -> 1
+        }
+        catch {
+          case e: EOFException =>
+            eof = true
+        }
+      }
+
+      dis.close()
+    }
+
+    def append(id: Long): Boolean = this.synchronized {
+      if (_ids.contains(id)) {
+        false
+      }
+      else {
+        _ids += id -> 1
+        true
+      }
+    }
+  }
+
+  lazy val cache = new Cache();
+  lazy val appender = new DataOutputStream(new FileOutputStream(fileBody, true))
+
+  def count = cache._ids.size
 
   def append(localId: Long): Unit = {
-    val buf = ByteBuffer.allocate(1024)
-    buf.putLong(localId)
-    appenderChannel.synchronized {
-      appenderChannel.write(buf)
+    if (cache.append(localId)) {
+      appender.synchronized {
+        appender.writeLong(localId)
+      }
     }
   }
 
   def close(): Unit = {
-    appenderChannel.close()
-    readerChannel.close()
+    appender.close()
   }
 
   val bytes = new Array[Byte](8 * 1024);
 
   def contains(localId: Long): Boolean = {
-    if (length == 0)
-      false
-    else {
-      var off = 0;
-      var nread = 0;
-      var found = false;
-      //TODO: use page-cache
-      readerChannel.synchronized {
-        readerChannel.seek(0)
-        do {
-          nread = readerChannel.read(bytes, off, bytes.length)
-          if (nread > 0) {
-            off += nread;
-            val dis = new DataInputStream(new ByteArrayInputStream(bytes, 0, nread))
-            while (!found) {
-              if (localId == dis.readLong) {
-                found = true;
-              }
-            }
-          }
-        } while (nread > 0 && !found)
-      }
-
-      found
-    }
+    cache._ids.contains(localId)
   }
 }
 
@@ -279,7 +283,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
 
   def revision = cursor.current
 
-  def fileCount = cursor.current - ftrash.cursor.get
+  def fileCount = cursor.current - ftrash.count
 
   def length = fbody.fptr.length()
 
@@ -335,7 +339,8 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
   }
 
   def delete(localId: Long): Unit = {
-    ftrash.append(localId)
+    if (fmeta.read(localId).isDefined && !ftrash.contains(localId))
+      ftrash.append(localId)
   }
 
   def offerPatch(sinceRevision: Long): ByteBuf = {

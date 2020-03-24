@@ -241,7 +241,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         }
         else {
           if (mapNeighbourNodeWithAddress.size < globalSetting.replicaNum - 1)
-            throw new InsufficientNodeServerException(mapNeighbourNodeWithAddress.size, globalSetting.replicaNum);
+            throw new InsufficientNodeServerException(mapNeighbourNodeWithAddress.size, globalSetting.replicaNum - 1);
 
           //sort neighbour nodes by region count
           val thinNodeIds = mapNeighbourNodeWithRegionCount.toArray.sortBy(_._2).take(globalSetting.replicaNum - 1).map(_._1)

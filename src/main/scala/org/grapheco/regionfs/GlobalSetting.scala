@@ -12,7 +12,7 @@ import scala.collection.JavaConversions
 /**
   * Created by bluejoe on 2020/2/6.
   */
-class GlobalSetting(props: Properties) {
+class GlobalSetting(val props: Properties) {
   val conf = new Configuration {
     override def getRaw(name: String): Option[String] =
       if (props.containsKey(name)) {

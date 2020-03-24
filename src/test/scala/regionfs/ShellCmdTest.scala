@@ -1,6 +1,6 @@
 package regionfs
 
-import org.grapheco.regionfs.tool.RegionFSCmd
+import org.grapheco.regionfs.tool.RegionFsCmd
 import org.junit.Test
 
 /**
@@ -11,8 +11,8 @@ class ShellCmdTest extends FileTestBase {
 
   @Test
   def testStat(): Unit = {
-    RegionFSCmd.main("stat-all -zk localhost:2181".split(" "));
-    RegionFSCmd.main("put -zk localhost:2181 ./pom.xml ./README.md".split(" "));
-    RegionFSCmd.main("stat-all -zk localhost:2181".split(" "));
+    RegionFsCmd.main("stat-all -zk localhost:2181".split(" "));
+    RegionFsCmd.main("put -zk localhost:2181 ./pom.xml ./README.md".split(" "));
+    RegionFsCmd.main("stat-all -zk localhost:2181".split(" "));
   }
 }

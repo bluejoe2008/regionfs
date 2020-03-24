@@ -52,6 +52,8 @@ class RemoteRegionWatcher(nodeId: Int, globalSetting: GlobalSetting,
         _._2 -= t.nodeId
       }
     }
+
+    override def accepts(t: NodeServerInfo): Boolean = t.nodeId != nodeId
   })
 
   private def reportLocalSeconaryRegions(nodeId: Int): Unit = {

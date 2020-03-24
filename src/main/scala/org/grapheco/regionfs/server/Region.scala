@@ -145,7 +145,7 @@ class Cursor(position: AtomicLong) {
 
 class RegionTrashStore(conf: RegionConfig) {
   private val fileBody = new File(conf.regionDir, "trash")
-  val cursor = new AtomicLong(fileBody.length())
+  val cursor = new AtomicLong(fileBody.length() / 32)
   lazy val readerChannel = new RandomAccessFile(fileBody, "r")
   lazy val appenderChannel = new FileOutputStream(fileBody, true).getChannel
 

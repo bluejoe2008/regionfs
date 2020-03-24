@@ -124,4 +124,4 @@ add repository in `pom.xml`:
       new FileInputStream(src), src.length), Duration.Inf)
 ```
 
-more examples, see https://github.com/bluejoe2008/regionfs/blob/master/src/test/scala/regionfs/FileReadWriteTest.scala
+more examples, see https://github.com/bluejoe2008/regionfs/blob/master/src/test/scala/regionfs/FileIOWith1Node1ReplicaTest.scala

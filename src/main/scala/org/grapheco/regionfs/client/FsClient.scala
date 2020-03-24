@@ -130,6 +130,10 @@ class FsClient(zks: String) extends Logging {
       nodeId
     }
 
+    if (logger.isTraceEnabled()) {
+      logger.trace(s"chosen node-$chosenNodeId to read")
+    }
+
     clientOf(chosenNodeId).readFile(
       fileId,
       (head: ReadFileResponseHead) => {

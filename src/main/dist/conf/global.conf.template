@@ -1,5 +1,6 @@
 zookeeper.address=localhost:2181
 replica.num=3
-region.size.limit=100000000
+region.size.limit=20000000000
 blob.crc.enabled=true
-region.version.check.interval=1000
+region.version.check.interval=60000
+consistency.strategy=strong

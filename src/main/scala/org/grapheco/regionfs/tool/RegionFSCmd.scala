@@ -104,7 +104,7 @@ class ConfigShellCommandExecutor extends ShellCommandExecutor {
     (commandLine.hasOption("conf"), commandLine.hasOption("zk")) match {
       case (true, _) =>
         new GlobalSettingWriter().write(new File(commandLine.getOptionValue("conf")))
-        println("cluster is successfully configured.");
+        println("global setting is successfully configured.");
 
       case (_, true) =>
         val zk = ZooKeeperClient.create(commandLine.getOptionValue("zk"))
@@ -271,7 +271,7 @@ private class ShutdownShellCommandExecutor extends ShellCommandExecutor {
       }
 
     list.foreach { nodeId =>
-      val (nodeId, address) = admin.shutdownNode(commandLine.getOptionValue("node").toInt, Duration("4s"))
+      val (_, address) = admin.shutdownNode(nodeId, Duration("4s"))
       println(s"shutdowning node-$nodeId on $address...")
     }
 

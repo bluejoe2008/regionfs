@@ -214,7 +214,6 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       RpcEnvServerConfig(new RpcConf(), "regionfs-server", host, port))
 
     val address = env.address
-    val path = s"/regionfs/nodes/${nodeId}_${address.host}_${address.port}"
     env -> address
   }
 
@@ -329,6 +328,15 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
     }
 
     private def receiveAndReplyInternal(ctx: RpcCallContext): PartialFunction[Any, Unit] = {
+      //TODO: cancelable task
+      case MapReduceTaskRequest(map, reduce) => {
+        val results = reduce(localRegionManager.regions.values.filter(_.isPrimary).flatMap {
+          region =>
+            region.handleFiles(map).toIterable
+        }.asInstanceOf[Iterable[Nothing]])
+
+        ctx.reply(MapReduceTaskResponse(results))
+      }
 
       case GetRegionOwnerNodesRequest(regionId: Long) =>
         ctx.reply(GetRegionOwnerNodesResponse(localRegionManager.regions.get(regionId).map(_.info).toArray
@@ -339,8 +347,8 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
       case GetNodeStatRequest() =>
         val nodeStat = NodeStat(nodeId, address,
-          localRegionManager.regions.map { kv =>
-            RegionStat(kv._1, kv._2.fileCount, kv._2.length)
+          localRegionManager.regions.values.filter(_.isPrimary).map { region =>
+            RegionStat(region.regionId, region.fileCount, region.length)
           }.toList)
 
         ctx.reply(GetNodeStatResponse(nodeStat))
@@ -380,8 +388,8 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
           if (maybeRegion.get.revision <= fileId.localId)
             throw new FileNotFoundException(nodeId, fileId)
 
-          maybeRegion.get.delete(fileId.localId)
-          ctx.reply(DeleteSeconaryFileResponse(success = true, null, maybeRegion.get.info))
+          val success = maybeRegion.get.delete(fileId.localId)
+          ctx.reply(DeleteSeconaryFileResponse(success, null, maybeRegion.get.info))
         }
         catch {
           case e: Throwable =>
@@ -399,7 +407,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
           if (localRegion.revision <= fileId.localId)
             throw new FileNotFoundException(nodeId, fileId)
 
-          localRegion.delete(fileId.localId)
+          val success = localRegion.delete(fileId.localId)
           val regions =
           //is a primary region?
             if (globalSetting.replicaNum > 1 && (fileId.regionId >> 16) == nodeId) {
@@ -416,7 +424,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             }
 
           remoteRegionWatcher.cacheRemoteSeconaryRegions(regions)
-          ctx.reply(DeleteFileResponse(true, null, regions))
+          ctx.reply(DeleteFileResponse(success, null, regions))
         }
         catch {
           case e: Throwable =>
@@ -466,7 +474,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
     private def openChunkedStreamInternal(): PartialFunction[Any, ChunkedStream] = {
       case ListFileRequest() =>
         ChunkedStream.pooled[ListFileResponseDetail](1024, (pool) => {
-          localRegionManager.regions.values.foreach { x =>
+          localRegionManager.regions.values.filter(_.isPrimary).foreach { x =>
             val it = x.listFiles()
             it.foreach(x => pool.push(ListFileResponseDetail(x)))
           }

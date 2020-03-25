@@ -10,12 +10,12 @@ import net.neoremind.kraps.rpc.netty.{HippoEndpointRef, HippoRpcEnv, HippoRpcEnv
 import net.neoremind.kraps.rpc.{RpcAddress, RpcEnvClientConfig}
 import org.grapheco.commons.util.Logging
 import org.grapheco.regionfs._
-import org.grapheco.regionfs.server.RegionInfo
+import org.grapheco.regionfs.server.{FileEntry, RegionInfo}
 import org.grapheco.regionfs.util._
 
 import scala.collection.mutable
 import scala.concurrent.duration.Duration
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.{Await, ExecutionContext, Future}
 
 /**
   * a client to regionfs servers
@@ -150,11 +150,19 @@ class FsClient(zks: String) extends Logging {
       cachedRegionMap(regionId) = regions
   }
 
+  def submitJob[X, Y, Z](map: (FileEntry) => X, reduce: (Iterable[X]) => Y, reduceClientSide: (Iterable[Y]) => Z): Future[Z] = {
+    val futures = mapNodeWithAddress.map(x => clientOf(x._1).submitJob(map, reduce))
+    implicit val ec: ExecutionContext = clientFactory.executionContext
+    Future {
+      reduceClientSide(futures.map(Await.result(_, Duration.Inf)))
+    }
+  }
+
   def deleteFile[T](fileId: FileId): Future[Boolean] = {
     //primary node
     val client = clientOf((fileId.regionId >> 16).toInt)
     val future = client.deleteFile(fileId)
-    implicit val ec: ExecutionContext = client.executionContext
+    implicit val ec: ExecutionContext = clientFactory.executionContext
 
     future.map { x =>
       cacheAliveRegions(fileId.regionId, x.infos)
@@ -255,8 +263,13 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
 
   def deleteFile(fileId: FileId): Future[DeleteFileResponse] = {
     safeCall {
-      endPointRef.ask[DeleteFileResponse](
-        DeleteFileRequest(fileId))
+      endPointRef.ask[DeleteFileResponse](DeleteFileRequest(fileId))
+    }
+  }
+
+  def submitJob[X, Y](map: (FileEntry) => X, reduce: (Iterable[X]) => Y): Future[Y] = {
+    safeCall {
+      endPointRef.ask[MapReduceTaskResponse[Y]](MapReduceTaskRequest(map, reduce)).map(_.value)
     }
   }
 

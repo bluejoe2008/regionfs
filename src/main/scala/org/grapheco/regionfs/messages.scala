@@ -2,7 +2,7 @@ package org.grapheco.regionfs
 
 import net.neoremind.kraps.rpc.RpcAddress
 import org.grapheco.regionfs.client.NodeStat
-import org.grapheco.regionfs.server.RegionInfo
+import org.grapheco.regionfs.server.{FileEntry, RegionInfo}
 
 /**
   * Created by bluejoe on 2019/8/23.
@@ -124,5 +124,13 @@ case class GetRegionOwnerNodesRequest(regionId: Long) {
 }
 
 case class GetRegionOwnerNodesResponse(infos: Array[RegionInfo]) {
+
+}
+
+case class MapReduceTaskRequest[X, Y](map: (FileEntry) => X, reduce: (Iterable[X]) => Y) {
+
+}
+
+case class MapReduceTaskResponse[Y](value: Y) {
 
 }

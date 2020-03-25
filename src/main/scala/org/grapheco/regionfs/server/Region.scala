@@ -6,6 +6,7 @@ import java.nio.channels.FileChannel
 import java.util.concurrent.atomic.AtomicLong
 
 import io.netty.buffer.{ByteBuf, Unpooled}
+import net.neoremind.kraps.util.ByteBufferInputStream
 import org.grapheco.commons.util.Logging
 import org.grapheco.regionfs.client.RegionFsClientException
 import org.grapheco.regionfs.util.{Cache, CrcUtils, FixSizedCache, Ring}
@@ -269,9 +270,6 @@ class RegionBodyStore(conf: RegionConfig) {
   * a Region store files in storeDir
   */
 class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listener: RegionEventListener) extends Logging {
-  //TODO: archive
-  def isWritable = length <= conf.globalSetting.regionSizeLimit
-
   val isPrimary = (regionId >> 16) == nodeId
   val isSecondary = !isPrimary
 
@@ -288,7 +286,23 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
   def length = fbody.fptr.length()
 
   def listFiles(): Iterator[(FileId, Long)] = {
-    fmeta.iterator().map(meta => FileId.make(regionId, meta.localId) -> meta.length)
+    handleFiles(entry => entry.id -> entry.length)
+  }
+
+  //TODO: archive
+  def isWritable = length <= conf.globalSetting.regionSizeLimit
+
+  def handleFiles[Y](map: FileEntry => Y): Iterator[Y] = {
+    fmeta.iterator().map { meta =>
+      val fe = new FileEntry() {
+        override val id = FileId.make(regionId, meta.localId)
+        override val length = meta.length
+
+        override def openInputStream() = new ByteBufferInputStream(read(meta.localId).get)
+      }
+
+      map(fe)
+    }
   }
 
   def write(buf: ByteBuffer, crc: Long): Long = {
@@ -300,7 +314,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
         0
       }
 
-    //TODO: transaction safe assurance
+    //TODO: transaction safety assurance
     this.synchronized {
       val (offset: Long, length: Long, actualWritten: Long) =
         fbody.write(buf, crc32)
@@ -336,9 +350,14 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
     }
   }
 
-  def delete(localId: Long): Unit = {
-    if (fmeta.read(localId).isDefined && !ftrash.contains(localId))
+  def delete(localId: Long): Boolean = {
+    if (fmeta.read(localId).isDefined && !ftrash.contains(localId)) {
       ftrash.append(localId)
+      true
+    }
+    else {
+      false
+    }
   }
 
   def offerPatch(sinceRevision: Long): ByteBuf = {
@@ -560,4 +579,12 @@ class WrongRegionPatchStreamException extends RegionFsServerException(s"wrong re
 
 case class RegionInfo(nodeId: Int, regionId: Long, revision: Long, isPrimary: Boolean, isWritable: Boolean, length: Long) {
 
+}
+
+trait FileEntry {
+  val id: FileId;
+
+  val length: Long;
+
+  def openInputStream(): InputStream;
 }

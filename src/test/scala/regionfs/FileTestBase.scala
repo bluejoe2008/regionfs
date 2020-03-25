@@ -1,9 +1,9 @@
 package regionfs
 
-import java.io.{File, FileOutputStream}
+import java.io.{File, FileInputStream, FileOutputStream}
 import java.nio.ByteBuffer
 
-import org.apache.commons.io.FileUtils
+import org.apache.commons.io.{FileUtils, IOUtils}
 import org.grapheco.commons.util.{Logging, Profiler}
 import org.grapheco.regionfs.client.{FsAdmin, FsClient}
 import org.grapheco.regionfs.server.{FsNodeServer, RegionEvent, RegionEventListener}
@@ -30,6 +30,10 @@ class FileTestBase extends Logging {
   var servers = ArrayBuffer[FsNodeServer]()
   var client: FsClient = null
   var admin: FsAdmin = null
+
+  def toBytes(f: File): Array[Byte] = {
+    IOUtils.toByteArray(new FileInputStream(f))
+  }
 
   @Before
   def setup() {
@@ -68,6 +72,9 @@ class FileTestBase extends Logging {
       makeFile(new File(s"./testdata/inputs/$i"), i)
     }
   }
+
+  def countFiles() =
+    admin.stat(Duration("4s")).nodeStats.map(_.regionStats.map(_.fileCount).sum).sum
 
   def makeFile(dst: File, length: Long): Unit = {
     val fos = new FileOutputStream(dst)

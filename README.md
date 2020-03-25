@@ -125,3 +125,12 @@ add repository in `pom.xml`:
 ```
 
 more examples, see https://github.com/bluejoe2008/regionfs/blob/master/src/test/scala/regionfs/FileIOWith1Node1ReplicaTest.scala
+
+## TODO
+
+* transaction safe assurance
+
+## dependencies
+
+* hippo-rpc: enhanced RPC framework based on kraps-rpc
+* curator: zookeeper client libaray

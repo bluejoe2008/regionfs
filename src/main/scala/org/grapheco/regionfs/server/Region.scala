@@ -300,9 +300,8 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
         0
       }
 
-    //TODO: transaction assurance
+    //TODO: transaction safe assurance
     this.synchronized {
-
       val (offset: Long, length: Long, actualWritten: Long) =
         fbody.write(buf, crc32)
 
@@ -312,7 +311,6 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
         localId = id
         fmeta.write(id, offset, length, crc32)
       })
-
 
       listener.handleRegionEvent(new WriteRegionEvent(this))
       if (logger.isTraceEnabled())

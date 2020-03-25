@@ -73,19 +73,16 @@ bin/rfs start-local-node -conf ./conf/node.conf
 ```
 rfs <command> [args]
 commands:
-	clean-all           clean data on a node
-	clean-node          clean data on all nodes
-	config              configure global setting
-	delete              delete remote files
-	get                 get remote files
-	greet               notify a node server to print a message to be noticed
-	help                print usage information
-	put                 put local files into regionfs
-	shutdown-all        shutdown all nodes
-	shutdown-node       shutdown a node
-	start-local-node    start a local node server
-	stat-all            report statistics of all nodes
-	stat-node           report statistics of a node
+	clean       clean data on all nodes (or a given node)
+	config      dispaly (or set) global setting
+	delete      delete remote files
+	get         get remote files
+	greet       notify all nodes (or a given node) to print a message to be noticed
+	help        print usage information
+	put         put local files into regionfs
+	regions     list regions on all nodes (or a given node)
+	shutdown    shutdown all nodes (or a given node)
+	stat        report statistics of all nodes (or a given node)
 ```
 
 ## configuration
@@ -95,9 +92,10 @@ key|type|default value|description
 -|-|-|-
 region.min.writable|Int|3|minimized writable region number
 replica.num|Int|1(no duplicates)|replica number of region
-region.size.limit|Long|20*1024*1024*1024(20G)|upper limit of region size
+region.size.limit|Long|20* 1024* 1024* 1024(20G)|upper limit of region size
 blob.crc.enabled|Boolean|true|if use checksum of data on transmission
 region.version.check.interval|Long|60000 * 60(1hour)|interval time of region version checking
+consistency.strategy|Enum(`strong`,`eventual`)|strong|consistency strategy
 
 ### node.conf
 key|type|default value|description
@@ -126,4 +124,13 @@ add repository in `pom.xml`:
       new FileInputStream(src), src.length), Duration.Inf)
 ```
 
-more examples, see https://github.com/bluejoe2008/regionfs/blob/master/src/test/scala/regionfs/FileReadWriteTest.scala
+more examples, see https://github.com/bluejoe2008/regionfs/blob/master/src/test/scala/regionfs/FileIOWith1Node1ReplicaTest.scala
+
+## TODO
+
+* transaction safe assurance
+
+## dependencies
+
+* hippo-rpc: enhanced RPC framework based on kraps-rpc
+* curator: zookeeper client libaray

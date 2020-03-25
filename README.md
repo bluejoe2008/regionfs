@@ -126,7 +126,7 @@ more examples, see https://github.com/bluejoe2008/regionfs/blob/master/src/test/
 
 ## TODO
 
-* transaction safe assurance
+* transaction safety assurance
 
 ## dependencies
 

@@ -22,14 +22,6 @@ distributed file system for blob
 
 NOTE: make sure zookeeper cluster is running, suppose it has connecting string: `localhost:2181,localhost:2182,localhost:2183`
 
-## packaging
-
-```
-mvn package
-```
-
-this will create `regionfs-<version>.jar` in `./target`
-
 ## initializing rfs
 
 1. write a configuration file for rfs global settings `./conf/global.conf`
@@ -40,10 +32,10 @@ replica.num=1
 blob.crc.enabled=true
 ```
 
-2. start gloal config setting
+2. write gloal config setting
 
 ```
-bin/rfs init -conf ./conf/global.conf
+bin/rfs config -conf ./conf/global.conf
 ```
 
 ## start one node
@@ -58,12 +50,18 @@ data.storeDir=/data/node/
 node.id=1
 ```
 
-NOTE: `node.id` should be unique in cluster
+NOTE: `node.id` should be unique in regionfs cluster
 
 2. start the node server
 
 ```
-bin/rfs start-local-node -conf ./conf/node.conf
+sbin/start-local -conf ./conf/node.conf
+```
+
+3. shutdown remote node server
+
+```
+sbin/shutdown -zk localhost:2181 -node 1
 ```
 
 ## start all nodes

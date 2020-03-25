@@ -1,5 +1,5 @@
 # regionfs
-distributed file system for blob
+distributed file system for pandadb
 
 [![GitHub releases](https://img.shields.io/github/release/bluejoe2008/regionfs.svg)](https://github.com/bluejoe2008/regionfs/releases)
 [![GitHub downloads](https://img.shields.io/github/downloads/bluejoe2008/regionfs/total.svg)](https://github.com/bluejoe2008/regionfs/releases)
@@ -126,7 +126,7 @@ more examples, see https://github.com/bluejoe2008/regionfs/blob/master/src/test/
 
 ## TODO
 
-* transaction safe assurance
+* transaction safety assurance
 
 ## dependencies
 

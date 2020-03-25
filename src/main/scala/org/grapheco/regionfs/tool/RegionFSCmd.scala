@@ -18,8 +18,8 @@ import scala.concurrent.duration.Duration
 /**
   * Created by bluejoe on 2020/2/25.
   */
-object RegionFsCmd {
-  val commands = Array[(String, String, ShellCommandExecutor)](
+object RegionFsCmd extends CommandsLauncher {
+  override val commands = Array[(String, String, ShellCommandExecutor)](
     ("help", "print usage information", null),
     ("stat", "report statistics of all nodes (or a given node)", new StatShellCommandExecutor()),
     ("greet", "notify all nodes (or a given node) to print a message to be noticed", new GreetShellCommandExecutor()),
@@ -31,56 +31,7 @@ object RegionFsCmd {
     ("regions", "list regions on all nodes (or a given node)", new ListRegionsShellCommandExecutor()),
     ("delete", "delete remote files", new DeleteFilesShellCommandExecutor())
   )
-
-  commands.filter(_._3 != null).foreach(x => x._3.init(Array("rfs", x._1)))
-
-  //mvn exec:java -Dexec.mainClass="org.grapheco.regionfs.tool.RegionFSCmd" -Dexec.args="stat" -DskipTests
-  def main(args: Array[String]): Unit = {
-    if (args.length < 1) {
-      printError("no command designated")
-    }
-    else {
-      args(0).toLowerCase() match {
-        case "help" =>
-          printUsage()
-        case cmd: String =>
-          val opt = commands.find(_._1.equals(cmd.toLowerCase()))
-          if (opt.isDefined) {
-            val t1 = System.nanoTime()
-            opt.get._3.parseAndRun(args.takeRight(args.length - 1))
-            val t2 = System.nanoTime()
-            val elapsed = t2 - t1
-            if (elapsed > 1000000) {
-              println(s"time cost: ${elapsed / 1000000}ms")
-            }
-            else {
-              println(s"time cost: ${elapsed / 1000}us")
-            }
-
-          }
-          else {
-            printError(s"unrecognized command: $cmd")
-          }
-      }
-    }
-  }
-
-  private def printError(msg: String): Unit = {
-    println(msg)
-    printUsage()
-  }
-
-  private def printUsage(): Unit = {
-    val maxlen = commands.map(_._1.length).max
-    println("rfs <command> [args]")
-    println("commands:")
-    commands.sortBy(_._1).foreach { en =>
-      val space = {
-        (1 to (maxlen + 4 - en._1.length)).map(_ => " ").mkString("")
-      }
-      println(s"\t${en._1}$space${en._2}")
-    }
-  }
+  override val launcherName: String = "rfs"
 }
 
 class ConfigShellCommandExecutor extends ShellCommandExecutor {

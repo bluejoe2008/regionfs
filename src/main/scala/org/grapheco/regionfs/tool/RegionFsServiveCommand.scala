@@ -8,10 +8,13 @@ import org.grapheco.regionfs.server.FsNodeServer
 /**
   * Created by bluejoe on 2020/2/25.
   */
-object StartLocalNodeServerCommand {
-  def main(args: Array[String]): Unit = {
-    new StartNodeShellCommandExecutor().init(Array("start-node")).parseAndRun(args)
-  }
+object RegionFsServiveCommand extends CommandsLauncher {
+  override val commands: Array[(String, String, ShellCommandExecutor)] = Array[(String, String, ShellCommandExecutor)](
+    ("start-local", "start local node server using a conf file", new StartNodeShellCommandExecutor()),
+    ("shutdown", "shutdown all nodes (or a given node)", new ShutdownShellCommandExecutor())
+  )
+
+  override val launcherName: String = this.getClass.getSimpleName
 }
 
 private class StartNodeShellCommandExecutor extends ShellCommandExecutor {

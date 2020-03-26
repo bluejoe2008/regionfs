@@ -127,10 +127,10 @@ case class GetRegionOwnerNodesResponse(infos: Array[RegionInfo]) {
 
 }
 
-case class MapReduceTaskRequest[X, Y](map: (FileEntry) => X, reduce: (Iterable[X]) => Y) {
+case class ProcessFilesRequest[T](process: (Iterable[FileEntry]) => T) {
 
 }
 
-case class MapReduceTaskResponse[Y](value: Y) {
+case class ProcessFilesResponse[T](value: T) {
 
 }

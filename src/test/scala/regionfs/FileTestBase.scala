@@ -25,14 +25,24 @@ class FileTestBase extends Logging {
     override def handleRegionEvent(event: RegionEvent): Unit = {}
   }
 
-  val BLOB_LENGTH = Array[Long](999, 9999, 99999, 999999, 9999999, 9999999 + 100)
+  val BLOB_LENGTH = Array[Long](999, 9999, 99999, 999999, 9999999)
 
   var servers = ArrayBuffer[FsNodeServer]()
   var client: FsClient = null
   var admin: FsAdmin = null
 
-  def toBytes(f: File): Array[Byte] = {
+  def readBytes(f: File): Array[Byte] = {
     IOUtils.toByteArray(new FileInputStream(f))
+  }
+
+  def readBytes(fid: FileId): Array[Byte] = {
+    Await.result(toBytesAsync(fid), Duration("10s"))
+  }
+
+  def toBytesAsync(fid: FileId): Future[Array[Byte]] = {
+    client.readFile(fid, (is) => {
+      IOUtils.toByteArray(is)
+    })
   }
 
   @Before

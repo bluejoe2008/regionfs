@@ -6,9 +6,8 @@ import org.apache.commons.io.IOUtils
 import org.grapheco.commons.util.Profiler._
 import org.junit.{Assert, Test}
 
-import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Await
 import scala.concurrent.duration.Duration
-import scala.concurrent.{Await, Future}
 
 /**
   * Created by bluejoe on 2019/8/23.
@@ -34,10 +33,10 @@ class FileIOWith1Node1ReplicaTest extends FileTestBase {
     }
 
     for (i <- BLOB_LENGTH) {
-      val bytes = toBytes(new File(s"./testdata/inputs/$i"))
+      val bytes = readBytes(new File(s"./testdata/inputs/$i"))
       for (m <- 1 to 10) {
         val id = super.writeFile(new File(s"./testdata/inputs/$i"))
-        Assert.assertArrayEquals(bytes, IOUtils.toByteArray(client.readFile(id, Duration("4s"))))
+        Assert.assertArrayEquals(bytes, readBytes(id))
       }
     }
 
@@ -64,14 +63,14 @@ class FileIOWith1Node1ReplicaTest extends FileTestBase {
     }
 
     for (i <- BLOB_LENGTH) {
-      val bytes = toBytes(new File(s"./testdata/inputs/$i"))
+      val bytes = readBytes(new File(s"./testdata/inputs/$i"))
 
       val ids =
         (1 to 10).map(_ => super.writeFileAsync(new File(s"./testdata/inputs/$i"))).map(Await.result(_, Duration("4s")))
 
       for (id <- ids) {
         Assert.assertArrayEquals(bytes,
-          IOUtils.toByteArray(client.readFile(id, Duration("4s"))))
+          readBytes(id))
       }
     }
 
@@ -83,15 +82,13 @@ class FileIOWith1Node1ReplicaTest extends FileTestBase {
   def testReadAsync(): Unit = {
     for (i <- BLOB_LENGTH) {
       val id = super.writeFile(new File(s"./testdata/inputs/$i"))
-      val bytes = toBytes(new File(s"./testdata/inputs/$i"))
+      val bytes = readBytes(new File(s"./testdata/inputs/$i"))
 
       println(s"reading $i bytes...")
       timing(true) {
-        val futures = (1 to 10).map(x =>
-          Future {
-            IOUtils.toByteArray(client.readFile(id, Duration("4s")))
-          }
-        )
+        val futures = (1 to 10).map { x =>
+          toBytesAsync(id)
+        }
 
         for (bf <- futures) {
           Assert.assertArrayEquals(bytes,
@@ -107,7 +104,7 @@ class FileIOWith1Node1ReplicaTest extends FileTestBase {
 
     val src: File = new File(s"./testdata/inputs/999")
     val id = super.writeFile(src);
-    IOUtils.toByteArray(client.readFile(id, Duration("4s")))
+    readBytes(id)
 
     val count2 = super.countFiles()
     Assert.assertEquals(count1 + 1, count2)
@@ -127,7 +124,7 @@ class FileIOWith1Node1ReplicaTest extends FileTestBase {
     Assert.assertEquals(count1, count4)
 
     try {
-      IOUtils.toByteArray(client.readFile(id, Duration("4s")))
+      readBytes(id)
       Assert.assertTrue(false)
     }
     catch {
@@ -154,7 +151,7 @@ class FileIOWith1Node1ReplicaTest extends FileTestBase {
 
       println("read an remote file...")
       val bytes2 = timing(true, 10) {
-        IOUtils.toByteArray(client.readFile(id, Duration("4s")))
+        readBytes(id)
       };
 
       Assert.assertArrayEquals(bytes1, bytes2)

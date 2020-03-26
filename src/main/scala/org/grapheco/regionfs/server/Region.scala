@@ -35,8 +35,8 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
 
   val cache: Cache[Long, FileMetadata] = new FixSizedCache[Long, FileMetadata](1024)
 
-  def iterator(): Iterator[FileMetadata] = {
-    (0 to cursor.current.toInt - 1).iterator.map(read(_).get)
+  def entries(): Iterable[FileMetadata] = {
+    (0 to cursor.current.toInt - 1).map(read(_).get)
   }
 
   //local id as offset
@@ -285,24 +285,24 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
 
   def length = fbody.fptr.length()
 
-  def listFiles(): Iterator[(FileId, Long)] = {
-    handleFiles(entry => entry.id -> entry.length)
-  }
-
   //TODO: archive
   def isWritable = length <= conf.globalSetting.regionSizeLimit
 
-  def handleFiles[Y](map: FileEntry => Y): Iterator[Y] = {
-    fmeta.iterator().map { meta =>
-      val fe = new FileEntry() {
+  def listFiles(): Iterable[FileEntry] = {
+    fmeta.entries().map { meta =>
+      new FileEntry() {
         override val id = FileId.make(regionId, meta.localId)
         override val length = meta.length
+        override val region = info
 
-        override def openInputStream() = new ByteBufferInputStream(read(meta.localId).get)
+        override def process[T](f: (InputStream) => T) = {
+          val is = new ByteBufferInputStream(read(meta.localId).get)
+          val t = f(is)
+          is.close()
+          t
+        }
       }
-
-      map(fe)
-    }
+    }.toIterable
   }
 
   def write(buf: ByteBuffer, crc: Long): Long = {
@@ -583,8 +583,8 @@ case class RegionInfo(nodeId: Int, regionId: Long, revision: Long, isPrimary: Bo
 
 trait FileEntry {
   val id: FileId;
-
+  val region: RegionInfo;
   val length: Long;
 
-  def openInputStream(): InputStream;
+  def process[T](f: (InputStream) => T): T;
 }

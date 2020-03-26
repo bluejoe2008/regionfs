@@ -8,7 +8,9 @@ import io.netty.buffer.Unpooled
 import net.neoremind.kraps.RpcConf
 import net.neoremind.kraps.rpc.netty.{HippoEndpointRef, HippoRpcEnv, HippoRpcEnvFactory}
 import net.neoremind.kraps.rpc.{RpcAddress, RpcEnvClientConfig}
+import net.neoremind.kraps.util.ByteBufferInputStream
 import org.grapheco.commons.util.Logging
+import org.grapheco.hippo.util.ByteBufferUtils._
 import org.grapheco.regionfs._
 import org.grapheco.regionfs.server.{FileEntry, RegionInfo}
 import org.grapheco.regionfs.util._
@@ -98,7 +100,7 @@ class FsClient(zks: String) extends Logging {
       })
   }
 
-  def readFile[T](fileId: FileId, rpcTimeout: Duration): InputStream = {
+  def readFile[T](fileId: FileId, consume: (InputStream) => T)(implicit m: Manifest[T]): Future[T] = {
     assertNodesNotEmpty()
 
     val chosenNodeId = if (globalSetting.replicaNum > 1) {
@@ -136,12 +138,16 @@ class FsClient(zks: String) extends Logging {
 
     clientOf(chosenNodeId).readFile(
       fileId,
-      (head: ReadFileResponseHead) => {
+      (head: ReadFileResponseHead, body: ByteBuffer) => {
         if (chosenNodeId == (fileId.regionId >> 16)) {
           cacheAliveRegions(fileId.regionId, head.infos)
         }
-      },
-      rpcTimeout
+
+        val is = new ByteBufferInputStream(body)
+        val t = consume(is)
+        is.close()
+        t
+      }
     )
   }
 
@@ -150,11 +156,11 @@ class FsClient(zks: String) extends Logging {
       cachedRegionMap(regionId) = regions
   }
 
-  def submitJob[X, Y, Z](map: (FileEntry) => X, reduce: (Iterable[X]) => Y, reduceClientSide: (Iterable[Y]) => Z): Future[Z] = {
-    val futures = mapNodeWithAddress.map(x => clientOf(x._1).submitJob(map, reduce))
+  def processFiles[X, Y](map: (Iterable[FileEntry]) => X, reduce: (Iterable[X]) => Y): Future[Y] = {
+    val futures = mapNodeWithAddress.map(x => clientOf(x._1).processFiles(map))
     implicit val ec: ExecutionContext = clientFactory.executionContext
     Future {
-      reduceClientSide(futures.map(Await.result(_, Duration.Inf)))
+      reduce(futures.map(Await.result(_, Duration.Inf)))
     }
   }
 
@@ -267,15 +273,19 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
     }
   }
 
-  def submitJob[X, Y](map: (FileEntry) => X, reduce: (Iterable[X]) => Y): Future[Y] = {
+  def processFiles[T](process: (Iterable[FileEntry]) => T): Future[T] = {
     safeCall {
-      endPointRef.ask[MapReduceTaskResponse[Y]](MapReduceTaskRequest(map, reduce)).map(_.value)
+      endPointRef.ask[ProcessFilesResponse[T]](ProcessFilesRequest(process)).map(_.value)
     }
   }
 
-  def readFile[T](fileId: FileId, consumeHead: (ReadFileResponseHead) => Unit, rpcTimeout: Duration): InputStream = {
+  def readFile[T](fileId: FileId, consume: (ReadFileResponseHead, ByteBuffer) => T)(implicit m: Manifest[T]): Future[T] = {
     safeCall {
-      endPointRef.getInputStream(ReadFileRequest(fileId), consumeHead, rpcTimeout)
+      endPointRef.ask(ReadFileRequest(fileId), (buf: ByteBuffer) => {
+        val head = buf.readObject().asInstanceOf[ReadFileResponseHead]
+        val body = buf.duplicate()
+        consume(head, body)
+      })
     }
   }
 

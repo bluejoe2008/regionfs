@@ -10,6 +10,7 @@ import net.neoremind.kraps.rpc.netty.{HippoRpcEnv, HippoRpcEnvFactory}
 import net.neoremind.kraps.rpc.{RpcAddress, RpcCallContext, RpcEndpoint, RpcEnvServerConfig}
 import org.apache.commons.io.IOUtils
 import org.grapheco.commons.util.{ConfigurationEx, Logging, ProcessUtils}
+import org.grapheco.hippo.util.ByteBufferUtils._
 import org.grapheco.hippo.{ChunkedStream, CompleteStream, HippoRpcHandler, ReceiveContext}
 import org.grapheco.regionfs._
 import org.grapheco.regionfs.client._
@@ -329,13 +330,13 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
     private def receiveAndReplyInternal(ctx: RpcCallContext): PartialFunction[Any, Unit] = {
       //TODO: cancelable task
-      case MapReduceTaskRequest(map, reduce) => {
-        val results = reduce(localRegionManager.regions.values.filter(_.isPrimary).flatMap {
+      case ProcessFilesRequest(process) => {
+        val results = process(localRegionManager.regions.values.filter(_.isPrimary).flatMap {
           region =>
-            region.handleFiles(map).toIterable
-        }.asInstanceOf[Iterable[Nothing]])
+            region.listFiles()
+        })
 
-        ctx.reply(MapReduceTaskResponse(results))
+        ctx.reply(ProcessFilesResponse(results))
       }
 
       case GetRegionOwnerNodesRequest(regionId: Long) =>
@@ -437,25 +438,6 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
     }
 
     private def openCompleteStreamInternal(): PartialFunction[Any, CompleteStream] = {
-      case ReadFileRequest(fileId: FileId) =>
-        val maybeRegion = localRegionManager.get(fileId.regionId)
-
-        if (maybeRegion.isEmpty) {
-          throw new WrongRegionIdException(nodeId, fileId.regionId)
-        }
-
-        val localRegion: Region = maybeRegion.get
-        val maybeBuffer = localRegion.read(fileId.localId)
-        if (maybeBuffer.isEmpty) {
-          throw new FileNotFoundException(nodeId, fileId)
-        }
-
-        val body = Unpooled.wrappedBuffer(maybeBuffer.get.duplicate())
-        val crc32 = CrcUtils.computeCrc32(maybeBuffer.get.duplicate())
-
-        CompleteStream.fromByteBuffer(ReadFileResponseHead(body.readableBytes(), crc32,
-          (Set(localRegion.info) ++ remoteRegionWatcher.getSecondaryRegions(fileId.regionId)).toArray), body)
-
       case GetRegionPatchRequest(regionId: Long, since: Long) =>
         val maybeRegion = localRegionManager.get(regionId)
         if (maybeRegion.isEmpty) {
@@ -475,13 +457,34 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       case ListFileRequest() =>
         ChunkedStream.pooled[ListFileResponseDetail](1024, (pool) => {
           localRegionManager.regions.values.filter(_.isPrimary).foreach { x =>
-            val it = x.listFiles()
+            val it = x.listFiles().map(entry => entry.id -> entry.length)
             it.foreach(x => pool.push(ListFileResponseDetail(x)))
           }
         })
     }
 
     private def receiveWithStreamInternal(extraInput: ByteBuffer, ctx: ReceiveContext): PartialFunction[Any, Unit] = {
+      case ReadFileRequest(fileId: FileId) =>
+        val maybeRegion = localRegionManager.get(fileId.regionId)
+
+        if (maybeRegion.isEmpty) {
+          throw new WrongRegionIdException(nodeId, fileId.regionId)
+        }
+
+        val localRegion: Region = maybeRegion.get
+        val maybeBuffer = localRegion.read(fileId.localId)
+        if (maybeBuffer.isEmpty) {
+          throw new FileNotFoundException(nodeId, fileId)
+        }
+
+        val body = Unpooled.wrappedBuffer(maybeBuffer.get.duplicate())
+        val crc32 = CrcUtils.computeCrc32(maybeBuffer.get.duplicate())
+
+        val buf = Unpooled.buffer()
+        buf.writeObject(ReadFileResponseHead(body.readableBytes(), crc32,
+          (Set(localRegion.info) ++ remoteRegionWatcher.getSecondaryRegions(fileId.regionId)).toArray))
+        buf.writeBytes(body)
+        ctx.replyBuffer(buf)
       case CreateFileRequest(totalLength: Long, crc32: Long) =>
         //primary region
         if (globalSetting.enableCrc && CrcUtils.computeCrc32(extraInput.duplicate()) != crc32) {

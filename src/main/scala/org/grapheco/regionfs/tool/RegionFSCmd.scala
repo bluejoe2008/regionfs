@@ -54,7 +54,9 @@ class ConfigShellCommandExecutor extends ShellCommandExecutor {
   override def run(commandLine: CommandLine): Unit = {
     (commandLine.hasOption("conf"), commandLine.hasOption("zk")) match {
       case (true, _) =>
-        new GlobalSettingWriter().write(new File(commandLine.getOptionValue("conf")))
+        val configFile = new File(commandLine.getOptionValue("conf")).getAbsoluteFile.getCanonicalFile
+        println(s"loading global setting from file `${configFile.getPath}`")
+        new GlobalSettingWriter().write(configFile)
         println("global setting is successfully configured.");
 
       case (_, true) =>
@@ -410,9 +412,9 @@ private class GetFilesShellCommandExecutor extends ShellCommandExecutor {
 
     for (arg <- args) {
       val id = FileId.fromBase64String(arg)
-      val is = admin.readFile(id, Duration("4s"))
-      output.write(arg, id, is)
-      is.close()
+      Await.result(admin.readFile(id, (is) => {
+        output.write(arg, id, is)
+      }), Duration("10s"))
     }
 
     output.done()

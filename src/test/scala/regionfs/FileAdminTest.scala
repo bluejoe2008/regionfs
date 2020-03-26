@@ -3,7 +3,6 @@ package regionfs
 import java.io.File
 
 import net.neoremind.kraps.rpc.RpcAddress
-import org.grapheco.regionfs.server.FileEntry
 import org.junit.{Assert, Before, Test}
 
 import scala.concurrent.Await
@@ -29,16 +28,16 @@ class FileAdminTest extends FileTestBase {
 
   @Test
   def testRunJob(): Unit = {
-    val length1 = Await.result(admin.submitJob((file: FileEntry) => {
-      file.length
-    }, (x: Iterable[Long]) => x.sum, (x: Iterable[Long]) => x.sum), Duration("4s"))
+    val length1 = Await.result(admin.processFiles((files) => {
+      files.map(_.length).sum
+    }, (x: Iterable[Long]) => x.sum), Duration("4s"))
 
     val length2 = admin.listFiles(Duration("4s")).map(_._2).sum
     println(length1, length2)
 
-    val count1 = Await.result(admin.submitJob((file: FileEntry) => {
-      1
-    }, (x: Iterable[Int]) => x.sum, (x: Iterable[Int]) => x.sum), Duration("4s"))
+    val count1 = Await.result(admin.processFiles((files) => {
+      files.size
+    }, (x: Iterable[Int]) => x.sum), Duration("4s"))
 
     val count2 = countFiles()
 

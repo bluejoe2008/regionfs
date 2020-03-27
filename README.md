@@ -29,7 +29,6 @@ NOTE: make sure zookeeper cluster is running, suppose it has connecting string: 
 ```
 zookeeper.address=localhost:2181
 replica.num=1
-blob.crc.enabled=true
 ```
 
 2. write gloal config setting
@@ -91,7 +90,6 @@ key|type|default value|description
 region.min.writable|Int|3|minimized writable region number
 replica.num|Int|1(no duplicates)|replica number of region
 region.size.limit|Long|20* 1024* 1024* 1024(20G)|upper limit of region size
-blob.crc.enabled|Boolean|true|if use checksum of data on transmission
 region.version.check.interval|Long|60000 * 60(1hour)|interval time of region version checking
 consistency.strategy|Enum(`strong`,`eventual`)|strong|consistency strategy
 

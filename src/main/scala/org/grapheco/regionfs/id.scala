@@ -2,7 +2,7 @@ package org.grapheco.regionfs
 
 import java.io.{ByteArrayInputStream, ByteArrayOutputStream, DataInputStream, DataOutputStream}
 
-import org.apache.commons.codec.binary.Base64
+import org.apache.commons.codec.binary.{Base64, Hex}
 
 /**
   * Created by bluejoe on 2019/8/22.
@@ -10,6 +10,7 @@ import org.apache.commons.codec.binary.Base64
 
 object FileId {
   val base64 = new Base64()
+  val hex = new Hex()
 
   def make(regionId: Long, localId: Long): FileId = {
     new FileId(regionId, localId)
@@ -39,5 +40,5 @@ object FileId {
   * localId is an unique id in a region, often be an integer index
   */
 case class FileId(regionId: Long, localId: Long) extends Serializable {
-  def getBase64String() = FileId.toBase64String(this)
+  def toBase64String() = FileId.toBase64String(this)
 }

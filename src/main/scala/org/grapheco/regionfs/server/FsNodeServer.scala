@@ -11,7 +11,7 @@ import net.neoremind.kraps.rpc.{RpcAddress, RpcCallContext, RpcEndpoint, RpcEnvS
 import org.apache.commons.io.IOUtils
 import org.grapheco.commons.util.{ConfigurationEx, Logging, ProcessUtils}
 import org.grapheco.hippo.util.ByteBufferUtils._
-import org.grapheco.hippo.{ChunkedStream, CompleteStream, HippoRpcHandler, ReceiveContext}
+import org.grapheco.hippo.{ChunkedStream, HippoRpcHandler, ReceiveContext}
 import org.grapheco.regionfs._
 import org.grapheco.regionfs.client._
 import org.grapheco.regionfs.util._
@@ -223,6 +223,8 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       with HippoRpcHandler
       with Logging {
 
+    Unpooled.buffer(1024)
+
     private val traffic = new AtomicInteger(0)
 
     //NOTE: register only on started up
@@ -294,14 +296,6 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
     override def onStop(): Unit = {
       logger.info("stop endpoint")
-    }
-
-    override def openCompleteStream(): PartialFunction[Any, CompleteStream] = {
-      case x: Any =>
-        traffic.incrementAndGet()
-        val t = openCompleteStreamInternal.apply(x)
-        traffic.decrementAndGet()
-        t
     }
 
     override def openChunkedStream(): PartialFunction[Any, ChunkedStream] = {
@@ -437,22 +431,6 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         ctx.reply(GreetingResponse(address))
     }
 
-    private def openCompleteStreamInternal(): PartialFunction[Any, CompleteStream] = {
-      case GetRegionPatchRequest(regionId: Long, since: Long) =>
-        val maybeRegion = localRegionManager.get(regionId)
-        if (maybeRegion.isEmpty) {
-          throw new WrongRegionIdException(nodeId, regionId)
-        }
-
-        if (traffic.get() > Constants.MAX_BUSY_TRAFFIC) {
-          CompleteStream.fromByteBuffer(Unpooled.buffer(1024).writeByte(Constants.MARK_GET_REGION_PATCH_SERVER_IS_BUSY))
-        }
-        else {
-          val buf = maybeRegion.get.offerPatch(since)
-          CompleteStream.fromByteBuffer(buf)
-        }
-    }
-
     private def openChunkedStreamInternal(): PartialFunction[Any, ChunkedStream] = {
       case ListFileRequest() =>
         ChunkedStream.pooled[ListFileResponseDetail](1024, (pool) => {
@@ -464,6 +442,19 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
     }
 
     private def receiveWithStreamInternal(extraInput: ByteBuffer, ctx: ReceiveContext): PartialFunction[Any, Unit] = {
+      case GetRegionPatchRequest(regionId: Long, since: Long) =>
+        val maybeRegion = localRegionManager.get(regionId)
+        if (maybeRegion.isEmpty) {
+          throw new WrongRegionIdException(nodeId, regionId)
+        }
+
+        if (traffic.get() > Constants.MAX_BUSY_TRAFFIC) {
+          ctx.replyBuffer(Unpooled.buffer(1024).writeByte(Constants.MARK_GET_REGION_PATCH_SERVER_IS_BUSY))
+        }
+        else {
+          ctx.replyBuffer(maybeRegion.get.offerPatch(since))
+        }
+
       case ReadFileRequest(fileId: FileId) =>
         val maybeRegion = localRegionManager.get(fileId.regionId)
 
@@ -483,11 +474,13 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         val buf = Unpooled.buffer()
         buf.writeObject(ReadFileResponseHead(body.readableBytes(), crc32,
           (Set(localRegion.info) ++ remoteRegionWatcher.getSecondaryRegions(fileId.regionId)).toArray))
+
         buf.writeBytes(body)
         ctx.replyBuffer(buf)
+
       case CreateFileRequest(totalLength: Long, crc32: Long) =>
         //primary region
-        if (globalSetting.enableCrc && CrcUtils.computeCrc32(extraInput.duplicate()) != crc32) {
+        if (CrcUtils.computeCrc32(extraInput.duplicate()) != crc32) {
           throw new ReceivedMismatchedStreamException()
         }
 
@@ -527,7 +520,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         }
 
       case CreateSecondaryFileRequest(regionId: Long, localIdExpected: Long, totalLength: Long, crc32: Long) =>
-        if (globalSetting.enableCrc && CrcUtils.computeCrc32(extraInput.duplicate()) != crc32) {
+        if (CrcUtils.computeCrc32(extraInput.duplicate()) != crc32) {
           throw new ReceivedMismatchedStreamException()
         }
 

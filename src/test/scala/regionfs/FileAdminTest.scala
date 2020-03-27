@@ -27,7 +27,7 @@ class FileAdminTest extends FileTestBase {
   }
 
   @Test
-  def testRunJob(): Unit = {
+  def testProcessFiles(): Unit = {
     val length1 = Await.result(admin.processFiles((files) => {
       files.map(_.length).sum
     }, (x: Iterable[Long]) => x.sum), Duration("4s"))

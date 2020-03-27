@@ -3,6 +3,7 @@ package org.grapheco.regionfs.server
 import java.util.concurrent.atomic.AtomicBoolean
 
 import org.grapheco.commons.util.Logging
+import org.grapheco.hippo.util.ByteBufferInputStream
 import org.grapheco.regionfs.client.FsNodeClient
 import org.grapheco.regionfs.util.{CompositeParsedChildNodeEventHandler, NodeServerInfo, ParsedChildNodeEventHandler}
 import org.grapheco.regionfs.{Constants, GlobalSetting}
@@ -110,15 +111,17 @@ class PrimaryRegionWatcher(conf: GlobalSetting,
                   if (logger.isTraceEnabled())
                     logger.trace(s"[region-${localRegion.regionId}@$nodeId] found new version : $targetRevision@$primaryNodeId>$localRevision@$nodeId")
 
-                  val is = clientOf(primaryNodeId).getPatchInputStream(
-                    localRegion.regionId, localRevision, Duration("10s"))
+                  Await.result(clientOf(primaryNodeId).getPatch(
+                    localRegion.regionId, localRevision, (buf) => {
+                      val is = new ByteBufferInputStream(buf)
+                      localRegion.applyPatch(is, {
+                        val updatedRegion = localRegionManager.update(localRegion)
+                        if (logger.isTraceEnabled())
+                          logger.trace(s"[region-${localRegion.regionId}@$nodeId] updated: $localRevision->${updatedRegion.revision}")
+                      })
 
-                  localRegion.applyPatch(is, {
-                    is.close()
-                    val updatedRegion = localRegionManager.update(localRegion)
-                    if (logger.isTraceEnabled())
-                      logger.trace(s"[region-${localRegion.regionId}@$nodeId] updated: $localRevision->${updatedRegion.revision}")
-                  })
+                      is.close()
+                    }), Duration("10s"))
                 }
               })
             }

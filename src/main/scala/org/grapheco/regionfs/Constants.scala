@@ -31,7 +31,6 @@ object Constants {
   val PARAMETER_KEY_MIN_WRITABLE_REGIONS = "region.min.writable"
   val PARAMETER_KEY_REPLICA_NUM = "replica.num"
   val PARAMETER_KEY_REGION_SIZE_LIMIT = "region.size.limit"
-  val PARAMETER_KEY_BLOB_CRC_ENABLED = "blob.crc.enabled"
   val PARAMETER_KEY_REGION_VERSION_CHECK_INTERVAL = "region.version.check.interval"
   val PARAMETER_KEY_EXECUTOR_THREAD_POOL_SIZE = "executor.thread.pool.size"
   val PARAMETER_KEY_ZOOKEEPER_ADDRESS = "zookeeper.address"

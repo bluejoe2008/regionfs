@@ -225,12 +225,10 @@ class RegionBodyStore(conf: RegionConfig) {
         (offset, length + padding.length)
       }
 
-    if (conf.globalSetting.enableCrc) {
-      val rbuf = read(offset, length)
-      val crc2 = CrcUtils.computeCrc32(rbuf)
-      if (crc != crc2) {
-        throw new WrittenMismatchedStreamException()
-      }
+    val rbuf = read(offset, length)
+    val crc2 = CrcUtils.computeCrc32(rbuf)
+    if (crc != crc2) {
+      throw new WrittenMismatchedStreamException()
     }
 
     (offset, length, written)
@@ -302,18 +300,10 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
           t
         }
       }
-    }.toIterable
+    }
   }
 
-  def write(buf: ByteBuffer, crc: Long): Long = {
-    val crc32 =
-      if (conf.globalSetting.enableCrc) {
-        crc
-      }
-      else {
-        0
-      }
-
+  def write(buf: ByteBuffer, crc32: Long): Long = {
     //TODO: transaction safety assurance
     this.synchronized {
       val (offset: Long, length: Long, actualWritten: Long) =

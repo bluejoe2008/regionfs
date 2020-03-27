@@ -30,7 +30,6 @@ class GlobalSetting(val props: Properties) {
   lazy val minWritableRegions: Int = conf.get(Constants.PARAMETER_KEY_MIN_WRITABLE_REGIONS).withDefault(Constants.DEFAULT_MIN_WRITABLE_REGIONS).asInt
   lazy val replicaNum: Int = conf.get(Constants.PARAMETER_KEY_REPLICA_NUM).withDefault(Constants.DEFAULT_REPLICA_NUM).asInt
   lazy val regionSizeLimit: Long = conf.get(Constants.PARAMETER_KEY_REGION_SIZE_LIMIT).withDefault(Constants.DEFAULT_REGION_SIZE_LIMIT).asLong
-  lazy val enableCrc: Boolean = conf.get(Constants.PARAMETER_KEY_BLOB_CRC_ENABLED).withDefault(true).asBoolean
   lazy val regionVersionCheckInterval: Long = conf.get(Constants.PARAMETER_KEY_REGION_VERSION_CHECK_INTERVAL).withDefault(
     Constants.DEFAULT_REGION_VERSION_CHECK_INTERVAL).asLong
   lazy val executorThreadPoolSize: Int = conf.get(Constants.PARAMETER_KEY_EXECUTOR_THREAD_POOL_SIZE).withDefault(

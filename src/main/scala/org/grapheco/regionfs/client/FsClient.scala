@@ -81,14 +81,7 @@ class FsClient(zks: String) extends Logging {
 
   def writeFile(content: ByteBuffer): Future[FileId] = {
     assertNodesNotEmpty()
-    val crc32 =
-      if (globalSetting.enableCrc) {
-        CrcUtils.computeCrc32(content.duplicate())
-      }
-      else {
-        0
-      }
-
+    val crc32 =        CrcUtils.computeCrc32(content.duplicate())
     val chosenNodeId: Int = ringNodes.take()
     val client = clientOf(chosenNodeId)
     implicit val ec: ExecutionContext = client.executionContext
@@ -284,16 +277,21 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
       endPointRef.ask(ReadFileRequest(fileId), (buf: ByteBuffer) => {
         val head = buf.readObject().asInstanceOf[ReadFileResponseHead]
         val body = buf.duplicate()
+        val crc32 = CrcUtils.computeCrc32(body.duplicate())
+        if (crc32 != head.crc32) {
+          throw new WrongFileStreamException(fileId)
+        }
+
         consume(head, body)
       })
     }
   }
 
-  def getPatchInputStream(regionId: Long, revision: Long, rpcTimeout: Duration): InputStream = {
+  def getPatch[T](regionId: Long, revision: Long, consume: (ByteBuffer) => T)(implicit m: Manifest[T]): Future[T] = {
     safeCall {
-      endPointRef.getInputStream(
-        GetRegionPatchRequest(regionId, revision),
-        rpcTimeout)
+      endPointRef.ask(GetRegionPatchRequest(regionId, revision), (buf: ByteBuffer) => {
+        consume(buf)
+      })
     }
   }
 
@@ -312,6 +310,11 @@ class RegionFsClientException(msg: String, cause: Throwable = null)
 
 class WrongFileIdException(fileId: FileId) extends
   RegionFsClientException(s"wrong fileid: $fileId") {
+
+}
+
+class WrongFileStreamException(fileId: FileId) extends
+  RegionFsClientException(s"wrong stream of file: $fileId") {
 
 }
 

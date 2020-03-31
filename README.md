@@ -128,5 +128,5 @@ more examples, see https://github.com/bluejoe2008/regionfs/blob/master/src/test/
 
 ## dependencies
 
-* hippo-rpc: enhanced RPC framework based on kraps-rpc
+* hippo-rpc: enhanced RPC framework based on kraps-rpc https://github.com/bluejoe2008/hippo-rpc
 * curator: zookeeper client libaray

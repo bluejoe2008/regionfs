@@ -45,7 +45,7 @@ class GlobalSettingWriter {
     val conf = new ConfigurationEx(props)
 
     val zks = conf.get(Constants.PARAMETER_KEY_ZOOKEEPER_ADDRESS).asString
-    val zk = ZooKeeperClient.create(zks)
+    val zk = ZooKeeperClient.createWithoutCheck(zks)
 
     zk.createAbsentNodes()
     zk.saveGlobalSetting(props)

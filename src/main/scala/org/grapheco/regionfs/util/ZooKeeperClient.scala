@@ -9,7 +9,7 @@ import org.apache.curator.framework.recipes.cache.PathChildrenCache.StartMode
 import org.apache.curator.framework.recipes.cache.{ChildData, PathChildrenCache, PathChildrenCacheEvent, PathChildrenCacheListener}
 import org.apache.curator.framework.recipes.locks.InterProcessSemaphoreMutex
 import org.apache.curator.framework.{CuratorFramework, CuratorFrameworkFactory}
-import org.apache.curator.retry.ExponentialBackoffRetry
+import org.apache.curator.retry.RetryNTimes
 import org.apache.zookeeper.CreateMode
 import org.grapheco.commons.util.Logging
 import org.grapheco.regionfs.GlobalSetting
@@ -23,7 +23,15 @@ import scala.collection.mutable.ArrayBuffer
   */
 object ZooKeeperClient extends Logging {
   def create(zks: String, connectionTimeout: Int = 3000, sessionTimeout: Int = 30000): ZooKeeperClient = {
-    val retryPolicy = new ExponentialBackoffRetry(1000, 10)
+    create(zks, true, connectionTimeout, sessionTimeout)
+  }
+
+  def createWithoutCheck(zks: String, connectionTimeout: Int = 3000, sessionTimeout: Int = 30000): ZooKeeperClient = {
+    create(zks, false, connectionTimeout, sessionTimeout)
+  }
+
+  private def create(zks: String, checkInitialized: Boolean, connectionTimeout: Int, sessionTimeout: Int): ZooKeeperClient = {
+    val retryPolicy = new RetryNTimes(10, 1000)
     val curator =
       CuratorFrameworkFactory.builder()
         .connectString(zks)
@@ -35,7 +43,7 @@ object ZooKeeperClient extends Logging {
     curator.start()
 
     //check root ZNode
-    if (curator.checkExists().forPath("/regionfs") == null) {
+    if (checkInitialized && curator.checkExists().forPath("/regionfs") == null) {
       throw new RegionFsNotInitializedException()
     }
 

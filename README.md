@@ -22,6 +22,8 @@ distributed file system for pandadb
 
 NOTE: make sure zookeeper cluster is running, suppose it has connecting string: `localhost:2181,localhost:2182,localhost:2183`
 
+By default, `zookeeper-3.5.x` is recommended. If you are using a lower version of zookeeper, please modify version of  artifact `org.apache.curator.curator-recipes` in `pom.xml` and `mvn clean package` manually.
+
 ## initializing rfs
 
 1. write a configuration file for rfs global settings `./conf/global.conf`

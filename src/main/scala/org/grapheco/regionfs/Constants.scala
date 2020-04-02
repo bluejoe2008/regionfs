@@ -4,6 +4,12 @@ package org.grapheco.regionfs
   * Created by bluejoe on 2020/2/7.
   */
 object Constants {
+  val FILE_STATUS_TO_WRITE = 1
+  val FILE_STATUS_LOCAL_WRITTEN = 2
+  val FILE_STATUS_GLOBAL_WRITTEN = 3
+  val FILE_STATUS_WRITTEN_IN_PLACE = 4
+  val FILE_STATUS_DELETED = 5
+
   val DEFAULT_REGION_SIZE_LIMIT: Long = 1024L * 1024 * 1024 * 20
   val DEFAULT_EXECUTOR_THREAD_POOL_SIZE = 20
   val DEFAULT_SERVER_HOST = "localhost"

@@ -9,7 +9,7 @@ import io.netty.buffer.{ByteBuf, Unpooled}
 import net.neoremind.kraps.util.ByteBufferInputStream
 import org.grapheco.commons.util.Logging
 import org.grapheco.regionfs.client.RegionFsClientException
-import org.grapheco.regionfs.util.{Cache, CrcUtils, FixSizedCache, Ring}
+import org.grapheco.regionfs.util._
 import org.grapheco.regionfs.{Constants, FileId, GlobalSetting}
 
 import scala.collection.mutable
@@ -28,12 +28,47 @@ case class FileMetadata(localId: Long, offset: Long, length: Long, crc32: Long) 
   def tail = offset + length
 }
 
+class RegionLocalIdStore(conf: RegionConfig) extends Logging {
+  val file = new File(conf.regionDir, "id")
+  val idgen = if (file.length() == 0) {
+    new AtomicLong(0)
+  }
+  else {
+    val dis = new DataInputStream(new FileInputStream(file))
+    val current = dis.readLong()
+    dis.close()
+    new AtomicLong(current)
+  }
+
+  def nextId(): Long = {
+    val nid = idgen.incrementAndGet()
+    //TODO: batch generation
+    val dos = new DataOutputStream(new FileOutputStream(file, false))
+    dos.writeLong(nid)
+    dos.close()
+    nid
+  }
+}
+
 //[localId:Long][offset:Long][length:Long][crc32:Long][flag:Long]
 class RegionMetadataStore(conf: RegionConfig) extends Logging {
   lazy val fileMetaFile = new File(conf.regionDir, "meta")
   lazy val fptr = new RandomAccessFile(fileMetaFile, "rw")
 
   val cache: Cache[Long, FileMetadata] = new FixSizedCache[Long, FileMetadata](1024)
+
+  def markStatus(localId: Long, status: Byte): Unit = {
+    val block = new ByteArrayOutputStream()
+    val dos = new DataOutputStream(block)
+    dos.writeLong(localId)
+    dos.writeByte(status)
+
+    fptr.synchronized {
+      //extends if needed
+      fptr.seek(Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * localId)
+      fptr.write(block.toByteArray)
+    }
+  }
 
   def entries(): Iterable[FileMetadata] = {
     (0 to cursor.current.toInt - 1).map(read(_).get)
@@ -275,6 +310,8 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
   private lazy val fbody = new RegionBodyStore(conf)
   private lazy val fmeta = new RegionMetadataStore(conf)
   private lazy val ftrash = new RegionTrashStore(conf)
+  private lazy val fids = new RegionLocalIdStore(conf)
+
   val cursor: Cursor = fmeta.cursor
 
   def revision = cursor.current
@@ -300,6 +337,34 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
           t
         }
       }
+    }
+  }
+
+  def createLocalId(): Rollbackable[Long] = {
+    Rollbackable.success(fids.nextId()) {}
+  }
+
+  def markStatus(localId: Long, flag: Byte): Rollbackable[Boolean] = {
+    fmeta.markStatus(localId, flag)
+    Rollbackable.success(true) {}
+  }
+
+  def saveTempFile(localId: Long, buf: ByteBuffer, crc32: Long): Rollbackable[Boolean] = {
+    val file = new File(conf.regionDir, s"$localId");
+    val rbuf = buf.duplicate()
+    val fptr = new RandomAccessFile(file, "rw")
+    fptr.getChannel.write(buf.duplicate())
+
+    fptr.getChannel.map(FileChannel.MapMode.READ_ONLY, 0, fptr.length())
+    fptr.close()
+
+    val crc2 = CrcUtils.computeCrc32(rbuf)
+    if (crc32 != crc2) {
+      throw new WrittenMismatchedStreamException()
+    }
+
+    Rollbackable.success(true) {
+      file.delete()
     }
   }
 

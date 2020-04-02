@@ -4,7 +4,7 @@ import java.io.{File, FileInputStream}
 import java.util.Properties
 
 import org.grapheco.commons.util.ConfigUtils._
-import org.grapheco.commons.util.{Configuration, ConfigurationEx}
+import org.grapheco.commons.util.{Configuration, ConfigurationEx, Logging}
 import org.grapheco.regionfs.util.ZooKeeperClient
 
 import scala.collection.JavaConversions
@@ -40,11 +40,15 @@ object GlobalSetting {
   def empty = new GlobalSetting(new Properties())
 }
 
-class GlobalSettingWriter {
+class GlobalSettingWriter extends Logging {
   def write(props: Properties): Unit = {
     val conf = new ConfigurationEx(props)
 
     val zks = conf.get(Constants.PARAMETER_KEY_ZOOKEEPER_ADDRESS).asString
+    if (logger.isTraceEnabled) {
+      logger.trace(s"connecting to `$zks`...")
+    }
+
     val zk = ZooKeeperClient.createWithoutCheck(zks)
 
     zk.createAbsentNodes()

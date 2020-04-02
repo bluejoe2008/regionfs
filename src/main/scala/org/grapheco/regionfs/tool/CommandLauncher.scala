@@ -7,7 +7,7 @@ import scala.collection.mutable.ArrayBuffer
 /**
   * Created by bluejoe on 2020/3/25.
   */
-trait CommandsLauncher {
+trait CommandLauncher {
   val commands: Array[(String, String, ShellCommandExecutor)]
   val launcherName: String
 

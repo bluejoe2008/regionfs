@@ -18,7 +18,7 @@ import scala.concurrent.duration.Duration
 /**
   * Created by bluejoe on 2020/2/25.
   */
-object RegionFsCmd extends CommandsLauncher {
+object RegionFsCmd extends CommandLauncher {
   override val commands = Array[(String, String, ShellCommandExecutor)](
     ("help", "print usage information", null),
     ("stat", "report statistics of all nodes (or a given node)", new StatShellCommandExecutor()),

@@ -15,23 +15,23 @@ class TxTest {
     //jason pay money to bluejoe
     val tx = Transactional[Int, Int] {
       //step1
-      (i: Int) => {
+      (money: Int) => {
         val ov = jason
-        if (jason < i) {
+        if (jason < money) {
           Rollbackable.failure(new Exception("jason has no sufficient money!"))
         }
         else {
-          jason -= i
-          Rollbackable.success(i) {
+          jason -= money
+          Rollbackable.success(money) {
             jason = ov
           }
         }
       }
     }.then[Boolean] {
       //step2
-      (i: Int) => {
+      (money: Int) => {
         val ov = bluejoe
-        bluejoe += i
+        bluejoe += money
         if (bluejoe > 300) {
           bluejoe = ov
           Rollbackable.failure(new Exception("too much money for bluejoe!"))
@@ -49,10 +49,10 @@ class TxTest {
     Assert.assertEquals(150, bluejoe)
     Assert.assertEquals(200, jason)
 
-    //fails on 1-st step
     bluejoe = 100
     jason = 250
 
+    //fails on 1-st step
     try {
       val i2 = Transactional.run(tx, 300)
       Assert.assertTrue(false)

@@ -24,7 +24,7 @@ case class RegionConfig(regionDir: File, globalSetting: GlobalSetting) {
 /**
   * metadata of a region
   */
-case class FileMetadata(localId: Long, offset: Long, length: Long, crc32: Long) {
+case class FileMetadata(localId: Long, status: Byte, offset: Long, length: Long, crc32: Long) {
   def tail = offset + length
 }
 
@@ -39,6 +39,8 @@ class RegionLocalIdStore(conf: RegionConfig) extends Logging {
     dis.close()
     new AtomicLong(current)
   }
+
+  def current(): Long = idgen.get()
 
   def nextId(): Long = {
     val nid = idgen.incrementAndGet()
@@ -71,14 +73,13 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
   }
 
   def entries(): Iterable[FileMetadata] = {
-    (0 to cursor.current.toInt - 1).map(read(_).get)
+    (0 to count().toInt - 1).map(read(_).get)
   }
 
-  //local id as offset
   val block = new Array[Byte](Constants.METADATA_ENTRY_LENGTH_WITH_PADDING)
 
   def read(localId: Long): Option[FileMetadata] = {
-    if (localId >= cursor.current) {
+    if (localId >= count()) {
       None
     }
     else {
@@ -89,7 +90,7 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
         }
 
         val dis = new DataInputStream(new ByteArrayInputStream(block))
-        val info = FileMetadata(dis.readLong(), dis.readLong(), dis.readLong(), dis.readLong())
+        val info = FileMetadata(dis.readLong(), dis.readByte(), dis.readLong(), dis.readLong(), dis.readLong())
         dis.close()
 
         cache.put(localId, info)
@@ -102,10 +103,10 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
     val block = new ByteArrayOutputStream()
     val dos = new DataOutputStream(block)
     dos.writeLong(localId)
+    dos.writeByte(0)
     dos.writeLong(offset)
     dos.writeLong(length)
     dos.writeLong(crc32)
-    dos.writeByte(0) //flag,1=deleted
     //padding
     dos.write(new Array[Byte](Constants.METADATA_ENTRY_LENGTH_WITH_PADDING - dos.size()))
 
@@ -115,7 +116,7 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
     }
 
     dos.close()
-    cache.put(localId, FileMetadata(localId, offset, length, crc32))
+    cache.put(localId, FileMetadata(localId, 0, offset, length, crc32))
   }
 
   //since=0,tail=1
@@ -123,7 +124,7 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
     //since=10, tail=13
     val sinceMetaFile = Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * sinceRevision
     var bodyPatchSize = 0L
-    val tail = cursor.current
+    val tail = count()
     assert(sinceRevision < tail)
 
     val sinceBodyFile = read(sinceRevision).get.offset
@@ -160,23 +161,7 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
     fptr.close()
   }
 
-  val cursor = new Cursor(new AtomicLong(fileMetaFile.length() / Constants.METADATA_ENTRY_LENGTH_WITH_PADDING))
-}
-
-class Cursor(position: AtomicLong) {
-  //localId starts with 0
-  def offerNextId(consume: (Long) => Unit): Long = {
-    position.synchronized {
-      val id = position.get()
-      consume(id)
-      position.incrementAndGet()
-    }
-  }
-
-  def current = position.get()
-
-  def close(): Unit = {
-  }
+  def count() = fptr.length() / Constants.METADATA_ENTRY_LENGTH_WITH_PADDING
 }
 
 class RegionTrashStore(conf: RegionConfig) {
@@ -214,7 +199,7 @@ class RegionTrashStore(conf: RegionConfig) {
   lazy val cache = new Cache()
   lazy val appender = new DataOutputStream(new FileOutputStream(fileBody, true))
 
-  def count = cache._ids.size
+  def count() = cache._ids.size
 
   def append(localId: Long): Unit = {
     if (cache.append(localId)) {
@@ -312,13 +297,11 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
   private lazy val ftrash = new RegionTrashStore(conf)
   private lazy val fids = new RegionLocalIdStore(conf)
 
-  val cursor: Cursor = fmeta.cursor
+  def revision() = fids.current
 
-  def revision = cursor.current
+  def fileCount() = fmeta.count() - ftrash.count()
 
-  def fileCount = cursor.current - ftrash.count
-
-  def length = fbody.fptr.length()
+  def length() = fbody.fptr.length()
 
   //TODO: archive
   def isWritable = length <= conf.globalSetting.regionSizeLimit
@@ -344,13 +327,23 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
     Rollbackable.success(fids.nextId()) {}
   }
 
-  def markStatus(localId: Long, flag: Byte): Rollbackable = {
+  private def _markStatus(localId: Long, flag: Byte): Rollbackable = {
     fmeta.markStatus(localId, flag)
     Rollbackable.success(localId) {}
   }
 
+  def markGlobalWriten(localId: Long): Rollbackable = {
+    _markStatus(localId, Constants.FILE_STATUS_GLOBAL_WRITTEN)
+  }
+
+  def markLocalWriten(localId: Long): Rollbackable = {
+    _markStatus(localId, Constants.FILE_STATUS_LOCAL_WRITTEN)
+  }
+
   def saveLocalFile(localId: Long, buf: ByteBuffer, crc32: Long): Rollbackable = {
     //save temp file
+    _markStatus(localId, Constants.FILE_STATUS_TO_WRITE)
+
     val file = new File(conf.regionDir, s"$localId");
     val rbuf = buf.duplicate()
     val fptr = new RandomAccessFile(file, "rw")
@@ -370,32 +363,10 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
     }
   }
 
-  def write(buf: ByteBuffer, crc32: Long): Long = {
-    //TODO: transaction safety assurance
-    this.synchronized {
-      val (offset: Long, length: Long, actualWritten: Long) =
-        fbody.write(buf, crc32)
-
-      //get local id
-      var localId = -1L
-      cursor.offerNextId((id: Long) => {
-        localId = id
-        fmeta.write(id, offset, length, crc32)
-      })
-
-      listener.handleRegionEvent(new WriteRegionEvent(this))
-      if (logger.isTraceEnabled())
-        logger.trace(s"[region-$regionId@$nodeId] written: localId=$localId, length=$length, actual=$actualWritten, revision=$revision")
-
-      localId
-    }
-  }
-
   def close(): Unit = {
     fbody.close()
     fmeta.close()
     ftrash.close()
-    cursor.close()
   }
 
   def read(localId: Long): Option[ByteBuffer] = {
@@ -577,6 +548,7 @@ class LocalRegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetti
 
       new File(regionDir, "body").createNewFile()
       new File(regionDir, "meta").createNewFile()
+      new File(regionDir, "id").createNewFile()
       new File(regionDir, "trash").createNewFile()
 
       if (logger.isTraceEnabled())

@@ -7,7 +7,7 @@ import org.apache.commons.io.IOUtils
 import org.grapheco.commons.util.Profiler._
 import org.grapheco.regionfs.GlobalSetting
 import org.grapheco.regionfs.server.LocalRegionManager
-import org.grapheco.regionfs.util.CrcUtils
+import org.grapheco.regionfs.util.{CrcUtils, Rollbackable, Transactional, TransactionalContext}
 import org.junit.{Assert, Test}
 
 /**
@@ -31,7 +31,15 @@ class LocalRegionFileIOTest extends FileTestBase {
 
     val id = timing(true, 10) {
       val clone = buf.duplicate()
-      region.write(clone, CrcUtils.computeCrc32(buf.duplicate()))
+      val tx = Transactional {
+        case i =>
+          Rollbackable.success(region.createLocalId()) {}
+      } --> {
+        case localId: Long =>
+          region.saveLocalFile(localId, clone, CrcUtils.computeCrc32(buf.duplicate()))
+      }
+
+      tx.perform(1, TransactionalContext.DEFAULT)
     }
 
     val bytes2 = timing(true, 10) {

@@ -1,31 +1,73 @@
 package org.grapheco.regionfs.util
 
-import java.util.concurrent.atomic.AtomicLong
-
 /**
   * Created by bluejoe on 2020/4/2.
   */
 object Transactional {
-  val idgen = new AtomicLong(0)
+  def apply(f: PartialFunction[Any, Rollbackable]) = new SingleTransactional(f)
+}
 
-  def apply(f: PartialFunction[Any, Rollbackable]) = new Transactional {
-    def perform(x: Any, ctx: TransactionalContext): Rollbackable = f(x)
-  }
+trait Transactional {
+  final def perform[T](x: Any, ctx: TransactionalContext): T = ctx.runWithRetry(this, x)
 
-  def run[T](tx: Transactional, x: Any, retryStrategy: RetryStrategy = RetryStrategy.RUN_ONCE): T = {
-    val ctx = new TransactionalContext(idgen.incrementAndGet(), retryStrategy)
-    val r = ctx.runWithRetry(tx.perform(_, ctx), x)
-    r match {
+  def -->(f2: PartialFunction[Any, Rollbackable]): Transactional = andThen(f2)
+
+  def andThen(f2: PartialFunction[Any, Rollbackable]): Transactional = new CompoundTransactional(this, f2)
+}
+
+case class SingleTransactional(f: (Any) => Rollbackable) extends Transactional {
+
+}
+
+case class CompoundTransactional(predecessor: Transactional, f2: (Any) => Rollbackable) extends Transactional {
+
+}
+
+trait RetryStrategy {
+  def runWithRetry(f: (Any) => Rollbackable, x: Any): Rollbackable
+}
+
+object TransactionalContext {
+  val DEFAULT: TransactionalContext = create(RetryStrategy.RUN_ONCE)
+
+  def create(retryStrategy: RetryStrategy): TransactionalContext = new TransactionalContext(retryStrategy)
+}
+
+class TransactionalContext(retryStrategy: RetryStrategy) {
+  def runWithRetry[T](tx: Transactional, x: Any): T = {
+    _runWithRetry(tx, x) match {
       case Success(result, _) =>
         result.asInstanceOf[T]
       case Failure(e) =>
         throw new TransactionFailedException(e)
     }
   }
-}
 
-private class TransactionalContext(transactionId: Long, retryStrategy: RetryStrategy) {
-  def runWithRetry(f: (Any) => Rollbackable, x: Any): Rollbackable = retryStrategy.runWithRetry(f, x)
+  private def _runWithRetry(f: (Any) => Rollbackable, x: Any): Rollbackable = retryStrategy.runWithRetry(f, x)
+
+  private def _runWithRetry(tx: Transactional, x: Any): Rollbackable = tx match {
+    case SingleTransactional(f) =>
+      _runWithRetry(f, x)
+
+    case CompoundTransactional(predecessor, f2) =>
+      val r1 = _runWithRetry(predecessor, x)
+      r1 match {
+        case Success(y: Any, rollback) =>
+          val r2 = _runWithRetry(f2, y)
+          r2 match {
+            case Success(z: Any, rollback2) =>
+              Rollbackable.success(z) {
+                rollback()
+                rollback2()
+              }
+            case Failure(e) =>
+              rollback()
+              Rollbackable.failure(e)
+          }
+        case Failure(e) =>
+          Rollbackable.failure(e)
+      }
+  }
 }
 
 object RetryStrategy {
@@ -55,39 +97,6 @@ object RetryStrategy {
         r = f(x)
       } while (r.isInstanceOf[Failure] && System.currentTimeMillis() < timeout)
       r
-    }
-  }
-}
-
-trait RetryStrategy {
-  def runWithRetry(f: (Any) => Rollbackable, x: Any): Rollbackable
-}
-
-trait Transactional {
-  def perform(x: Any, ctx: TransactionalContext): Rollbackable
-
-  def then(f: PartialFunction[Any, Rollbackable]): Transactional = {
-    val predecessor = this
-    new Transactional {
-      def perform(x: Any, ctx: TransactionalContext): Rollbackable = {
-        val r1 = ctx.runWithRetry(predecessor.perform(_, ctx), x)
-        r1 match {
-          case Success(y: Any, rollback) =>
-            val r2 = ctx.runWithRetry(f, y)
-            r2 match {
-              case Success(z: Any, rollback2) =>
-                Rollbackable.success(z) {
-                  rollback()
-                  rollback2()
-                }
-              case Failure(e) =>
-                rollback()
-                Rollbackable.failure(e)
-            }
-          case Failure(e) =>
-            Rollbackable.failure(e)
-        }
-      }
     }
   }
 }

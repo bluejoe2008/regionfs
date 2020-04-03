@@ -340,16 +340,17 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
     }
   }
 
-  def createLocalId(): Rollbackable[Long] = {
+  def createLocalId(): Rollbackable = {
     Rollbackable.success(fids.nextId()) {}
   }
 
-  def markStatus(localId: Long, flag: Byte): Rollbackable[Boolean] = {
+  def markStatus(localId: Long, flag: Byte): Rollbackable = {
     fmeta.markStatus(localId, flag)
-    Rollbackable.success(true) {}
+    Rollbackable.success(localId) {}
   }
 
-  def saveTempFile(localId: Long, buf: ByteBuffer, crc32: Long): Rollbackable[Boolean] = {
+  def saveLocalFile(localId: Long, buf: ByteBuffer, crc32: Long): Rollbackable = {
+    //save temp file
     val file = new File(conf.regionDir, s"$localId");
     val rbuf = buf.duplicate()
     val fptr = new RandomAccessFile(file, "rw")
@@ -360,11 +361,12 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
 
     val crc2 = CrcUtils.computeCrc32(rbuf)
     if (crc32 != crc2) {
-      throw new WrittenMismatchedStreamException()
+      Rollbackable.failure(new WrittenMismatchedStreamException())
     }
-
-    Rollbackable.success(true) {
-      file.delete()
+    else {
+      Rollbackable.success(localId) {
+        file.delete()
+      }
     }
   }
 

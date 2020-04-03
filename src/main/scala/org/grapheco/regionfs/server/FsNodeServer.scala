@@ -17,8 +17,8 @@ import org.grapheco.regionfs.client._
 import org.grapheco.regionfs.util._
 
 import scala.collection.mutable
-import scala.concurrent.Await
 import scala.concurrent.duration.Duration
+import scala.concurrent.{Await, Future}
 
 /**
   * Created by bluejoe on 2019/8/22.
@@ -497,6 +497,19 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             globalSetting.consistencyStrategy == Constants.CONSISTENCY_STRATEGY_STRONG) {
 
             //create secondary files
+            val tx = Transactional {
+              case _ =>
+                localRegion.createLocalId()
+            }.then {
+              case localId: Long =>
+                Rollbackable.success(localId -> neighbourRegions.map(x =>
+                  clientOf(x.nodeId).createSecondaryFile(regionId, localId, totalLength, crc32,
+                    extraInput.duplicate()))) {}
+            }.then {
+              case (localId: Long, futures: Array[Future[CreateSecondaryFileResponse]]) =>
+                localRegion.saveLocalFile(localId, extraInput.duplicate(), crc32)
+            }
+
             val futures =
               neighbourRegions.map(x => clientOf(x.nodeId).createSecondaryFile(regionId, maybeLocalId, totalLength, crc32,
                 extraInput.duplicate()))

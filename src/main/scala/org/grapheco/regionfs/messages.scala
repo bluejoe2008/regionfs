@@ -47,10 +47,6 @@ case class ListFileResponseDetail(result: (FileId, Long)) {
 
 }
 
-case class CreateSecondaryFileRequest(regionId: Long, localId: Long, totalLength: Long, crc32: Long) {
-
-}
-
 case class CreateFileRequest(totalLength: Long, crc32: Long) {
 
 }
@@ -59,7 +55,19 @@ case class CreateFileResponse(fileId: FileId, infos: Array[RegionInfo]) {
 
 }
 
-case class CreateSecondaryFileResponse(fileId: FileId, info: RegionInfo) {
+case class CreateSecondaryFileRequest(regionId: Long, localId: Long, totalLength: Long, crc32: Long) {
+
+}
+
+case class CreateSecondaryFileResponse(regionId: Long, localId: Long) {
+
+}
+
+case class MarkSecondaryFileWrittenRequest(regionId: Long, localId: Long) {
+
+}
+
+case class MarkSecondaryFileWrittenResponse(regionId: Long, localId: Long, info: RegionInfo) {
 
 }
 

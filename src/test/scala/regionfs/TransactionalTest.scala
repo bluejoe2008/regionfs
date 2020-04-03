@@ -1,6 +1,6 @@
 package regionfs
 
-import org.grapheco.regionfs.util.{RetryStrategy, Rollbackable, TransactionFailedException, Transactional}
+import org.grapheco.regionfs.util._
 import org.junit.{Assert, Before, Test}
 
 /**
@@ -43,7 +43,7 @@ class TransactionalTest {
       }
   }
 
-  val tx = Transactional(step1).then(step2)
+  val tx = Transactional(step1) --> (step2)
 
   @Before
   def reset(): Unit = {
@@ -53,7 +53,7 @@ class TransactionalTest {
 
   @Test
   def testNormal(): Unit = {
-    val i: Boolean = Transactional.run(tx, 50)
+    val i: Any = tx.perform(50, TransactionalContext.DEFAULT)
     Assert.assertEquals(true, i)
     Assert.assertEquals(150, bluejoe)
     Assert.assertEquals(200, jason)
@@ -63,7 +63,7 @@ class TransactionalTest {
   def testStep1Failed(): Unit = {
     //fails on 1-st step
     try {
-      Transactional.run(tx, 300)
+      tx.perform(300, TransactionalContext.DEFAULT)
       Assert.assertTrue(false)
     }
     catch {
@@ -82,7 +82,7 @@ class TransactionalTest {
   def testStep2Failed(): Unit = {
     //fails on 2-st step
     try {
-      Transactional.run(tx, 220)
+      tx.perform(220, TransactionalContext.DEFAULT)
       Assert.assertTrue(false)
     }
     catch {
@@ -101,7 +101,7 @@ class TransactionalTest {
   def testRetry(): Unit = {
     var counter = 0
     //fails on step3
-    val tx2 = tx.then {
+    val tx2 = tx --> {
       case x: Boolean => {
         counter += 1
         println(s"run step3...")
@@ -114,17 +114,18 @@ class TransactionalTest {
     }
 
     try {
-      Transactional.run(tx2, 50, RetryStrategy.RUN_ONCE)
+      tx2.perform(50, TransactionalContext.create(RetryStrategy.RUN_ONCE))
       Assert.assertTrue(false)
     }
     catch {
       case e: TransactionFailedException =>
         Assert.assertTrue(true)
       case e =>
+        e.printStackTrace()
         Assert.assertTrue(false)
     }
 
-    val r2: Any = Transactional.run(tx2, 50, RetryStrategy.FOR_TIMES(5))
+    val r2: Any = tx2.perform(50, TransactionalContext.create(RetryStrategy.FOR_TIMES(5)))
     Assert.assertEquals("OK", r2)
     Assert.assertEquals(counter, 5)
   }
@@ -143,10 +144,10 @@ class TransactionalTest {
           Rollbackable.success(m) {
           }
       }
-    }.then(step1).then(step2)
+    } --> (step1) --> (step2)
 
     try {
-      Transactional.run(tx2, 50, RetryStrategy.RUN_ONCE)
+      tx2.perform(50, TransactionalContext.create(RetryStrategy.RUN_ONCE))
       Assert.assertTrue(false)
     }
     catch {
@@ -156,7 +157,7 @@ class TransactionalTest {
         Assert.assertTrue(false)
     }
 
-    val r2: Any = Transactional.run(tx2, 50, RetryStrategy.FOR_TIMES(5))
+    val r2: Any = tx2.perform(50, TransactionalContext.create(RetryStrategy.FOR_TIMES(5)))
     Assert.assertEquals(true, r2)
     Assert.assertEquals(counter, 5)
   }
@@ -165,7 +166,7 @@ class TransactionalTest {
   def testRetry3(): Unit = {
     var counter = 0
     //fails on step1.5
-    val tx2 = Transactional(step1).then {
+    val tx2 = Transactional(step1).--> {
       case m: Int => {
         counter += 1
         println(s"run step1.5...")
@@ -175,10 +176,10 @@ class TransactionalTest {
           Rollbackable.success(m) {
           }
       }
-    }.then(step2)
+    }.-->(step2)
 
     try {
-      Transactional.run(tx2, 50, RetryStrategy.RUN_ONCE)
+      tx2.perform(50, TransactionalContext.DEFAULT)
       Assert.assertTrue(false)
     }
     catch {
@@ -188,7 +189,7 @@ class TransactionalTest {
         Assert.assertTrue(false)
     }
 
-    val r2: Any = Transactional.run(tx2, 50, RetryStrategy.FOR_TIMES(5))
+    val r2: Any = tx2.perform(50, TransactionalContext.create(RetryStrategy.FOR_TIMES(5)))
     Assert.assertEquals(true, r2)
     Assert.assertEquals(counter, 5)
   }

@@ -81,7 +81,7 @@ class FsClient(zks: String) extends Logging {
 
   def writeFile(content: ByteBuffer): Future[FileId] = {
     assertNodesNotEmpty()
-    val crc32 =        CrcUtils.computeCrc32(content.duplicate())
+    val crc32 = CrcUtils.computeCrc32(content.duplicate())
     val chosenNodeId: Int = ringNodes.take()
     val client = clientOf(chosenNodeId)
     implicit val ec: ExecutionContext = client.executionContext
@@ -257,6 +257,15 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
       endPointRef.askWithStream[CreateSecondaryFileResponse](
         CreateSecondaryFileRequest(regionId, maybeLocalId, totalLength, crc32),
         Unpooled.wrappedBuffer(content))
+    }
+  }
+
+  def markSecondaryFileWritten(
+                                regionId: Long,
+                                localId: Long): Future[MarkSecondaryFileWrittenResponse] = {
+    safeCall {
+      endPointRef.askWithStream[MarkSecondaryFileWrittenResponse](
+        MarkSecondaryFileWrittenRequest(regionId, localId))
     }
   }
 

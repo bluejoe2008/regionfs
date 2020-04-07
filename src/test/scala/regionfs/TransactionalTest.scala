@@ -43,7 +43,7 @@ class TransactionalTest {
       }
   }
 
-  val tx = Transactional(step1) --> (step2)
+  val tx = Transactional(step1) & (step2)
 
   @Before
   def reset(): Unit = {
@@ -101,7 +101,7 @@ class TransactionalTest {
   def testRetry(): Unit = {
     var counter = 0
     //fails on step3
-    val tx2 = tx --> {
+    val tx2 = tx & {
       case x: Boolean => {
         counter += 1
         println(s"run step3...")
@@ -144,7 +144,7 @@ class TransactionalTest {
           Rollbackable.success(m) {
           }
       }
-    } --> (step1) --> (step2)
+    } & (step1) & (step2)
 
     try {
       tx2.perform(50, TransactionalContext.create(RetryStrategy.RUN_ONCE))
@@ -166,7 +166,7 @@ class TransactionalTest {
   def testRetry3(): Unit = {
     var counter = 0
     //fails on step1.5
-    val tx2 = Transactional(step1).--> {
+    val tx2 = Transactional(step1).& {
       case m: Int => {
         counter += 1
         println(s"run step1.5...")
@@ -176,7 +176,7 @@ class TransactionalTest {
           Rollbackable.success(m) {
           }
       }
-    }.-->(step2)
+    }.&(step2)
 
     try {
       tx2.perform(50, TransactionalContext.DEFAULT)

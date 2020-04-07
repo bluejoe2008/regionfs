@@ -343,7 +343,7 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
       case GetNodeStatRequest() =>
         val nodeStat = NodeStat(nodeId, address,
           localRegionManager.regions.values.filter(_.isPrimary).map { region =>
-            RegionStat(region.regionId, region.fileCount, region.length)
+            RegionStat(region.regionId, region.fileCount, region.bodyLength)
           }.toList)
 
         ctx.reply(GetNodeStatResponse(nodeStat))
@@ -487,7 +487,6 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         val (localRegion: Region, neighbourRegions: Array[RegionInfo]) = chooseRegionForWrite()
         val regionId = localRegion.regionId
 
-        val maybeLocalId = localRegion.revision
         val mutex = zookeeper.createRegionWriteLock(regionId)
         mutex.acquire()
 
@@ -500,33 +499,41 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             val tx = Transactional {
               case _ =>
                 localRegion.createLocalId()
-            } --> {
+            } & {
               case localId: Long =>
                 Rollbackable.success(localId -> neighbourRegions.map(x =>
                   clientOf(x.nodeId).createSecondaryFile(regionId, localId, totalLength, crc32,
                     extraInput.duplicate()))) {}
-            } --> {
+            } & {
               case (localId: Long, futures: Array[Future[CreateSecondaryFileResponse]]) =>
-                localRegion.saveLocalFile(localId, extraInput.duplicate(), crc32)
-                //TODO: lose rollback()
-                Rollbackable.success(localId -> futures) {}
-            } --> {
+                localRegion.saveLocalFile(localId, extraInput.duplicate(), crc32) map {
+                  case _ =>
+                    Rollbackable.success(localId -> futures) {}
+                }
+            } & {
               case (localId: Long, futures: Array[Future[CreateSecondaryFileResponse]]) =>
                 futures.foreach(Await.result(_, Duration.Inf))
-                localRegion.markLocalWriten(localId)
-                Rollbackable.success(localId) {}
-            } --> {
+                localRegion.markLocalWriten(localId).map {
+                  case _ =>
+                    Rollbackable.success(localId) {}
+                }
+            } & {
               case (localId: Long) =>
                 localRegion.markLocalWriten(localId)
-            } --> {
+            } & {
               case (localId: Long) =>
                 val futures =
-                  neighbourRegions.map(x => clientOf(x.nodeId).markSecondaryFileWritten(regionId, localId))
+                  neighbourRegions.map(x => clientOf(x.nodeId).markSecondaryFileWritten(regionId, localId, totalLength))
                 val neighbourResults = futures.map(Await.result(_, Duration.Inf)).map(x => x.info)
+
+                localRegion.markGlobalWriten(localId, totalLength)
                 remoteRegionWatcher.cacheRemoteSeconaryRegions(neighbourResults)
-                ctx.reply(CreateFileResponse(FileId.make(regionId, localId),
-                  (Set(localRegion.info) ++ neighbourResults).toArray))
-                Rollbackable.success(localId) {}
+
+                val fid = FileId.make(regionId, localId)
+                ctx.reply(CreateFileResponse(fid, (Set(localRegion.info) ++ neighbourResults).toArray))
+
+                Rollbackable.success(fid) {
+                }
             }
 
             tx.perform(1, TransactionalContext.DEFAULT)
@@ -535,13 +542,18 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
             val tx = Transactional {
               case _ =>
                 localRegion.createLocalId()
-            } --> {
+            } & {
               case localId: Long =>
                 localRegion.saveLocalFile(localId, extraInput.duplicate(), crc32)
-            } --> {
+            } & {
+              case (localId: Long) =>
+                localRegion.markGlobalWriten(localId, totalLength)
+            } & {
               case localId: Long =>
-                ctx.reply(CreateFileResponse(FileId.make(regionId, localId), Array(localRegion.info)))
-                Rollbackable.success(true) {}
+                val fid = FileId.make(regionId, localId)
+
+                ctx.reply(CreateFileResponse(fid, Array(localRegion.info)))
+                Rollbackable.success(fid) {}
             }
 
             tx.perform(1, TransactionalContext.DEFAULT)
@@ -554,6 +566,8 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
         }
 
       case CreateSecondaryFileRequest(regionId: Long, localId: Long, totalLength: Long, crc32: Long) =>
+        assert(totalLength >= 0)
+
         if (CrcUtils.computeCrc32(extraInput.duplicate()) != crc32) {
           throw new ReceivedMismatchedStreamException()
         }
@@ -564,9 +578,10 @@ class FsNodeServer(zks: String, nodeId: Int, storeDir: File, host: String, port:
 
         ctx.reply(CreateSecondaryFileResponse(regionId, localId))
 
-      case MarkSecondaryFileWrittenRequest(regionId: Long, localId: Long) =>
+      case MarkSecondaryFileWrittenRequest(regionId: Long, localId: Long, totalLength: Long) =>
+        assert(totalLength >= 0)
         val region = localRegionManager.get(regionId).get
-        region.markGlobalWriten(localId)
+        region.markGlobalWriten(localId, totalLength)
 
         ctx.reply(MarkSecondaryFileWrittenResponse(regionId, localId, region.info))
     }

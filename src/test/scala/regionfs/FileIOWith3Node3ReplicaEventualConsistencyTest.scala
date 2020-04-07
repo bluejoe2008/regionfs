@@ -43,6 +43,9 @@ class FileIOWith3Node3ReplicaEventualConsistencyTest extends FileIOWith1Node1Rep
         Assert.assertEquals(1, region.fileCount);
         Assert.assertEquals(1, region.revision);
         Assert.assertEquals(true, region.isPrimary);
+
+        Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(new File(s"./testdata/inputs/999"))),
+          IOUtils.toByteArray(new ByteBufferInputStream(region.read(fid1.localId).get)))
     }
 
     //regions on node-2,3 have not be synced
@@ -52,7 +55,7 @@ class FileIOWith3Node3ReplicaEventualConsistencyTest extends FileIOWith1Node1Rep
         Assert.assertEquals(0, region.fileCount);
         Assert.assertEquals(0, region.revision);
         Assert.assertEquals(false, region.isPrimary);
-    }
+   }
 
     assertRegion(3, fid1.regionId) {
       (region) =>

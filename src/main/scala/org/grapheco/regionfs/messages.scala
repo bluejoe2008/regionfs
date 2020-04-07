@@ -63,7 +63,7 @@ case class CreateSecondaryFileResponse(regionId: Long, localId: Long) {
 
 }
 
-case class MarkSecondaryFileWrittenRequest(regionId: Long, localId: Long) {
+case class MarkSecondaryFileWrittenRequest(regionId: Long, localId: Long, length: Long) {
 
 }
 

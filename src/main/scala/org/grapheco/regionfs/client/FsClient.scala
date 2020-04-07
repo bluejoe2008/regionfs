@@ -260,12 +260,10 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
     }
   }
 
-  def markSecondaryFileWritten(
-                                regionId: Long,
-                                localId: Long): Future[MarkSecondaryFileWrittenResponse] = {
+  def markSecondaryFileWritten(regionId: Long, localId: Long, length: Long): Future[MarkSecondaryFileWrittenResponse] = {
     safeCall {
       endPointRef.askWithStream[MarkSecondaryFileWrittenResponse](
-        MarkSecondaryFileWrittenRequest(regionId, localId))
+        MarkSecondaryFileWrittenRequest(regionId, localId, length))
     }
   }
 

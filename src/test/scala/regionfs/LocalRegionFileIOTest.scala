@@ -7,7 +7,7 @@ import org.apache.commons.io.IOUtils
 import org.grapheco.commons.util.Profiler._
 import org.grapheco.regionfs.GlobalSetting
 import org.grapheco.regionfs.server.LocalRegionManager
-import org.grapheco.regionfs.util.{CrcUtils, Rollbackable, Transactional, TransactionalContext}
+import org.grapheco.regionfs.util.{CrcUtils, Transactional, TransactionalContext}
 import org.junit.{Assert, Test}
 
 /**
@@ -24,7 +24,7 @@ class LocalRegionFileIOTest extends FileTestBase {
     Assert.assertEquals(65537, region.regionId)
     Assert.assertEquals(true, region.isPrimary)
     Assert.assertEquals(0, region.revision)
-    Assert.assertEquals(0, region.length)
+    Assert.assertEquals(0, region.bodyLength)
 
     val bytes1 = IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/9999999")))
     val buf = ByteBuffer.wrap(bytes1)
@@ -32,14 +32,17 @@ class LocalRegionFileIOTest extends FileTestBase {
     val id = timing(true, 10) {
       val clone = buf.duplicate()
       val tx = Transactional {
-        case i =>
-          Rollbackable.success(region.createLocalId()) {}
-      } --> {
+        case _ =>
+          region.createLocalId()
+      } & {
         case localId: Long =>
           region.saveLocalFile(localId, clone, CrcUtils.computeCrc32(buf.duplicate()))
+      } & {
+        case localId: Long =>
+          region.markGlobalWriten(localId, buf.remaining())
       }
 
-      tx.perform(1, TransactionalContext.DEFAULT)
+      tx.perform(1, TransactionalContext.DEFAULT).asInstanceOf[Long]
     }
 
     val bytes2 = timing(true, 10) {

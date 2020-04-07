@@ -34,7 +34,7 @@ class FsNodeClientTest extends FileTestBase {
     //create region-65537
     client.writeFile(ByteBuffer.wrap(IOUtils.toByteArray(new FileInputStream(new File(s"./testdata/inputs/999")))))
     val client1 = client.clientOf(1)
-    val futures = (1 to 10).map(x => client1.createSecondaryFile(65537, 1,
+    val futures = (1 to 10).map(x => client1.createSecondaryFile(65537, x,
       999,
       CrcUtils.computeCrc32(new FileInputStream(new File(s"./testdata/inputs/999"))),
       ByteBuffer.wrap(IOUtils.toByteArray(new FileInputStream(new File(s"./testdata/inputs/999"))))))

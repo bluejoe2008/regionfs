@@ -13,6 +13,7 @@ import org.grapheco.regionfs.util._
 import org.grapheco.regionfs.{Constants, FileId, GlobalSetting}
 
 import scala.collection.mutable
+import scala.collection.mutable.ArrayBuffer
 
 /**
   * Created by bluejoe on 2019/8/30.
@@ -28,55 +29,31 @@ case class FileMetadata(localId: Long, status: Byte, offset: Long, length: Long,
   def tail = offset + length
 }
 
-class RegionLocalIdStore(conf: RegionConfig) extends Logging {
-  val file = new File(conf.regionDir, "id")
-  val idgen = if (file.length() == 0) {
-    new AtomicLong(0)
-  }
-  else {
-    val dis = new DataInputStream(new FileInputStream(file))
-    val current = dis.readLong()
-    dis.close()
-    new AtomicLong(current)
-  }
-
-  def current(): Long = idgen.get()
-
-  def nextId(): Long = {
-    val nid = idgen.incrementAndGet()
-    //TODO: batch generation
-    val dos = new DataOutputStream(new FileOutputStream(file, false))
-    dos.writeLong(nid)
-    dos.close()
-    nid
-  }
-}
-
-//[localId:Long][offset:Long][length:Long][crc32:Long][flag:Long]
+//[localId:Long][status:Byte][offset:Long][length:Long][crc32:Long]
+//TODO: use 2-level metadata to avoid unused localIds
+//level1: [offset:Long]
+//level2: [localId:Long][status:Byte][offset:Long][length:Long][crc32:Long]
 class RegionMetadataStore(conf: RegionConfig) extends Logging {
+
   lazy val fileMetaFile = new File(conf.regionDir, "meta")
   lazy val fptr = new RandomAccessFile(fileMetaFile, "rw")
 
   val cache: Cache[Long, FileMetadata] = new FixSizedCache[Long, FileMetadata](1024)
 
-  def markStatus(localId: Long, status: Byte): Unit = {
-    val block = new ByteArrayOutputStream()
-    val dos = new DataOutputStream(block)
-    dos.writeLong(localId)
-    dos.writeByte(status)
-
-    fptr.synchronized {
-      //extends if needed
-      fptr.seek(Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * localId)
-      fptr.write(block.toByteArray)
-    }
-  }
-
   def entries(): Iterable[FileMetadata] = {
     (0 to count().toInt - 1).map(read(_).get)
   }
 
-  val block = new Array[Byte](Constants.METADATA_ENTRY_LENGTH_WITH_PADDING)
+  val metadataBlock = new Array[Byte](Constants.METADATA_ENTRY_LENGTH_WITH_PADDING)
+
+  def createNextId(): Long = {
+    fptr.synchronized {
+      val localId = count()
+      fptr.seek(localId * Constants.METADATA_ENTRY_LENGTH_WITH_PADDING)
+      write(localId, Constants.FILE_STATUS_TO_WRITE, -1, -1, 0)
+      localId
+    }
+  }
 
   def read(localId: Long): Option[FileMetadata] = {
     if (localId >= count()) {
@@ -86,24 +63,27 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
       cache.get(localId).orElse {
         fptr.synchronized {
           fptr.seek(Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * localId)
-          fptr.readFully(block)
+          fptr.readFully(metadataBlock)
         }
 
-        val dis = new DataInputStream(new ByteArrayInputStream(block))
+        val dis = new DataInputStream(new ByteArrayInputStream(metadataBlock))
         val info = FileMetadata(dis.readLong(), dis.readByte(), dis.readLong(), dis.readLong(), dis.readLong())
         dis.close()
 
+        //if (info.status == Constants.FILE_STATUS_GLOBAL_WRITTEN || info.status == Constants.FILE_STATUS_WRITTEN_IN_PLACE) {
         cache.put(localId, info)
+        //}
+
         Some(info)
       }
     }
   }
 
-  def write(localId: Long, offset: Long, length: Long, crc32: Long): Unit = {
+  def write(localId: Long, status: Byte, offset: Long, length: Long, crc32: Long): Unit = {
     val block = new ByteArrayOutputStream()
     val dos = new DataOutputStream(block)
     dos.writeLong(localId)
-    dos.writeByte(0)
+    dos.writeByte(status)
     dos.writeLong(offset)
     dos.writeLong(length)
     dos.writeLong(crc32)
@@ -111,50 +91,39 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
     dos.write(new Array[Byte](Constants.METADATA_ENTRY_LENGTH_WITH_PADDING - dos.size()))
 
     fptr.synchronized {
+      //maybe overwrite
       fptr.seek(Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * localId)
       fptr.write(block.toByteArray)
     }
 
     dos.close()
-    cache.put(localId, FileMetadata(localId, 0, offset, length, crc32))
+
+    //if (status == Constants.FILE_STATUS_GLOBAL_WRITTEN || status == Constants.FILE_STATUS_WRITTEN_IN_PLACE)
+    cache.put(localId, FileMetadata(localId, status, offset, length, crc32))
   }
 
   //since=0,tail=1
-  def offerMetaPatch(sinceRevision: Long): (Long, Long, Long, ByteBuffer) = {
+  def offerMetaPatch(sinceRevision: Long): Array[(Long, Long)] = {
     //since=10, tail=13
-    val sinceMetaFile = Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * sinceRevision
     var bodyPatchSize = 0L
     val tail = count()
     assert(sinceRevision < tail)
 
-    val sinceBodyFile = read(sinceRevision).get.offset
     var n = sinceRevision
+    val ids = ArrayBuffer[(Long, Long)]()
 
     while (n < tail && bodyPatchSize < Constants.MAX_PATCH_SIZE) {
       val meta = read(n).get
+      if (meta.status == Constants.FILE_STATUS_GLOBAL_WRITTEN || meta.status == Constants.FILE_STATUS_WRITTEN_IN_PLACE) {
+        ids += (n -> meta.length)
+        bodyPatchSize += meta.length
+      }
+
       n += 1
-      bodyPatchSize = meta.tail - sinceBodyFile
     }
 
     //n=13
-    (sinceMetaFile, sinceBodyFile, bodyPatchSize, fptr.synchronized {
-      fptr.getChannel.map(FileChannel.MapMode.READ_ONLY,
-        sinceMetaFile,
-        Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * (n - sinceRevision))
-    })
-  }
-
-  def applyMetaPatch(buf: ByteBuffer, since: Long, size: Long, crc: Long): Unit = {
-    assert(size == buf.remaining())
-
-    fptr.synchronized {
-      fptr.seek(since)
-      fptr.getChannel.write(buf)
-    }
-
-    fptr.seek(since)
-    val buf2 = fptr.getChannel.map(FileChannel.MapMode.READ_ONLY, since, size)
-    assert(crc == CrcUtils.computeCrc32(buf2))
+    ids.toArray
   }
 
   def close(): Unit = {
@@ -254,19 +223,6 @@ class RegionBodyStore(conf: RegionConfig) {
     (offset, length, written)
   }
 
-  def applyBodyPatch(buf: ByteBuffer, since: Long, size: Long, crc: Long): Unit = {
-    assert(size == buf.remaining())
-
-    fptr.synchronized {
-      fptr.seek(since)
-      fptr.getChannel.write(buf)
-    }
-
-    fptr.seek(since)
-    val buf2 = fptr.getChannel.map(FileChannel.MapMode.READ_ONLY, since, size)
-    assert(crc == CrcUtils.computeCrc32(buf2))
-  }
-
   def offerBodyPatch(offset: Long, length: Long): ByteBuffer = {
     fptr.synchronized {
       fptr.getChannel.map(FileChannel.MapMode.READ_ONLY, offset, length)
@@ -277,10 +233,22 @@ class RegionBodyStore(conf: RegionConfig) {
     fptr.close()
   }
 
-  def read(offset: Long, length: Int): ByteBuffer = {
+  def read(offset: Long, length: Long): ByteBuffer = {
+    assert(length >= 0)
     fptr.synchronized {
       fptr.getChannel.map(FileChannel.MapMode.READ_ONLY, offset, length)
     }
+  }
+}
+
+class RegionFileBuffer(conf: RegionConfig) {
+  def read(localId: Long, length: Long): ByteBuffer = {
+    assert(length >= 0)
+    val file = new File(conf.regionDir, s"$localId")
+    val fptr = new RandomAccessFile(file, "r")
+    val buf = fptr.getChannel.map(FileChannel.MapMode.READ_ONLY, 0, length)
+    fptr.close()
+    buf
   }
 }
 
@@ -292,19 +260,19 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
   val isSecondary = !isPrimary
 
   //metadata file
+  private lazy val fbuffer = new RegionFileBuffer(conf)
   private lazy val fbody = new RegionBodyStore(conf)
   private lazy val fmeta = new RegionMetadataStore(conf)
   private lazy val ftrash = new RegionTrashStore(conf)
-  private lazy val fids = new RegionLocalIdStore(conf)
 
-  def revision() = fids.current
+  def revision() = fmeta.count() //fids.current
 
   def fileCount() = fmeta.count() - ftrash.count()
 
-  def length() = fbody.fptr.length()
+  def bodyLength() = fbody.fptr.length()
 
   //TODO: archive
-  def isWritable = length <= conf.globalSetting.regionSizeLimit
+  def isWritable = bodyLength <= conf.globalSetting.regionSizeLimit
 
   def listFiles(): Iterable[FileEntry] = {
     fmeta.entries().map { meta =>
@@ -324,25 +292,28 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
   }
 
   def createLocalId(): Rollbackable = {
-    Rollbackable.success(fids.nextId()) {}
+    Rollbackable.success(fmeta.createNextId()) {
+
+    }
   }
 
-  private def _markStatus(localId: Long, flag: Byte): Rollbackable = {
-    fmeta.markStatus(localId, flag)
-    Rollbackable.success(localId) {}
-  }
+  def markGlobalWriten(localId: Long, length: Long): Rollbackable = {
+    fmeta.write(localId, Constants.FILE_STATUS_GLOBAL_WRITTEN, -1, length, 0)
+    Rollbackable.success(localId) {
 
-  def markGlobalWriten(localId: Long): Rollbackable = {
-    _markStatus(localId, Constants.FILE_STATUS_GLOBAL_WRITTEN)
+    }
   }
 
   def markLocalWriten(localId: Long): Rollbackable = {
-    _markStatus(localId, Constants.FILE_STATUS_LOCAL_WRITTEN)
+    fmeta.write(localId, Constants.FILE_STATUS_LOCAL_WRITTEN, -1, -1, 0)
+    Rollbackable.success(localId) {
+
+    }
   }
 
   def saveLocalFile(localId: Long, buf: ByteBuffer, crc32: Long): Rollbackable = {
     //save temp file
-    _markStatus(localId, Constants.FILE_STATUS_TO_WRITE)
+    fmeta.write(localId, Constants.FILE_STATUS_TO_WRITE, -1, -1, 0)
 
     val file = new File(conf.regionDir, s"$localId");
     val rbuf = buf.duplicate()
@@ -374,7 +345,14 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
       None
     else {
       val maybeMeta = fmeta.read(localId)
-      maybeMeta.map(meta => fbody.read(meta.offset, meta.length.toInt))
+      maybeMeta.map(meta =>
+        meta.status match {
+          case Constants.FILE_STATUS_GLOBAL_WRITTEN =>
+            fbuffer.read(localId, meta.length)
+          case Constants.FILE_STATUS_WRITTEN_IN_PLACE =>
+            fbody.read(meta.offset, meta.length)
+        }
+      )
     }
   }
 
@@ -401,27 +379,21 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
       buf
     }
     else {
-      //current version, length_of_metadata, body
-      //write .metadata
-      //write .body
-      val (sinceMeta, sinceBody, lengthBody, buf1) = fmeta.offerMetaPatch(sinceRevision)
-      assert(lengthBody != 0)
-      val metabuf = Unpooled.wrappedBuffer(buf1)
-      val buf2: ByteBuffer = fbody.offerBodyPatch(sinceBody, lengthBody)
-      val bodybuf = Unpooled.wrappedBuffer(buf2)
+      val metas = fmeta.offerMetaPatch(sinceRevision)
 
-      val crc1 = CrcUtils.computeCrc32(buf1)
-      val crc2 = CrcUtils.computeCrc32(buf2)
-
+      //flag, regionId, revision, fileCount
       buf.writeByte(Constants.MARK_GET_REGION_PATCH_OK).
-        writeLong(regionId).writeLong(rev).
-        writeLong(sinceMeta).writeLong(sinceBody).
-        writeLong(metabuf.readableBytes()).writeLong(bodybuf.readableBytes()).
-        writeLong(crc1).writeLong(crc2)
+        writeLong(regionId).writeLong(rev).writeInt(metas.length)
 
-      //composite buffer costs more time!!!
-      //Unpooled.wrappedBuffer(buf, metabuf, bodybuf)
-      buf.writeBytes(metabuf).writeBytes(bodybuf)
+      metas.foreach { kv =>
+        this.read(kv._1).map {
+          bodybuf =>
+            buf.writeLong(kv._1).writeLong(kv._2).writeLong(CrcUtils.computeCrc32(bodybuf.duplicate()))
+            buf.writeBytes(bodybuf)
+        }
+      }
+
+      buf
     }
   }
 
@@ -440,47 +412,28 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
 
         false
       case Constants.MARK_GET_REGION_PATCH_OK =>
-        val (regionId, _, sinceMeta, sinceBody, sizeMeta, sizeBody, crc1, crc2) =
-          (
-            dis.readLong(), dis.readLong(), dis.readLong(),
-            dis.readLong(), dis.readLong(), dis.readLong(),
-            dis.readLong(), dis.readLong()
-            )
+        val (regionId, revision, patchFileCount) = (
+          dis.readLong(), dis.readLong(), dis.readInt())
 
-        val buf1 = Unpooled.buffer(1024)
-        if (buf1.writeBytes(is, sizeMeta.toInt) != sizeMeta.toInt) {
-          throw new WrongRegionPatchSizeException()
-        }
+        for (i <- 1 to patchFileCount) {
+          val (localId, fileSize, crc32) = (dis.readLong(), dis.readLong(), dis.readLong())
+          val buf = Unpooled.buffer(1024)
+          buf.writeBytes(is, fileSize.toInt)
 
-        if (crc1 != CrcUtils.computeCrc32(buf1.nioBuffer())) {
-          throw new WrongRegionPatchStreamException()
-        }
-
-        val buf2 = Unpooled.buffer(1024)
-        if (buf2.writeBytes(is, sizeBody.toInt) != sizeBody.toInt) {
-          throw new WrongRegionPatchSizeException()
-        }
-
-        if (crc2 != CrcUtils.computeCrc32(buf2.nioBuffer())) {
-          throw new WrongRegionPatchStreamException()
-        }
-
-        this.synchronized {
-          //TOOD: transaction assurance
-          fmeta.applyMetaPatch(buf1.nioBuffer(), sinceMeta, sizeMeta, crc1)
-          fbody.applyBodyPatch(buf2.nioBuffer(), sinceBody, sizeBody, crc2)
-
-          if (logger.isDebugEnabled)
-            logger.debug(s"[region-$regionId@$nodeId] updated: .meta $sizeMeta bytes, .body $sizeBody bytes")
-
-          callbackOnUpdated
+          (Transactional {
+            case _ =>
+              this.saveLocalFile(localId, buf.nioBuffer(), crc32)
+          } & {
+            case _ =>
+              this.markGlobalWriten(localId, fileSize)
+          }).perform(1, TransactionalContext.DEFAULT)
         }
 
         true
     }
   }
 
-  def info = RegionInfo(nodeId, regionId, revision, isPrimary, isWritable, length)
+  def info = RegionInfo(nodeId, regionId, revision, isPrimary, isWritable, bodyLength)
 }
 
 /**
@@ -548,7 +501,6 @@ class LocalRegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetti
 
       new File(regionDir, "body").createNewFile()
       new File(regionDir, "meta").createNewFile()
-      new File(regionDir, "id").createNewFile()
       new File(regionDir, "trash").createNewFile()
 
       if (logger.isTraceEnabled())

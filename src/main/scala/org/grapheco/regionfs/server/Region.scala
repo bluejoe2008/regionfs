@@ -26,11 +26,11 @@ case class RegionConfig(regionDir: File, globalSetting: GlobalSetting) {
 /**
   * metadata of a region
   */
-case class FileMetadata(localId: Long, offset: Long, length: Long, crc32: Long, status: Byte) {
+case class FileMetadata(localId: Long, creationTime: Long, offset: Long, length: Long, crc32: Long, status: Byte) {
   def tail = offset + length
 }
 
-//[localId:Long][offset:Long][length:Long][crc32:Long][status:Byte]
+//[localId:Long][time:Long][offset:Long][length:Long][crc32:Long][status:Byte]
 //TODO: use 2-level metadata to avoid unused localIds
 //level1: [offset:Long]
 //level2: [localId:Long][offset:Long][length:Long][crc32:Long][status:Byte]
@@ -54,7 +54,7 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
     }
   }
 
-  val OFFSET_OF_CONTENT = 8
+  val OFFSET_OF_CONTENT = 16
 
   val cache: Cache[Long, FileMetadata] = new FixSizedCache[Long, FileMetadata](1024)
 
@@ -85,7 +85,7 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
         }
 
         val dis = new DataInputStream(new ByteArrayInputStream(METADATA_BLOCK_FOR_READ))
-        val info = FileMetadata(dis.readLong(), dis.readLong(), dis.readLong(), dis.readLong(), dis.readByte())
+        val info = FileMetadata(dis.readLong(), dis.readLong(), dis.readLong(), dis.readLong(), dis.readLong(), dis.readByte())
         dis.close()
 
         cache.put(localId, info)
@@ -98,6 +98,8 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
     val block = new ByteArrayOutputStream()
     val dos = new DataOutputStream(block)
     dos.writeLong(localId)
+    val time = System.currentTimeMillis()
+    dos.writeLong(time)
     dos.writeLong(offset)
     dos.writeLong(length)
     dos.writeLong(crc32)
@@ -113,7 +115,7 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
 
     dos.close()
 
-    cache.put(localId, FileMetadata(localId, offset, length, crc32, status))
+    cache.put(localId, FileMetadata(localId, time, offset, length, crc32, status))
   }
 
   private def offsetOf(localId: Long): Long = {
@@ -343,6 +345,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
     fmeta.entries().map { meta =>
       new FileEntry() {
         override val id = FileId.make(regionId, meta.localId)
+        override val creationTime = meta.creationTime
         override val length = meta.length
         override val region = info
         override val status = meta.status
@@ -682,6 +685,7 @@ trait FileEntry {
   val id: FileId
   val region: RegionInfo
   val length: Long
+  val creationTime: Long
   val status: Byte
 
   def processContent[T](f: (InputStream) => T): T;

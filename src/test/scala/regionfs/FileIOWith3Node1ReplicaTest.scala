@@ -11,7 +11,8 @@ class FileIOWith3Node1ReplicaTest extends FileIOWith1Node1ReplicaTest {
       "region.size.limit" -> "9000000",
       "blob.crc.enabled" -> "true",
       "region.version.check.interval" -> "1000",
-      "consistency.strategy" -> "strong"
+      "consistency.strategy" -> "strong",
+      "region.file.cleanup.interval" -> "2000"
     )
   }
 }

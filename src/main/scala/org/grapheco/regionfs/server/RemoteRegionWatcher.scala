@@ -9,6 +9,7 @@ import org.grapheco.regionfs.util.{CompositeParsedChildNodeEventHandler, NodeSer
 import org.grapheco.regionfs.{Constants, GlobalSetting}
 
 import scala.collection.mutable
+import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
 
@@ -66,13 +67,22 @@ class RemoteRegionWatcher(nodeId: Int, globalSetting: GlobalSetting,
     }
   }
 
-  private val _primaryRegionWatcher: Option[PrimaryRegionWatcher] = {
+  private val _backgroundWorkers = ArrayBuffer[() => Unit]()
+
+  {
+    //primary region follower
     if (globalSetting.consistencyStrategy == Constants.CONSISTENCY_STRATEGY_EVENTUAL) {
-      Some(new PrimaryRegionWatcher(globalSetting, nodeId, localRegionManager, clientOf(_)).start())
+      val watcher = new PrimaryRegionWatcher(globalSetting, nodeId, localRegionManager, clientOf(_)).start()
+      _backgroundWorkers += (() => {
+        watcher.stop()
+      })
     }
-    else {
-      None
-    }
+
+    //region file clean up
+    val cleaner = new LocalRegionCleaner(globalSetting, nodeId, localRegionManager).start()
+    _backgroundWorkers += (() => {
+      cleaner.stop()
+    })
   }
 
   def getSecondaryRegions(regionId: Long): Array[RegionInfo] = {
@@ -80,7 +90,101 @@ class RemoteRegionWatcher(nodeId: Int, globalSetting: GlobalSetting,
   }
 
   def close(): Unit = {
-    _primaryRegionWatcher.foreach(_.stop())
+    _backgroundWorkers.foreach(_.apply())
+  }
+}
+
+trait InterruptableWorker {
+  val sleepInterval: Long
+
+  def runOnce(stopFlag: => Boolean): Unit
+
+  def onStarted(): Unit
+
+  def beforeTerminate(): Unit
+
+  private var running: Boolean = false
+  private var sleeping: Boolean = false
+  private val stopFlag = new AtomicBoolean(false)
+  private val thread: Thread = new Thread(new Runnable() {
+
+    override def run(): Unit = {
+      running = true
+      while (!stopFlag.get()) {
+        sleeping = true
+        try {
+          Thread.sleep(sleepInterval)
+        }
+        catch {
+          case e: InterruptedException =>
+            stopFlag.set(true)
+        }
+
+        sleeping = false
+        if (!stopFlag.get()) {
+          runOnce {
+            stopFlag.get()
+          }
+        }
+      }
+
+      running = false
+    }
+  })
+
+  final def start(): this.type = {
+    thread.start()
+    onStarted()
+
+    this
+  }
+
+  final def stop(): Unit = {
+    stopFlag.set(true)
+    if (running) {
+      if (sleeping) {
+        thread.interrupt()
+      }
+      else {
+        if (!stopFlag.get()) {
+          beforeTerminate()
+          thread.join()
+        }
+      }
+    }
+  }
+}
+
+class LocalRegionCleaner(conf: GlobalSetting,
+                         nodeId: Int,
+                         localRegionManager: LocalRegionManager)
+  extends InterruptableWorker with Logging {
+  val sleepInterval: Long = conf.regionFileCleanupInterval
+
+  def runOnce(stopFlag: => Boolean): Unit = {
+    val regions = localRegionManager.regions.values
+    for (region <- regions if !stopFlag) {
+      try {
+        region.cleanup(() => stopFlag)
+      }
+      catch {
+        case t: Throwable =>
+          if (logger.isWarnEnabled())
+            logger.warn(t.getMessage)
+      }
+    }
+  }
+
+  def onStarted(): Unit = {
+    if (logger.isTraceEnabled()) {
+      logger.trace(s"[node-$nodeId] started ${this.getClass.getSimpleName}...")
+    }
+  }
+
+  def beforeTerminate(): Unit = {
+    if (logger.isTraceEnabled()) {
+      logger.trace(s"[node-$nodeId] stoping ${this.getClass.getSimpleName}...")
+    }
   }
 }
 
@@ -88,61 +192,58 @@ class PrimaryRegionWatcher(conf: GlobalSetting,
                            nodeId: Int,
                            localRegionManager: LocalRegionManager,
                            clientOf: (Int) => FsNodeClient)
-  extends Logging {
-  var stopped = new AtomicBoolean(false)
-  val thread: Thread = new Thread(new Runnable() {
-    override def run(): Unit = {
-      while (!stopped.get()) {
-        Thread.sleep(conf.regionVersionCheckInterval)
-        if (!stopped.get()) {
-          val secondaryRegions = localRegionManager.regions.values.filter(!_.isPrimary).groupBy(x =>
-            (x.regionId >> 16).toInt)
-          for (x <- secondaryRegions if !stopped.get()) {
-            try {
-              val regionIds = x._2.map(_.regionId).toArray
-              val primaryNodeId = x._1
-              val infos = Await.result(clientOf(primaryNodeId).getRegionInfos(regionIds), Duration("2s"))
-              infos.foreach(status => {
-                val localRegion = localRegionManager.regions(status.regionId)
-                //local region is old
-                val targetRevision: Long = status.revision
-                val localRevision: Long = localRegion.revision
-                if (targetRevision > localRevision) {
+  extends InterruptableWorker with Logging {
+
+  val sleepInterval: Long = conf.regionVersionCheckInterval
+
+  def runOnce(stopFlag: => Boolean): Unit = {
+    val secondaryRegions = localRegionManager.regions.values.filter(!_.isPrimary).groupBy(x =>
+      (x.regionId >> 16).toInt)
+    for (x <- secondaryRegions if !stopFlag) {
+      try {
+        val regionIds = x._2.map(_.regionId).toArray
+        val primaryNodeId = x._1
+        val infos = Await.result(clientOf(primaryNodeId).getRegionInfos(regionIds), Duration("2s"))
+        infos.foreach(status => {
+          val localRegion = localRegionManager.regions(status.regionId)
+          //local region is old
+          val targetRevision: Long = status.revision
+          val localRevision: Long = localRegion.revision
+          if (targetRevision > localRevision) {
+            if (logger.isTraceEnabled())
+              logger.trace(s"[region-${localRegion.regionId}@$nodeId] found new version : $targetRevision@$primaryNodeId>$localRevision@$nodeId")
+
+            Await.result(clientOf(primaryNodeId).getPatch(
+              localRegion.regionId, localRevision, (buf) => {
+                val is = new ByteBufferInputStream(buf)
+                localRegion.applyPatch(is, {
+                  val updatedRegion = localRegionManager.update(localRegion)
                   if (logger.isTraceEnabled())
-                    logger.trace(s"[region-${localRegion.regionId}@$nodeId] found new version : $targetRevision@$primaryNodeId>$localRevision@$nodeId")
+                    logger.trace(s"[region-${localRegion.regionId}@$nodeId] updated: $localRevision->${updatedRegion.revision}")
+                })
 
-                  Await.result(clientOf(primaryNodeId).getPatch(
-                    localRegion.regionId, localRevision, (buf) => {
-                      val is = new ByteBufferInputStream(buf)
-                      localRegion.applyPatch(is, {
-                        val updatedRegion = localRegionManager.update(localRegion)
-                        if (logger.isTraceEnabled())
-                          logger.trace(s"[region-${localRegion.regionId}@$nodeId] updated: $localRevision->${updatedRegion.revision}")
-                      })
-
-                      is.close()
-                    }), Duration("10s"))
-                }
-              })
-            }
-            catch {
-              case t: Throwable =>
-                if (logger.isWarnEnabled())
-                  logger.warn(t.getMessage)
-            }
+                is.close()
+              }), Duration("10s"))
           }
-        }
+        })
+      }
+      catch {
+        case t: Throwable =>
+          if (logger.isWarnEnabled())
+            logger.warn(t.getMessage)
       }
     }
-  })
-
-  def start(): PrimaryRegionWatcher = {
-    thread.start()
-    this
   }
 
-  def stop(): Unit = {
-    stopped.set(true)
-    thread.join()
+  def onStarted(): Unit = {
+    if (logger.isTraceEnabled()) {
+      logger.trace(s"[node-$nodeId] started ${this.getClass.getSimpleName}...")
+    }
+  }
+
+  def beforeTerminate(): Unit = {
+    if (logger.isTraceEnabled()) {
+      logger.trace(s"[node-$nodeId] stoping ${this.getClass.getSimpleName}...")
+    }
   }
 }

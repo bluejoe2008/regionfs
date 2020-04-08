@@ -6,7 +6,7 @@ import java.nio.ByteBuffer
 import org.apache.commons.io.{FileUtils, IOUtils}
 import org.grapheco.commons.util.{Logging, Profiler}
 import org.grapheco.regionfs.client.{FsAdmin, FsClient}
-import org.grapheco.regionfs.server.{FsNodeServer, RegionEvent, RegionEventListener}
+import org.grapheco.regionfs.server.{FsNodeServer, Region, RegionEvent, RegionEventListener}
 import org.grapheco.regionfs.util.ByteBufferConversions._
 import org.grapheco.regionfs.{FileId, GlobalSettingWriter}
 import org.junit.{After, Before}
@@ -33,6 +33,14 @@ class FileTestBase extends Logging {
 
   def readBytes(f: File): Array[Byte] = {
     IOUtils.toByteArray(new FileInputStream(f))
+  }
+
+  def primaryRegionOf(regionId: Long): Region = {
+    servers.find(_.nodeId == (regionId >> 16).toInt).head.localRegionManager.get(regionId).get
+  }
+
+  def countFiles(region: Region, status: Byte): Int = {
+    region.listFiles().filter(_.status == status).size
   }
 
   def readBytes(fid: FileId): Array[Byte] = {

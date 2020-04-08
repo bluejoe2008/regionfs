@@ -70,7 +70,7 @@ class TransactionalTest {
       case e: TransactionFailedException =>
         e.printStackTrace()
         Assert.assertTrue(true)
-      case _ =>
+      case e: Throwable =>
         Assert.assertTrue(false)
     }
 
@@ -89,7 +89,7 @@ class TransactionalTest {
       case e: TransactionFailedException =>
         e.printStackTrace()
         Assert.assertTrue(true)
-      case _ =>
+      case e: Throwable =>
         Assert.assertTrue(false)
     }
 
@@ -120,7 +120,7 @@ class TransactionalTest {
     catch {
       case e: TransactionFailedException =>
         Assert.assertTrue(true)
-      case e =>
+      case e: Throwable =>
         e.printStackTrace()
         Assert.assertTrue(false)
     }
@@ -153,7 +153,7 @@ class TransactionalTest {
     catch {
       case e: TransactionFailedException =>
         Assert.assertTrue(true)
-      case e =>
+      case e: Throwable =>
         Assert.assertTrue(false)
     }
 
@@ -185,7 +185,7 @@ class TransactionalTest {
     catch {
       case e: TransactionFailedException =>
         Assert.assertTrue(true)
-      case e =>
+      case e: Throwable =>
         Assert.assertTrue(false)
     }
 

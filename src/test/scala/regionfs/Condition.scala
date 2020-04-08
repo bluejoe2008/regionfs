@@ -19,7 +19,8 @@ class StrongMultiNode extends TestCondition {
     "region.size.limit" -> "9000000",
     "blob.crc.enabled" -> "true",
     "region.version.check.interval" -> "1000",
-    "consistency.strategy" -> "strong"
+    "consistency.strategy" -> "strong",
+    "region.file.cleanup.interval" -> "2000"
   )
 }
 
@@ -31,7 +32,8 @@ class EventualMultiNode extends TestCondition {
     "region.size.limit" -> "9000000",
     "blob.crc.enabled" -> "true",
     "region.version.check.interval" -> "1000",
-    "consistency.strategy" -> "eventual"
+    "consistency.strategy" -> "eventual",
+    "region.file.cleanup.interval" -> "2000"
   )
 }
 
@@ -42,6 +44,7 @@ class SingleNode extends TestCondition {
     "replica.num" -> "1",
     "region.size.limit" -> "9000000",
     "blob.crc.enabled" -> "true",
-    "region.version.check.interval" -> "1000"
+    "region.version.check.interval" -> "1000",
+    "region.file.cleanup.interval" -> "2000"
   )
 }

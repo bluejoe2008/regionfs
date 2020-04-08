@@ -4,6 +4,7 @@ import java.io.{File, FileInputStream}
 
 import org.apache.commons.io.IOUtils
 import org.grapheco.commons.util.Profiler._
+import org.grapheco.regionfs.Constants
 import org.junit.{Assert, Test}
 
 import scala.concurrent.Await
@@ -76,6 +77,40 @@ class FileIOWith1Node1ReplicaTest extends FileTestBase {
 
     val count3 = super.countFiles();
     Assert.assertEquals(count3, count2 + 10 * BLOB_LENGTH.size + 10 * BLOB_LENGTH.size)
+  }
+
+  @Test
+  def testBuffered(): Unit = {
+    val fids = timing(true) {
+      BLOB_LENGTH.map { i =>
+        i -> super.writeFile(new File(s"./testdata/inputs/$i"))
+      }
+    }
+
+    val regionWithCount = fids.groupBy(_._2.regionId)
+
+    regionWithCount.foreach { x =>
+      val region = primaryRegionOf(x._1)
+      Assert.assertEquals(x._2.size, region.bufferedFileCount())
+      Assert.assertEquals(0, countFiles(region, Constants.FILE_STATUS_MERGED))
+      Assert.assertNotEquals(0, countFiles(region, Constants.FILE_STATUS_GLOBAL_WRITTEN))
+    }
+
+    Thread.sleep(3000)
+
+    //buffered files will be flushed
+    regionWithCount.foreach { x =>
+      val region = primaryRegionOf(x._1)
+      Assert.assertEquals(0, region.bufferedFileCount())
+      Assert.assertEquals(0, countFiles(region, Constants.FILE_STATUS_GLOBAL_WRITTEN))
+      Assert.assertNotEquals(0, countFiles(region, Constants.FILE_STATUS_MERGED))
+    }
+
+    //get_file() is ok
+    for (i <- fids) {
+      val bytes = readBytes(new File(s"./testdata/inputs/${i._1}"))
+      Assert.assertArrayEquals(bytes, readBytes(i._2))
+    }
   }
 
   @Test

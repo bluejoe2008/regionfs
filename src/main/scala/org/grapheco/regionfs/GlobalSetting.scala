@@ -32,8 +32,12 @@ class GlobalSetting(val props: Properties) {
   lazy val regionSizeLimit: Long = conf.get(Constants.PARAMETER_KEY_REGION_SIZE_LIMIT).withDefault(Constants.DEFAULT_REGION_SIZE_LIMIT).asLong
   lazy val regionVersionCheckInterval: Long = conf.get(Constants.PARAMETER_KEY_REGION_VERSION_CHECK_INTERVAL).withDefault(
     Constants.DEFAULT_REGION_VERSION_CHECK_INTERVAL).asLong
+  lazy val regionFileCleanupInterval: Long = conf.get(Constants.PARAMETER_KEY_REGION_FILE_CLEANUP_INTERVAL).withDefault(
+    Constants.DEFAULT_REGION_FILE_CLEANUP_INTERVAL).asLong
   lazy val executorThreadPoolSize: Int = conf.get(Constants.PARAMETER_KEY_EXECUTOR_THREAD_POOL_SIZE).withDefault(
     Constants.DEFAULT_EXECUTOR_THREAD_POOL_SIZE).asInt
+  lazy val maxWriteRetryTimes: Int = conf.get(Constants.PARAMETER_KEY_WRITE_RETRY_TIMES).withDefault(
+    Constants.DEFAULT_WRITE_RETRY_TIMES).asInt
 }
 
 object GlobalSetting {

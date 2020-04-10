@@ -35,7 +35,7 @@ object FsNodeServer {
       getCanonicalFile.getAbsoluteFile
 
     if (!storeDir.exists())
-      throw new StoreDirectoryNotExistsException(storeDir)
+      throw new StoreDirectoryNotFoundException(storeDir)
 
     val lockFile = new File(storeDir, ".lock")
     if (lockFile.exists()) {
@@ -109,7 +109,7 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
 
       override def onInitialized(batch: Iterable[NodeServerInfo]): Unit = {
         batch.find(_.nodeId == nodeId).foreach { x =>
-          throw new NodeIdAlreadyExistExcetion(x)
+          throw new NodeIdAlreadyExistException(x)
         }
       }
 
@@ -376,7 +376,7 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
     private def handleDeleteFileRequest(fileId: FileId, ctx: RpcCallContext): Unit = {
       val maybeRegion = localRegionManager.get(fileId.regionId)
       if (maybeRegion.isEmpty) {
-        throw new WrongRegionIdException(nodeId, fileId.regionId)
+        throw new RegionNotFoundOnNodeServerException(nodeId, fileId.regionId)
       }
 
       try {
@@ -412,7 +412,7 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
     private def handleDeleteSeconaryFileRequest(fileId: FileId, ctx: RpcCallContext): Unit = {
       val maybeRegion = localRegionManager.get(fileId.regionId)
       if (maybeRegion.isEmpty) {
-        throw new WrongRegionIdException(nodeId, fileId.regionId)
+        throw new RegionNotFoundOnNodeServerException(nodeId, fileId.regionId)
       }
 
       try {
@@ -462,7 +462,7 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
     private def handleGetRegionPatchRequest(regionId: Long, since: Long, ctx: ReceiveContext): Unit = {
       val maybeRegion = localRegionManager.get(regionId)
       if (maybeRegion.isEmpty) {
-        throw new WrongRegionIdException(nodeId, regionId)
+        throw new RegionNotFoundOnNodeServerException(nodeId, regionId)
       }
 
       if (traffic.get() > Constants.MAX_BUSY_TRAFFIC) {
@@ -477,7 +477,7 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
       val maybeRegion = localRegionManager.get(fileId.regionId)
 
       if (maybeRegion.isEmpty) {
-        throw new WrongRegionIdException(nodeId, fileId.regionId)
+        throw new RegionNotFoundOnNodeServerException(nodeId, fileId.regionId)
       }
 
       val localRegion: Region = maybeRegion.get
@@ -623,13 +623,13 @@ class RegionStoreLockedException(storeDir: File, pid: Int) extends
 
 }
 
-class StoreDirectoryNotExistsException(storeDir: File) extends
+class StoreDirectoryNotFoundException(storeDir: File) extends
   RegionFsServerException(s"store dir does not exist: ${storeDir.getPath}") {
 
 }
 
-class WrongRegionIdException(nodeId: Int, regionId: Long) extends
-  RegionFsServerException(s"region not exist on node-$nodeId: $regionId") {
+class RegionNotFoundOnNodeServerException(nodeId: Int, regionId: Long) extends
+  RegionFsServerException(s"region not found on node-$nodeId: $regionId") {
 
 }
 
@@ -643,7 +643,7 @@ class FileNotFoundException(nodeId: Int, fileId: FileId) extends
 
 }
 
-class NodeIdAlreadyExistExcetion(nodeServerInfo: NodeServerInfo) extends
+class NodeIdAlreadyExistException(nodeServerInfo: NodeServerInfo) extends
   RegionFsServerException(s"node id already exist: $nodeServerInfo") {
 
 }

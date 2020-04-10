@@ -103,7 +103,7 @@ class FsClient(zks: String) extends Logging {
       if (maybeRegionOwnerNodes.isEmpty) {
         val nodeId = (fileId.regionId >> 16).toInt
         if (!mapNodeWithAddress.contains(nodeId))
-          throw new WrongFileIdException(fileId)
+          throw new NoSuitableNodeServerException(fileId)
 
         nodeId
       }
@@ -112,7 +112,7 @@ class FsClient(zks: String) extends Logging {
         val maybeNodeId = ringNodes.take(regionOwnerNodes.contains(_))
 
         if (maybeNodeId.isEmpty)
-          throw new WrongFileIdException(fileId)
+          throw new NoSuitableNodeServerException(fileId)
 
         maybeNodeId.get
       }
@@ -120,7 +120,7 @@ class FsClient(zks: String) extends Logging {
     else {
       val nodeId = (fileId.regionId >> 16).toInt
       if (!mapNodeWithAddress.contains(nodeId))
-        throw new WrongFileIdException(fileId)
+        throw new NoSuitableNodeServerException(fileId)
 
       nodeId
     }
@@ -225,7 +225,7 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
       body
     }
     catch {
-      case e: Throwable => throw new ServerRaisedException(e)
+      case e: Throwable => throw new ServerSideException(e)
     }
   }
 
@@ -315,7 +315,7 @@ class RegionFsClientException(msg: String, cause: Throwable = null)
 
 }
 
-class WrongFileIdException(fileId: FileId) extends
+class NoSuitableNodeServerException(fileId: FileId) extends
   RegionFsClientException(s"wrong fileid: $fileId") {
 
 }
@@ -325,7 +325,7 @@ class WrongFileStreamException(fileId: FileId) extends
 
 }
 
-class ServerRaisedException(cause: Throwable) extends
+class ServerSideException(cause: Throwable) extends
   RegionFsClientException(s"got a server side error: ${cause.getMessage}") {
 
 }

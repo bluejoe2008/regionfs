@@ -3,7 +3,7 @@ package regionfs
 import java.io.File
 
 import org.apache.commons.io.FileUtils
-import org.grapheco.regionfs.server.{FsNodeServer, NodeIdAlreadyExistExcetion, RegionStoreLockedException}
+import org.grapheco.regionfs.server.{FsNodeServer, NodeIdAlreadyExistException, RegionStoreLockedException}
 import org.junit.{Assert, Before, Test}
 
 /**
@@ -34,7 +34,7 @@ class StartNodeServerTest {
     }
     catch {
       case e: Throwable =>
-        Assert.assertTrue(e.isInstanceOf[NodeIdAlreadyExistExcetion])
+        Assert.assertTrue(e.isInstanceOf[NodeIdAlreadyExistException])
     }
 
     server1.shutdown()

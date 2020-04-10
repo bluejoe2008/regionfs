@@ -4,7 +4,7 @@ import java.io.{File, FileInputStream}
 
 import org.apache.commons.io.IOUtils
 import org.grapheco.commons.util.Profiler._
-import org.grapheco.regionfs.Constants
+import org.grapheco.regionfs.{Constants, FileId}
 import org.junit.{Assert, Test}
 
 import scala.concurrent.Await
@@ -172,6 +172,18 @@ class FileIOWith1Node1ReplicaTest extends FileTestBase {
 
   @Test
   def testRead(): Unit = {
+    //get an non-existing file
+    //wrong region id
+    try {
+      super.readBytes(FileId.make(1, 1))
+      Assert.assertTrue(false)
+    }
+    catch {
+      case e =>
+        e.printStackTrace()
+        Assert.assertTrue(true)
+    }
+
     for (i <- BLOB_LENGTH) {
       val src: File = new File(s"./testdata/inputs/$i")
       val id = super.writeFile(src);
@@ -191,6 +203,29 @@ class FileIOWith1Node1ReplicaTest extends FileTestBase {
 
       Assert.assertArrayEquals(bytes1, bytes2)
       println("=================================")
+    }
+
+    //get an non-existing file
+    //wrong region id
+    try {
+      super.readBytes(FileId.make(1, 1))
+      Assert.assertTrue(false)
+    }
+    catch {
+      case e =>
+        e.printStackTrace()
+        Assert.assertTrue(true)
+    }
+
+    //wrong region id
+    try {
+      super.readBytes(FileId.make(65537, 999))
+      Assert.assertTrue(false)
+    }
+    catch {
+      case e =>
+        e.printStackTrace()
+        Assert.assertTrue(true)
     }
   }
 }

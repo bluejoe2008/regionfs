@@ -17,8 +17,9 @@ class FixSizedCache[K, V](capacity: Int) extends Cache[K, V] {
   def get(key: K): Option[V] = queue.get(key)
 
   def put(key: K, value: V) = {
+    //required batch remove
     while (queue.size >= capacity) {
-      queue.drop(capacity - queue.size + 10)
+      queue --= queue.take(10).keys
     }
 
     queue(key) = value

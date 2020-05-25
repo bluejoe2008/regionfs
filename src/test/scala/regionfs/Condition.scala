@@ -45,6 +45,6 @@ class SingleNode extends TestCondition {
     "region.size.limit" -> "9000000",
     "blob.crc.enabled" -> "true",
     "region.version.check.interval" -> "1000",
-    "region.file.cleanup.interval" -> "60000000"
+    "region.file.cleanup.interval" -> "2000"
   )
 }

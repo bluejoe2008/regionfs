@@ -486,7 +486,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
               this.markGlobalWriten(localId, fileSize)
           }
 
-          TransactionRunner.perform(tx, 1, RetryStrategy.FOR_TIMES(conf.globalSetting.maxWriteRetryTimes))
+          TransactionRunner.perform(tx, regionId, RetryStrategy.FOR_TIMES(conf.globalSetting.maxWriteRetryTimes))
         }
 
         true
@@ -518,11 +518,10 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
               case _ =>
                 fbuffer.delete(localId)
                 Rollbackable.success(true) {
-
                 }
             }
 
-            TransactionRunner.perform(tx, 1, RetryStrategy.FOR_TIMES(conf.globalSetting.maxWriteRetryTimes))
+            TransactionRunner.perform(tx, regionId, RetryStrategy.FOR_TIMES(conf.globalSetting.maxWriteRetryTimes))
 
             if (logger.isTraceEnabled()) {
               logger.trace(s"[region-$regionId@$nodeId] local file merged: $localId")

@@ -45,15 +45,23 @@ object TransactionRunner extends Logging {
     }
   }
 
+  private def _runWithRetry(description: String, logic: (Any) => Rollbackable, x: Any, retryStrategy: RetryStrategy) = {
+    if (logger.isTraceEnabled()) {
+      logger.trace(s"atomic call: $description, input: $x")
+    }
+
+    retryStrategy.runWithRetry(logic(x))
+  }
+
   private def _runWithRetry(tx: Atomic, input: Option[Any], retryStrategy: RetryStrategy): Rollbackable = (tx, input) match {
     case (SingleAtomic(description, logic), Some(x)) =>
-      retryStrategy.runWithRetry(logic(x))
+      _runWithRetry(description, logic, x, retryStrategy)
 
     case (CompositeAtomic(a1, SingleAtomic(description, logic)), Some(x)) =>
       val r1 = _runWithRetry(a1, input, retryStrategy)
       r1 match {
         case Success(y: Any, rollback) =>
-          val r2 = retryStrategy.runWithRetry(logic(y))
+          val r2 = _runWithRetry(description, logic, y, retryStrategy)
           r2 match {
             case Success(z: Any, rollback2) =>
               Rollbackable.success(z) {

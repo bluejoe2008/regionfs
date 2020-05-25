@@ -576,7 +576,7 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
               }
           }
 
-          TransactionRunner.perform(tx, 1, RetryStrategy.FOR_TIMES(globalSetting.maxWriteRetryTimes))
+          TransactionRunner.perform(tx, regionId, RetryStrategy.FOR_TIMES(globalSetting.maxWriteRetryTimes))
         }
         else {
           val tx = Atomic("create local id") {
@@ -596,7 +596,7 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
               Rollbackable.success(fid) {}
           }
 
-          TransactionRunner.perform(tx, 1, RetryStrategy.FOR_TIMES(globalSetting.maxWriteRetryTimes))
+          TransactionRunner.perform(tx, regionId, RetryStrategy.FOR_TIMES(globalSetting.maxWriteRetryTimes))
         }
       }
       finally {

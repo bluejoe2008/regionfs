@@ -92,7 +92,9 @@ key|type|default value|description
 region.min.writable|Int|3|minimized writable region number
 replica.num|Int|1(no duplicates)|replica number of region
 region.size.limit|Long|20* 1024* 1024* 1024(20G)|upper limit of region size
-region.version.check.interval|Long|60000 * 60(1hour)|interval time of region version checking
+region.version.check.interval|Long|60000 * 60(1hour)|interval of region data version checking
+region.file.cleanup.interval|Long|60000 * 60(1hour)|interval of region cleanup(merging & cleaning)
+executor.thread.pool.size|Int|20|size of executor pool
 consistency.strategy|Enum(`strong`,`eventual`)|strong|consistency strategy
 
 ### node.conf

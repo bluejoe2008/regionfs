@@ -478,13 +478,15 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
           val buf = Unpooled.buffer(1024)
           buf.writeBytes(is, fileSize.toInt)
 
-          (Transactional {
+          val tx = Atomic("save local file") {
             case _ =>
               this.saveLocalFile(localId, buf.nioBuffer(), crc32)
-          } & {
+          } --> Atomic("mark global written") {
             case _ =>
               this.markGlobalWriten(localId, fileSize)
-          }).perform(1, TransactionalContext.create(RetryStrategy.FOR_TIMES(conf.globalSetting.maxWriteRetryTimes)))
+          }
+
+          TransactionRunner.perform(tx, 1, RetryStrategy.FOR_TIMES(conf.globalSetting.maxWriteRetryTimes))
         }
 
         true
@@ -499,20 +501,20 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
           case Constants.FILE_STATUS_GLOBAL_WRITTEN =>
             //save in body
             val buf = fbuffer.read(localId, meta.length)
-            val tx = Transactional {
+            val tx = Atomic("append to body") {
               case _ =>
                 val crc32 = CrcUtils.computeCrc32(buf.duplicate())
                 val (offset: Long, length: Long, actualWritten: Long) = fbody.append(buf, crc32)
                 Rollbackable.success((offset, length, actualWritten, crc32)) {
                   fbody.unwrite(offset)
                 }
-            } & {
+            } --> Atomic("marked merged") {
               case (offset: Long, length: Long, actualWritten: Long, crc32: Long) =>
                 fmeta.write(localId, Constants.FILE_STATUS_MERGED, offset, length, crc32)
                 Rollbackable.success(true) {
 
                 }
-            } & {
+            } --> Atomic("delete buffered file") {
               case _ =>
                 fbuffer.delete(localId)
                 Rollbackable.success(true) {
@@ -520,7 +522,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
                 }
             }
 
-            tx.perform(1, TransactionalContext.create(RetryStrategy.FOR_TIMES(conf.globalSetting.maxWriteRetryTimes)))
+            TransactionRunner.perform(tx, 1, RetryStrategy.FOR_TIMES(conf.globalSetting.maxWriteRetryTimes))
 
             if (logger.isTraceEnabled()) {
               logger.trace(s"[region-$regionId@$nodeId] local file merged: $localId")

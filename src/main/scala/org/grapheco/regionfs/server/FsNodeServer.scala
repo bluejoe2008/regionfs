@@ -295,7 +295,7 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
         t
     }
 
-    override def receiveWithStream(extraInput: ByteBuffer, context: ReceiveContext): PartialFunction[Any, Unit] = {
+    override def receiveWithBuffer(extraInput: ByteBuffer, context: ReceiveContext): PartialFunction[Any, Unit] = {
       case x: Any =>
         try {
           traffic.incrementAndGet()
@@ -537,29 +537,29 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
           globalSetting.consistencyStrategy == Constants.CONSISTENCY_STRATEGY_STRONG) {
 
           //create secondary files
-          val tx = Transactional {
+          val tx = Atomic("create local id") {
             case _ =>
               localRegion.createLocalId()
-          } & {
+          } --> Atomic("request to create secondary file") {
             case localId: Long =>
               Rollbackable.success(localId -> neighbourRegions.map(x =>
                 clientOf(x.nodeId).createSecondaryFile(regionId, localId, totalLength, crc32,
                   extraInput.duplicate()))) {}
-          } & {
+          } --> Atomic("save local file") {
             case (localId: Long, futures: Array[Future[CreateSecondaryFileResponse]]) =>
               localRegion.saveLocalFile(localId, extraInput.duplicate(), crc32) map {
                 case _ =>
                   Rollbackable.success(localId -> futures) {}
               }
-          } & {
+          } --> Atomic("waits all secondary file creation response") {
             case (localId: Long, futures: Array[Future[CreateSecondaryFileResponse]]) =>
               futures.foreach(Await.result(_, Duration.Inf))
 
               Rollbackable.success(localId) {}
-          } & {
+          } --> Atomic("mark local written") {
             case (localId: Long) =>
               localRegion.markLocalWriten(localId)
-          } & {
+          } --> Atomic("mark global written") {
             case (localId: Long) =>
               val futures =
                 neighbourRegions.map(x => clientOf(x.nodeId).markSecondaryFileWritten(regionId, localId, totalLength))
@@ -576,19 +576,19 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
               }
           }
 
-          tx.perform(1, TransactionalContext.create(RetryStrategy.FOR_TIMES(globalSetting.maxWriteRetryTimes)))
+          TransactionRunner.perform(tx, 1, RetryStrategy.FOR_TIMES(globalSetting.maxWriteRetryTimes))
         }
         else {
-          val tx = Transactional {
+          val tx = Atomic("create local id") {
             case _ =>
               localRegion.createLocalId()
-          } & {
+          } --> Atomic("save local file") {
             case localId: Long =>
               localRegion.saveLocalFile(localId, extraInput.duplicate(), crc32)
-          } & {
+          } --> Atomic("mark global written") {
             case (localId: Long) =>
               localRegion.markGlobalWriten(localId, totalLength)
-          } & {
+          } --> Atomic("response") {
             case localId: Long =>
               val fid = FileId.make(regionId, localId)
 
@@ -596,7 +596,7 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
               Rollbackable.success(fid) {}
           }
 
-          tx.perform(1, TransactionalContext.create(RetryStrategy.FOR_TIMES(globalSetting.maxWriteRetryTimes)))
+          TransactionRunner.perform(tx, 1, RetryStrategy.FOR_TIMES(globalSetting.maxWriteRetryTimes))
         }
       }
       finally {
@@ -614,7 +614,7 @@ class RegionFsServerException(msg: String, cause: Throwable = null) extends
 }
 
 class InsufficientNodeServerException(actual: Int, required: Int) extends
-  RegionFsServerException(s"insufficient node server for replica: actual: $actual, required: $required") {
+  RegionFsServerException(s"insufficient node server for replica, actual: $actual, required: $required") {
 
 }
 

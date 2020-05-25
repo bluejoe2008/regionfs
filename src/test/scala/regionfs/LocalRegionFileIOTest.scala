@@ -7,7 +7,7 @@ import org.apache.commons.io.IOUtils
 import org.grapheco.commons.util.Profiler._
 import org.grapheco.regionfs.GlobalSetting
 import org.grapheco.regionfs.server.LocalRegionManager
-import org.grapheco.regionfs.util.{CrcUtils, Transactional, TransactionalContext}
+import org.grapheco.regionfs.util.{Atomic, CrcUtils, TransactionRunner}
 import org.junit.{Assert, Test}
 
 /**
@@ -31,18 +31,18 @@ class LocalRegionFileIOTest extends FileTestBase {
 
     val id = timing(true, 10) {
       val clone = buf.duplicate()
-      val tx = Transactional {
+      val tx = Atomic("create local id") {
         case _ =>
           region.createLocalId()
-      } & {
+      } --> Atomic("save local file") {
         case localId: Long =>
           region.saveLocalFile(localId, clone, CrcUtils.computeCrc32(buf.duplicate()))
-      } & {
+      } --> Atomic("mark global written") {
         case localId: Long =>
           region.markGlobalWriten(localId, buf.remaining())
       }
 
-      tx.perform(1, TransactionalContext.DEFAULT).asInstanceOf[Long]
+      TransactionRunner.perform(tx, 1).asInstanceOf[Long]
     }
 
     val bytes2 = timing(true, 10) {

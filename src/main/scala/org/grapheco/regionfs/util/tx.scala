@@ -6,23 +6,21 @@ import org.grapheco.regionfs.util.Rollbackable.{Failure, Success}
 /**
   * Created by bluejoe on 2020/4/2.
   */
-object Transactional {
-  def apply(f: PartialFunction[Any, Rollbackable]) = new SimpleTransactional(f)
+object Atomic {
+  def apply(description: String)(f: PartialFunction[Any, Rollbackable]) = new SingleAtomic(description, f)
 }
 
-trait Transactional {
-  final def perform(x: Any, ctx: TransactionalContext): Any = ctx.runWithRetry(this, Some(x))
+trait Atomic {
+  def -->(a2: SingleAtomic): Atomic = andThen(a2)
 
-  def &(f2: PartialFunction[Any, Rollbackable]): Transactional = andThen(f2)
-
-  def andThen(f2: PartialFunction[Any, Rollbackable]): Transactional = new CompoundTransactional(this, f2)
+  def andThen(a2: SingleAtomic): Atomic = new CompositeAtomic(this, a2)
 }
 
-case class SimpleTransactional(f: (Any) => Rollbackable) extends Transactional {
+case class SingleAtomic(description: String, logic: (Any) => Rollbackable) extends Atomic {
 
 }
 
-case class CompoundTransactional(predecessor: Transactional, f2: (Any) => Rollbackable) extends Transactional {
+case class CompositeAtomic(a1: Atomic, a2: SingleAtomic) extends Atomic {
 
 }
 
@@ -30,15 +28,12 @@ trait RetryStrategy {
   def runWithRetry(f: => Rollbackable): Rollbackable
 }
 
-object TransactionalContext {
-  val DEFAULT: TransactionalContext = create(RetryStrategy.RUN_ONCE)
+object TransactionRunner extends Logging {
 
-  def create(retryStrategy: RetryStrategy): TransactionalContext = new TransactionalContext(retryStrategy)
-}
+  def perform(tx: Atomic, x: Any, retryStrategy: RetryStrategy = RetryStrategy.RUN_ONCE): Any = runWithRetry(tx, Some(x), retryStrategy)
 
-class TransactionalContext(retryStrategy: RetryStrategy) extends Logging {
-  def runWithRetry(tx: Transactional, x: Option[Any]): Any = {
-    _runWithRetry(tx, x) match {
+  private def runWithRetry(tx: Atomic, x: Option[Any], retryStrategy: RetryStrategy): Any = {
+    _runWithRetry(tx, x, retryStrategy) match {
       case Success(result, _) =>
         result
       case Failure(e) =>
@@ -50,17 +45,15 @@ class TransactionalContext(retryStrategy: RetryStrategy) extends Logging {
     }
   }
 
-  private def _runWithRetry(f: => Rollbackable): Rollbackable = retryStrategy.runWithRetry(f)
+  private def _runWithRetry(tx: Atomic, input: Option[Any], retryStrategy: RetryStrategy): Rollbackable = (tx, input) match {
+    case (SingleAtomic(description, logic), Some(x)) =>
+      retryStrategy.runWithRetry(logic(x))
 
-  private def _runWithRetry(tx: Transactional, input: Option[Any]): Rollbackable = (tx, input) match {
-    case (SimpleTransactional(f), Some(x)) =>
-      _runWithRetry(f(x))
-
-    case (CompoundTransactional(predecessor, f2), Some(x)) =>
-      val r1 = _runWithRetry(predecessor, input)
+    case (CompositeAtomic(a1, SingleAtomic(description, logic)), Some(x)) =>
+      val r1 = _runWithRetry(a1, input, retryStrategy)
       r1 match {
         case Success(y: Any, rollback) =>
-          val r2 = _runWithRetry(f2(y))
+          val r2 = retryStrategy.runWithRetry(logic(y))
           r2 match {
             case Success(z: Any, rollback2) =>
               Rollbackable.success(z) {

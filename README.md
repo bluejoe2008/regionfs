@@ -22,6 +22,8 @@ distributed file system for pandadb
 
 NOTE: make sure zookeeper cluster is running, suppose it has connecting string: `localhost:2181,localhost:2182,localhost:2183`
 
+By default, `zookeeper-3.5.x` is recommended. If you are using a lower version of zookeeper, please modify version of  artifact `org.apache.curator.curator-recipes` in `pom.xml` and `mvn clean package` manually.
+
 ## initializing rfs
 
 1. write a configuration file for rfs global settings `./conf/global.conf`
@@ -120,7 +122,7 @@ add repository in `pom.xml`:
       new FileInputStream(src), src.length), Duration.Inf)
 ```
 
-more examples, see https://github.com/bluejoe2008/regionfs/blob/master/src/test/scala/regionfs/FileIOWith1Node1ReplicaTest.scala
+more examples, see https://github.com/bluejoe2008/regionfs/blob/master/src/test/scala/regionfs/FileTestBase.scala
 
 ## TODO
 
@@ -128,5 +130,5 @@ more examples, see https://github.com/bluejoe2008/regionfs/blob/master/src/test/
 
 ## dependencies
 
-* hippo-rpc: enhanced RPC framework based on kraps-rpc
+* hippo-rpc: enhanced RPC framework based on kraps-rpc https://github.com/bluejoe2008/hippo-rpc
 * curator: zookeeper client libaray

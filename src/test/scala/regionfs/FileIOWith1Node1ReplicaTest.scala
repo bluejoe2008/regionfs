@@ -14,7 +14,7 @@ import scala.concurrent.duration.Duration
   * Created by bluejoe on 2019/8/23.
   */
 class FileIOWith1Node1ReplicaTest extends FileTestBase {
-  @Test
+  //@Test
   def testBulkWrite(): Unit = {
     (0 to 5000000).foreach { x =>
       println(s"writing file $x...")

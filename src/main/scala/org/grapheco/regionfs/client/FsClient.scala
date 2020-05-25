@@ -231,7 +231,7 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
 
   def createFile(crc32: Long, content: ByteBuffer): Future[CreateFileResponse] = {
     safeCall {
-      endPointRef.askWithStream[CreateFileResponse](
+      endPointRef.askWithBuffer[CreateFileResponse](
         CreateFileRequest(content.remaining(), crc32),
         Unpooled.wrappedBuffer(content)
       )
@@ -254,7 +254,7 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
                            crc32: Long,
                            content: ByteBuffer): Future[CreateSecondaryFileResponse] = {
     safeCall {
-      endPointRef.askWithStream[CreateSecondaryFileResponse](
+      endPointRef.askWithBuffer[CreateSecondaryFileResponse](
         CreateSecondaryFileRequest(regionId, maybeLocalId, totalLength, crc32),
         Unpooled.wrappedBuffer(content))
     }
@@ -262,7 +262,7 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
 
   def markSecondaryFileWritten(regionId: Long, localId: Long, length: Long): Future[MarkSecondaryFileWrittenResponse] = {
     safeCall {
-      endPointRef.askWithStream[MarkSecondaryFileWrittenResponse](
+      endPointRef.askWithBuffer[MarkSecondaryFileWrittenResponse](
         MarkSecondaryFileWrittenRequest(regionId, localId, length))
     }
   }

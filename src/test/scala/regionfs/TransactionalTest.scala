@@ -43,7 +43,7 @@ class TransactionalTest {
       }
   }
 
-  val tx = Transactional(step1) & (step2)
+  val tx = Atomic("-")(step1) --> Atomic("+")(step2)
 
   @Before
   def reset(): Unit = {
@@ -53,7 +53,7 @@ class TransactionalTest {
 
   @Test
   def testNormal(): Unit = {
-    val i: Any = tx.perform(50, TransactionalContext.DEFAULT)
+    val i: Any = TransactionRunner.perform(tx, 50)
     Assert.assertEquals(true, i)
     Assert.assertEquals(150, bluejoe)
     Assert.assertEquals(200, jason)
@@ -63,7 +63,7 @@ class TransactionalTest {
   def testStep1Failed(): Unit = {
     //fails on 1-st step
     try {
-      tx.perform(300, TransactionalContext.DEFAULT)
+      TransactionRunner.perform(tx, 300)
       Assert.assertTrue(false)
     }
     catch {
@@ -82,7 +82,7 @@ class TransactionalTest {
   def testStep2Failed(): Unit = {
     //fails on 2-st step
     try {
-      tx.perform(220, TransactionalContext.DEFAULT)
+      TransactionRunner.perform(tx, 220)
       Assert.assertTrue(false)
     }
     catch {
@@ -101,7 +101,7 @@ class TransactionalTest {
   def testRetry(): Unit = {
     var counter = 0
     //fails on step3
-    val tx2 = tx & {
+    val tx2 = tx --> Atomic("step3") {
       case x: Boolean => {
         counter += 1
         println(s"run step3...")
@@ -114,7 +114,7 @@ class TransactionalTest {
     }
 
     try {
-      tx2.perform(50, TransactionalContext.create(RetryStrategy.RUN_ONCE))
+      TransactionRunner.perform(tx2, 50, RetryStrategy.RUN_ONCE)
       Assert.assertTrue(false)
     }
     catch {
@@ -125,7 +125,7 @@ class TransactionalTest {
         Assert.assertTrue(false)
     }
 
-    val r2: Any = tx2.perform(50, TransactionalContext.create(RetryStrategy.FOR_TIMES(5)))
+    val r2: Any = TransactionRunner.perform(tx2, 50, RetryStrategy.FOR_TIMES(5))
     Assert.assertEquals("OK", r2)
     Assert.assertEquals(counter, 5)
   }
@@ -134,7 +134,7 @@ class TransactionalTest {
   def testRetry2(): Unit = {
     var counter = 0
     //fails on step0
-    val tx2 = Transactional {
+    val tx2 = Atomic("step0") {
       case m: Int => {
         counter += 1
         println(s"run step0...")
@@ -144,10 +144,10 @@ class TransactionalTest {
           Rollbackable.success(m) {
           }
       }
-    } & (step1) & (step2)
+    } --> Atomic("step1")(step1) --> Atomic("step2")(step2)
 
     try {
-      tx2.perform(50, TransactionalContext.create(RetryStrategy.RUN_ONCE))
+      TransactionRunner.perform(tx2, 50, RetryStrategy.RUN_ONCE)
       Assert.assertTrue(false)
     }
     catch {
@@ -157,7 +157,7 @@ class TransactionalTest {
         Assert.assertTrue(false)
     }
 
-    val r2: Any = tx2.perform(50, TransactionalContext.create(RetryStrategy.FOR_TIMES(5)))
+    val r2: Any = TransactionRunner.perform(tx2, 50, RetryStrategy.FOR_TIMES(5))
     Assert.assertEquals(true, r2)
     Assert.assertEquals(counter, 5)
   }
@@ -166,7 +166,7 @@ class TransactionalTest {
   def testRetry3(): Unit = {
     var counter = 0
     //fails on step1.5
-    val tx2 = Transactional(step1).& {
+    val tx2 = Atomic("step1")(step1) --> Atomic("step1.5") {
       case m: Int => {
         counter += 1
         println(s"run step1.5...")
@@ -176,10 +176,10 @@ class TransactionalTest {
           Rollbackable.success(m) {
           }
       }
-    }.&(step2)
+    } --> Atomic("step2")(step2)
 
     try {
-      tx2.perform(50, TransactionalContext.DEFAULT)
+      TransactionRunner.perform(tx2, 50)
       Assert.assertTrue(false)
     }
     catch {
@@ -189,7 +189,7 @@ class TransactionalTest {
         Assert.assertTrue(false)
     }
 
-    val r2: Any = tx2.perform(50, TransactionalContext.create(RetryStrategy.FOR_TIMES(5)))
+    val r2: Any = TransactionRunner.perform(tx2, 50, RetryStrategy.FOR_TIMES(5))
     Assert.assertEquals(true, r2)
     Assert.assertEquals(counter, 5)
   }

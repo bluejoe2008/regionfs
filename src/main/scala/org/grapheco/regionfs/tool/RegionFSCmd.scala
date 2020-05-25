@@ -55,7 +55,7 @@ class ConfigShellCommandExecutor extends ShellCommandExecutor {
     (commandLine.hasOption("conf"), commandLine.hasOption("zk")) match {
       case (true, _) =>
         val configFile = new File(commandLine.getOptionValue("conf")).getAbsoluteFile.getCanonicalFile
-        println(s"loading global setting from file `${configFile.getPath}`")
+        println(s"loading global setting from file '${configFile.getPath}'")
         new GlobalSettingWriter().write(configFile)
         println("global setting is successfully configured.");
 
@@ -67,7 +67,7 @@ class ConfigShellCommandExecutor extends ShellCommandExecutor {
         })
         println("}");
       case (false, false) =>
-        println("either `-conf` or `-zk` is required");
+        println("either '-conf' or '-zk' is required");
     }
   }
 }

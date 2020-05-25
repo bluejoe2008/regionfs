@@ -61,7 +61,6 @@ class ZooKeeperClient(curator: CuratorFramework) {
   def createAbsentNodes(): Unit = {
     curator.create().orSetData().forPath("/regionfs")
     curator.create().orSetData().forPath("/regionfs/nodes")
-    curator.create().orSetData().forPath("/regionfs/regions")
   }
 
   private def toByteArray(write: (DataOutputStream) => Unit): Array[Byte] = {

@@ -50,7 +50,7 @@ class GlobalSettingWriter extends Logging {
 
     val zks = conf.get(Constants.PARAMETER_KEY_ZOOKEEPER_ADDRESS).asString
     if (logger.isTraceEnabled) {
-      logger.trace(s"connecting to `$zks`...")
+      logger.trace(s"connecting to '$zks'...")
     }
 
     val zk = ZooKeeperClient.createWithoutCheck(zks)

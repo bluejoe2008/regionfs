@@ -6,7 +6,7 @@ import org.junit.{Assert, Before, Test}
 /**
   * Created by bluejoe on 2020/4/2.
   */
-class TransactionalTest {
+class TransactionTest {
   var (bluejoe, jason) = (100, 250)
 
   //jason pay money to bluejoe

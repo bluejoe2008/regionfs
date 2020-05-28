@@ -500,7 +500,7 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
     private def handleMarkSecondaryFileWrittenRequest(regionId: Long, localId: Long, totalLength: Long, ctx: ReceiveContext): Unit = {
       assert(totalLength >= 0)
       val region = localRegionManager.get(regionId).get
-      region.markGlobalWriten(localId, totalLength)
+      region.markGlobalWritten(localId, totalLength)
 
       ctx.reply(MarkSecondaryFileWrittenResponse(regionId, localId, region.info))
     }
@@ -513,7 +513,7 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
       }
 
       val region = localRegionManager.get(regionId).get
-      region.saveLocalFile(localId, extraInput.duplicate(), crc32)
+      region.writeLogFile(localId, extraInput.duplicate(), crc32)
       region.markLocalWriten(localId)
 
       ctx.reply(CreateSecondaryFileResponse(regionId, localId))
@@ -532,11 +532,10 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
       mutex.acquire()
 
       try {
-        //i am a primary region
+        //yes! i am a primary region
         if (globalSetting.replicaNum > 1 &&
           globalSetting.consistencyStrategy == Constants.CONSISTENCY_STRATEGY_STRONG) {
 
-          //create secondary files
           val tx = Atomic("create local id") {
             case _ =>
               localRegion.createLocalId()
@@ -545,9 +544,9 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
               Rollbackable.success(localId -> neighbourRegions.map(x =>
                 clientOf(x.nodeId).createSecondaryFile(regionId, localId, totalLength, crc32,
                   extraInput.duplicate()))) {}
-          } --> Atomic("save local file") {
+          } --> Atomic("save region log & mem") {
             case (localId: Long, futures: Array[Future[CreateSecondaryFileResponse]]) =>
-              localRegion.saveLocalFile(localId, extraInput.duplicate(), crc32) map {
+              localRegion.writeLogFile(localId, extraInput.duplicate(), crc32) map {
                 case _ =>
                   Rollbackable.success(localId -> futures) {}
               }
@@ -566,7 +565,7 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
 
               val neighbourResults = futures.map(Await.result(_, Duration.Inf)).map(x => x.info)
 
-              localRegion.markGlobalWriten(localId, totalLength)
+              localRegion.markGlobalWritten(localId, totalLength)
               remoteRegionWatcher.cacheRemoteSeconaryRegions(neighbourResults)
 
               val fid = FileId.make(regionId, localId)
@@ -584,10 +583,10 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
               localRegion.createLocalId()
           } --> Atomic("save local file") {
             case localId: Long =>
-              localRegion.saveLocalFile(localId, extraInput.duplicate(), crc32)
+              localRegion.writeLogFile(localId, extraInput.duplicate(), crc32)
           } --> Atomic("mark global written") {
             case (localId: Long) =>
-              localRegion.markGlobalWriten(localId, totalLength)
+              localRegion.markGlobalWritten(localId, totalLength)
           } --> Atomic("response") {
             case localId: Long =>
               val fid = FileId.make(regionId, localId)

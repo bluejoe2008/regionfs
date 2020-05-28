@@ -359,10 +359,10 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
         cleanData()
         ctx.reply(CleanDataResponse(address))
 
-      case RegisterSeconaryRegionsRequest(regions: Array[RegionInfo]) =>
+      case RegisterSecondaryRegionsRequest(regions: Array[RegionInfo]) =>
         remoteRegionWatcher.cacheRemoteSeconaryRegions(regions)
 
-      case DeleteSeconaryFileRequest(fileId: FileId) =>
+      case DeleteSecondaryFileRequest(fileId: FileId) =>
         handleDeleteSeconaryFileRequest(fileId, ctx)
 
       case DeleteFileRequest(fileId: FileId) =>
@@ -390,8 +390,8 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
           if (globalSetting.replicaNum > 1 && (fileId.regionId >> 16) == nodeId) {
             //notify secondary regions
             val futures = remoteRegionWatcher.getSecondaryRegions(fileId.regionId).map(x =>
-              clientOf(x.nodeId).endPointRef.ask[DeleteSeconaryFileResponse](
-                DeleteSeconaryFileRequest(fileId)))
+              clientOf(x.nodeId).endPointRef.ask[DeleteSecondaryFileResponse](
+                DeleteSecondaryFileRequest(fileId)))
 
             //TODO: if fail?
             (Set(localRegion.info) ++ futures.map(Await.result(_, Duration.Inf).info)).toArray
@@ -420,11 +420,11 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
           throw new FileNotFoundException(nodeId, fileId)
 
         val success = maybeRegion.get.delete(fileId.localId)
-        ctx.reply(DeleteSeconaryFileResponse(success, null, maybeRegion.get.info))
+        ctx.reply(DeleteSecondaryFileResponse(success, null, maybeRegion.get.info))
       }
       catch {
         case e: Throwable =>
-          ctx.reply(DeleteSeconaryFileResponse(false, e.getMessage, maybeRegion.get.info))
+          ctx.reply(DeleteSecondaryFileResponse(false, e.getMessage, maybeRegion.get.info))
       }
     }
 

@@ -71,7 +71,7 @@ case class MarkSecondaryFileWrittenResponse(regionId: Long, localId: Long, info:
 
 }
 
-case class RegisterSeconaryRegionsRequest(infos: Array[RegionInfo]) {
+case class RegisterSecondaryRegionsRequest(infos: Array[RegionInfo]) {
 
 }
 
@@ -83,11 +83,11 @@ case class DeleteFileRequest(fileId: FileId) {
 
 }
 
-case class DeleteSeconaryFileRequest(fileId: FileId) {
+case class DeleteSecondaryFileRequest(fileId: FileId) {
 
 }
 
-case class DeleteSeconaryFileResponse(success: Boolean, error: String, info: RegionInfo) {
+case class DeleteSecondaryFileResponse(success: Boolean, error: String, info: RegionInfo) {
 
 }
 

@@ -100,9 +100,11 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
       override def accepts(t: NodeServerInfo): Boolean = true
 
       override def onUpdated(t: NodeServerInfo): Unit = {
+
       }
 
       override def onCreated(t: NodeServerInfo): Unit = {
+
       }
 
       override def onInitialized(batch: Iterable[NodeServerInfo]): Unit = {
@@ -112,6 +114,7 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
       }
 
       override def onDeleted(t: NodeServerInfo): Unit = {
+
       }
     }).addHandler(
     new ParsedChildNodeEventHandler[NodeServerInfo] {

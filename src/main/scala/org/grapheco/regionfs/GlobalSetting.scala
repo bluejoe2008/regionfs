@@ -26,7 +26,7 @@ class GlobalSetting(val props: Properties) {
     withDefault(Constants.CONSISTENCY_STRATEGY_STRONG).
     withOptions(Map("strong" -> Constants.CONSISTENCY_STRATEGY_STRONG,
       "eventual" -> Constants.CONSISTENCY_STRATEGY_EVENTUAL)).asInt
-  lazy val maxRegionMemSize: Long = 1024 * 1024
+
   lazy val minWritableRegions: Int = conf.get(Constants.PARAMETER_KEY_MIN_WRITABLE_REGIONS).withDefault(Constants.DEFAULT_MIN_WRITABLE_REGIONS).asInt
   lazy val replicaNum: Int = conf.get(Constants.PARAMETER_KEY_REPLICA_NUM).withDefault(Constants.DEFAULT_REPLICA_NUM).asInt
   lazy val regionSizeLimit: Long = conf.get(Constants.PARAMETER_KEY_REGION_SIZE_LIMIT).withDefault(Constants.DEFAULT_REGION_SIZE_LIMIT).asLong

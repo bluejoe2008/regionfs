@@ -6,8 +6,8 @@ import org.grapheco.regionfs.util.Version
   * Created by bluejoe on 2020/2/7.
   */
 object Constants {
-  val CURRENT_VERSION: Version = Version("0.9.2")
-  val LOWEST_SUPPORTED_VERSION: Version = Version("0.9.2")
+  val CURRENT_VERSION: Version = Version("0.9.1")
+  val LOWEST_SUPPORTED_VERSION: Version = Version("0.9.1")
 
   val FILE_STATUS_TO_WRITE: Byte = 1
   val FILE_STATUS_LOCAL_WRITTEN: Byte = 2

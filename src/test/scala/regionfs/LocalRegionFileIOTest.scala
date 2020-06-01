@@ -36,10 +36,10 @@ class LocalRegionFileIOTest extends FileTestBase {
           region.createLocalId()
       } --> Atomic("save local file") {
         case localId: Long =>
-          region.writeLogFile(localId, clone, CrcUtils.computeCrc32(buf.duplicate()))
+          region.saveLocalFile(localId, clone, CrcUtils.computeCrc32(buf.duplicate()))
       } --> Atomic("mark global written") {
         case localId: Long =>
-          region.markGlobalWritten(localId, buf.remaining())
+          region.markGlobalWriten(localId, buf.remaining())
       }
 
       TransactionRunner.perform(tx, 1).asInstanceOf[Long]

@@ -239,7 +239,7 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
   }
 
   def registerSeconaryRegions(localSecondaryRegions: Array[RegionInfo]) = {
-    endPointRef.send(RegisterSecondaryRegionsRequest(localSecondaryRegions))
+    endPointRef.send(RegisterSeconaryRegionsRequest(localSecondaryRegions))
   }
 
   def createSecondaryRegion(regionId: Long): Future[CreateSecondaryRegionResponse] = {

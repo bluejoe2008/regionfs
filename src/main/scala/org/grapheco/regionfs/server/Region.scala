@@ -23,40 +23,6 @@ case class RegionConfig(regionDir: File, globalSetting: GlobalSetting) {
 
 }
 
-class RegionLog(conf: RegionConfig) {
-  private val fileBody = new File(conf.regionDir, "log")
-  val appender = new FileOutputStream(fileBody, true).getChannel
-
-  def append(localId: Long, buf: ByteBuffer, crc32: Long): Long = {
-    val offset = appender.position()
-    val buf1 = ByteBuffer.allocate(1024)
-    buf1.putLong(localId)
-    buf1.putLong(crc32)
-    buf1.putLong(buf.remaining())
-    appender.write(Array(buf1, buf))
-    offset
-  }
-
-  def close(): Unit = {
-    appender.close()
-  }
-}
-
-class RegionMem(val conf: RegionConfig) {
-
-  case class BufferedFile(localId: Long, buf: ByteBuffer, crc32: Long)
-
-  val buffer = ArrayBuffer[BufferedFile]()
-
-  def append(localId: Long, buf: ByteBuffer, crc32: Long): Unit = {
-    buffer+=BufferedFile(localId, buf.duplicate(), crc32)
-    val size2= totalSize.addAndGet(buf.remaining())
-    if(size2>conf.globalSetting.maxRegionMemSize){
-
-    }
-  }
-}
-
 /**
   * metadata of a region
   */
@@ -664,7 +630,7 @@ class WrittenMismatchedStreamException extends RegionFsServerException("mismatch
 
 }
 
-class ServerIsBusyException(nodeId: Int) extends RegionFsClientException(s"server is busy: $nodeId") {
+class ServerIsBudyException(nodeId: Int) extends RegionFsClientException(s"server is busy: $nodeId") {
 
 }
 

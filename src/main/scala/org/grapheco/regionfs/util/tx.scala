@@ -47,7 +47,7 @@ object TransactionRunner extends Logging {
 
   private def _runWithRetry(description: String, logic: (Any) => Rollbackable, x: Any, retryStrategy: RetryStrategy) = {
     if (logger.isTraceEnabled()) {
-      logger.trace(s"atomic call: $description, input: $x")
+      logger.trace(s"atomic procedure (input=$x): $description")
     }
 
     retryStrategy.runWithRetry(logic(x))

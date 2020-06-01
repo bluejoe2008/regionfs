@@ -9,9 +9,6 @@ object Constants {
   val CURRENT_VERSION: Version = Version("0.9.2")
   val LOWEST_SUPPORTED_VERSION: Version = Version("0.9.2")
 
-  val FILE_STATUS_TO_WRITE: Byte = 1
-  val FILE_STATUS_LOCAL_WRITTEN: Byte = 2
-  val FILE_STATUS_GLOBAL_WRITTEN: Byte = 3
   val FILE_STATUS_MERGED: Byte = 4
   val FILE_STATUS_DELETED: Byte = 5
 

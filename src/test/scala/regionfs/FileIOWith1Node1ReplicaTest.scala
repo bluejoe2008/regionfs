@@ -46,12 +46,13 @@ class FileIOWith1Node1ReplicaTest extends FileTestBase {
       val bytes = readBytes(new File(s"./testdata/inputs/$i"))
       for (m <- 1 to 10) {
         val id = super.writeFile(new File(s"./testdata/inputs/$i"))
-        Assert.assertArrayEquals(bytes, readBytes(id))
+        val bytes2 = readBytes(id)
+        Assert.assertArrayEquals(bytes, bytes2)
       }
     }
 
     val count3 = super.countFiles();
-    Assert.assertEquals(count3, count2 + 10 * BLOB_LENGTH.size + 10 * BLOB_LENGTH.size)
+    Assert.assertEquals(count2 + 10 * BLOB_LENGTH.size + 10 * BLOB_LENGTH.size, count3)
   }
 
   @Test
@@ -100,9 +101,8 @@ class FileIOWith1Node1ReplicaTest extends FileTestBase {
 
     regionWithCount.foreach { x =>
       val region = primaryRegionOf(x._1)
-      Assert.assertEquals(x._2.size, region.bufferedFileCount())
-      Assert.assertEquals(0, countFiles(region, Constants.FILE_STATUS_MERGED))
-      Assert.assertNotEquals(0, countFiles(region, Constants.FILE_STATUS_GLOBAL_WRITTEN))
+      Assert.assertEquals(x._2.size, region.unmergedFileCount())
+      Assert.assertNotEquals(0, countFiles(region, Constants.FILE_STATUS_MERGED))
     }
 
     Thread.sleep(3000)
@@ -110,8 +110,7 @@ class FileIOWith1Node1ReplicaTest extends FileTestBase {
     //buffered files will be flushed
     regionWithCount.foreach { x =>
       val region = primaryRegionOf(x._1)
-      Assert.assertEquals(0, region.bufferedFileCount())
-      Assert.assertEquals(0, countFiles(region, Constants.FILE_STATUS_GLOBAL_WRITTEN))
+      Assert.assertEquals(0, region.unmergedFileCount())
       Assert.assertNotEquals(0, countFiles(region, Constants.FILE_STATUS_MERGED))
     }
 

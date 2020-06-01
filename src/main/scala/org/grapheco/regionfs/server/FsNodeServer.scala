@@ -486,21 +486,23 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
         throw new FileNotFoundException(nodeId, fileId)
       }
 
-      val body = Unpooled.wrappedBuffer(maybeBuffer.get.duplicate())
-      val crc32 = CrcUtils.computeCrc32(maybeBuffer.get.duplicate())
+      maybeBuffer.foreach { buf0 =>
+        val body = Unpooled.wrappedBuffer(buf0.duplicate())
+        val crc32 = CrcUtils.computeCrc32(buf0.duplicate())
 
-      val buf = Unpooled.buffer()
-      buf.writeObject(ReadFileResponseHead(body.readableBytes(), crc32,
-        (Set(localRegion.info) ++ remoteRegionWatcher.getSecondaryRegions(fileId.regionId)).toArray))
+        val buf = Unpooled.buffer()
+        buf.writeObject(ReadFileResponseHead(body.readableBytes(), crc32,
+          (Set(localRegion.info) ++ remoteRegionWatcher.getSecondaryRegions(fileId.regionId)).toArray))
 
-      buf.writeBytes(body)
-      ctx.replyBuffer(buf)
+        buf.writeBytes(body)
+        ctx.replyBuffer(buf)
+      }
     }
 
     private def handleMarkSecondaryFileWrittenRequest(regionId: Long, localId: Long, totalLength: Long, ctx: ReceiveContext): Unit = {
       assert(totalLength >= 0)
       val region = localRegionManager.get(regionId).get
-      region.markGlobalWritten(localId, totalLength)
+      region.commitFile(localId)
 
       ctx.reply(MarkSecondaryFileWrittenResponse(regionId, localId, region.info))
     }
@@ -513,15 +515,15 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
       }
 
       val region = localRegionManager.get(regionId).get
-      region.writeLogFile(localId, extraInput.duplicate(), crc32)
-      region.markLocalWriten(localId)
-
+      region.stageFile(localId, extraInput.duplicate(), crc32)
       ctx.reply(CreateSecondaryFileResponse(regionId, localId))
     }
 
     private def handleCreateFileRequest(totalLength: Long, crc32: Long, extraInput: ByteBuffer, ctx: ReceiveContext): Unit = {
+      val buf = extraInput
+
       //primary region
-      if (CrcUtils.computeCrc32(extraInput.duplicate()) != crc32) {
+      if (CrcUtils.computeCrc32(buf.duplicate()) != crc32) {
         throw new ReceivedMismatchedStreamException()
       }
 
@@ -532,7 +534,7 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
       mutex.acquire()
 
       try {
-        //yes! i am a primary region
+        //replicaNum > 1
         if (globalSetting.replicaNum > 1 &&
           globalSetting.consistencyStrategy == Constants.CONSISTENCY_STRATEGY_STRONG) {
 
@@ -543,10 +545,10 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
             case localId: Long =>
               Rollbackable.success(localId -> neighbourRegions.map(x =>
                 clientOf(x.nodeId).createSecondaryFile(regionId, localId, totalLength, crc32,
-                  extraInput.duplicate()))) {}
-          } --> Atomic("save region log & mem") {
+                  buf.duplicate()))) {}
+          } --> Atomic("file->staged") {
             case (localId: Long, futures: Array[Future[CreateSecondaryFileResponse]]) =>
-              localRegion.writeLogFile(localId, extraInput.duplicate(), crc32) map {
+              localRegion.stageFile(localId, buf.duplicate(), crc32) map {
                 case _ =>
                   Rollbackable.success(localId -> futures) {}
               }
@@ -555,17 +557,14 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
               futures.foreach(Await.result(_, Duration.Inf))
 
               Rollbackable.success(localId) {}
-          } --> Atomic("mark local written") {
-            case (localId: Long) =>
-              localRegion.markLocalWriten(localId)
-          } --> Atomic("mark global written") {
+          } --> Atomic("file->committed") {
             case (localId: Long) =>
               val futures =
                 neighbourRegions.map(x => clientOf(x.nodeId).markSecondaryFileWritten(regionId, localId, totalLength))
 
               val neighbourResults = futures.map(Await.result(_, Duration.Inf)).map(x => x.info)
 
-              localRegion.markGlobalWritten(localId, totalLength)
+              localRegion.commitFile(localId)
               remoteRegionWatcher.cacheRemoteSeconaryRegions(neighbourResults)
 
               val fid = FileId.make(regionId, localId)
@@ -581,12 +580,12 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
           val tx = Atomic("create local id") {
             case _ =>
               localRegion.createLocalId()
-          } --> Atomic("save local file") {
+          } --> Atomic("file->staged") {
             case localId: Long =>
-              localRegion.writeLogFile(localId, extraInput.duplicate(), crc32)
-          } --> Atomic("mark global written") {
+              localRegion.stageFile(localId, buf.duplicate(), crc32)
+          } --> Atomic("file->committed") {
             case (localId: Long) =>
-              localRegion.markGlobalWritten(localId, totalLength)
+              localRegion.commitFile(localId)
           } --> Atomic("response") {
             case localId: Long =>
               val fid = FileId.make(regionId, localId)

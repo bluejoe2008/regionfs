@@ -3,7 +3,6 @@ package org.grapheco.regionfs.server
 import java.io._
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
-import java.nio.file.{Files, Paths}
 import java.util.concurrent.atomic.AtomicLong
 
 import io.netty.buffer.{ByteBuf, Unpooled}
@@ -13,8 +12,8 @@ import org.grapheco.regionfs.client.RegionFsClientException
 import org.grapheco.regionfs.util._
 import org.grapheco.regionfs.{Constants, FileId, GlobalSetting}
 
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
-import scala.collection.{JavaConversions, mutable}
 
 /**
   * Created by bluejoe on 2019/8/30.
@@ -23,15 +22,62 @@ case class RegionConfig(regionDir: File, globalSetting: GlobalSetting) {
 
 }
 
-class RegionOpLog(conf: RegionConfig){
-  private val file = new File(conf.regionDir, "log")
+class RegionLocalIdGen(conf: RegionConfig) {
+  private val file = new File(conf.regionDir, "idgen")
+  val ID_SEQUENCE_SIZE = 10
+  private val id: AtomicLong = {
+    if (file.length() == 0) {
+      new AtomicLong(0)
+    }
+    else {
+      val fis = new DataInputStream(new FileInputStream(file))
+      val current = fis.readLong()
+      fis.close()
+
+      new AtomicLong(current)
+    }
+  }
+
+  private val bound = new AtomicLong(0)
+
+  private def loadNextSequence(): Unit = {
+    val current = id.get()
+    val end = current + ID_SEQUENCE_SIZE - 1
+    val fos = new DataOutputStream(new FileOutputStream(file))
+    fos.writeLong(end)
+    fos.close()
+    bound.set(end)
+  }
+
+  def nextId(): Long = {
+    val nid = id.incrementAndGet()
+    //all ids consumed
+    if (nid > bound.get()) {
+      loadNextSequence()
+    }
+    nid
+  }
+
+  def flush(): Unit = {
+    val fos = new DataOutputStream(new FileOutputStream(file))
+    fos.writeLong(id.get())
+    fos.close()
+  }
+
+  def close(): Unit = {
+    flush()
+  }
+}
+
+class RegionWal(conf: RegionConfig) {
+  private val file = new File(conf.regionDir, "wal")
   private val appender = new FileOutputStream(file, true).getChannel
 
   def logCreateFile(localId: Long): Long = {
     val buf = ByteBuffer.allocate(1024)
     buf.putLong(localId)
     buf.putLong(1)
-
+    buf.flip()
     appender.write(buf)
   }
 
@@ -42,10 +88,14 @@ class RegionOpLog(conf: RegionConfig){
 
     appender.write(buf)
   }
+
+  def close(): Unit = {
+    appender.close()
+  }
 }
 
-class RegionFileBuffer(conf: RegionConfig) {
-  private val file = new File(conf.regionDir, "buffer")
+class RegionFileStage(conf: RegionConfig) {
+  private val file = new File(conf.regionDir, "stage")
   private val appender = new FileOutputStream(file, true).getChannel
 
   def append(localId: Long, buf: ByteBuffer, crc32: Long): Long = {
@@ -54,6 +104,7 @@ class RegionFileBuffer(conf: RegionConfig) {
     buf1.putLong(localId)
     buf1.putLong(crc32)
     buf1.putLong(buf.remaining())
+    buf1.flip()
     appender.write(Array(buf1, buf))
     offset
   }
@@ -63,26 +114,66 @@ class RegionFileBuffer(conf: RegionConfig) {
   }
 }
 
-case class MemFileEntry(localId: Long, buf: ByteBuffer, length: Long, crc32: Long)
+case class MemFileEntry(localId: Long, buf: ByteBuf, length: Long, crc32: Long)
 
-class RegionMem(val conf: RegionConfig) {
+class RegionMem(val conf: RegionConfig, write: (MemFileEntry) => Unit, delete: (Long) => Unit)
+  extends Logging {
 
-  val mem = mutable.Map[Long, MemFileEntry]()
+  private val staged = mutable.Map[Long, MemFileEntry]()
+  private val committed = mutable.Map[Long, MemFileEntry]()
+  private val removed = mutable.Set[Long]()
 
-  def append(localId: Long, buf: ByteBuffer, crc32: Long): Unit = {
-    mem += localId -> MemFileEntry(localId, buf.duplicate(), buf.remaining(), crc32)
+  def stage(localId: Long, buf: ByteBuffer, crc32: Long): Unit = {
+    val buf2 = Unpooled.copiedBuffer(buf)
+    staged += localId -> MemFileEntry(localId, buf2, buf2.readableBytes(), crc32)
   }
 
-  def checkAndFlush(flush: (MemFileEntry) => Unit): Unit = {
-    val totalSize = mem.values.reduce(_.length + _.length)
-    if (totalSize > conf.globalSetting.maxRegionMemSize) {
-      while (!mem.isEmpty) {
-        val entry = mem.head
-        flush(entry._2)
-        mem.remove(entry._1)
+  def commit(localId: Long): Unit = {
+    committed += localId -> (staged.remove(localId).get)
+  }
+
+  def remove(localId: Long): Unit = {
+    removed += localId
+  }
+
+  def read(localId: Long): (Option[ByteBuf], Boolean) = {
+    committed.get(localId).map(_.buf) -> removed.contains(localId)
+  }
+
+  def checkIfFull(): Unit = {
+    val totalSize = (committed -- removed).values.map(_.length).reduce(_ + _)
+    totalSize > conf.globalSetting.maxRegionMemSize
+  }
+
+  def flush(): Unit = {
+    val consumedCreated = ArrayBuffer[Long]()
+
+    committed.foreach { kv =>
+      if (!removed.contains(kv._1)) {
+        write(kv._2)
       }
+      consumedCreated += kv._1
+    }
+
+    val consumeRemoved = ArrayBuffer[Long]()
+    committed.foreach { kv =>
+      if (!committed.contains(kv._1)) {
+        delete(kv._1)
+      }
+      consumeRemoved += kv._1
+    }
+
+    this.synchronized {
+      committed --= consumedCreated
+      removed --= consumeRemoved
     }
   }
+
+  def close(): Unit = {
+    flush()
+  }
+
+  def countCommitted = committed.size - removed.size
 }
 
 /**
@@ -92,21 +183,24 @@ case class FileMetadata(localId: Long, creationTime: Long, offset: Long, length:
   def tail = offset + length
 }
 
-//[localId:Long][time:Long][offset:Long][length:Long][crc32:Long][status:Byte]
-//TODO: use 2-level metadata to avoid unused localIds
-//level1: [offset:Long]
+//use 2-level metadata to avoid unused localIds
+//level1: [offset:Long], offset=0 means unused
 //level2: [localId:Long][offset:Long][length:Long][crc32:Long][status:Byte]
 class RegionMetadataStore(conf: RegionConfig) extends Logging {
 
-  val file = new File(conf.regionDir, "meta")
-  val fptr = new RandomAccessFile(file, "rw")
+  val file1 = new File(conf.regionDir, "meta1")
+  val fptr1 = new RandomAccessFile(file1, "rw")
 
-  if (fptr.length() == 0) {
-    fptr.writeLong(Constants.CURRENT_VERSION.toLong)
-    fptr.writeLong(System.currentTimeMillis())
+  val file2 = new File(conf.regionDir, "meta2")
+  val fptr2 = new RandomAccessFile(file2, "rw")
+
+  //write version number
+  if (fptr2.length() == 0) {
+    fptr2.writeLong(Constants.CURRENT_VERSION.toLong)
+    fptr2.writeLong(System.currentTimeMillis())
   }
   else {
-    val version = Version(fptr.readLong())
+    val version = Version(fptr2.readLong())
     if (version.compareTo(Constants.CURRENT_VERSION) > 0) {
       throw new HigherVersionRegionException(version)
     }
@@ -126,24 +220,20 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
 
   val METADATA_BLOCK_FOR_READ = new Array[Byte](Constants.METADATA_ENTRY_LENGTH_WITH_PADDING)
 
-  def createNextId(): Long = {
-    fptr.synchronized {
-      val localId = count()
-      fptr.seek(localId * Constants.METADATA_ENTRY_LENGTH_WITH_PADDING)
-      write(localId, Constants.FILE_STATUS_TO_WRITE, -1, -1, 0)
-      localId
-    }
-  }
-
   def read(localId: Long): Option[FileMetadata] = {
     if (localId >= count()) {
       None
     }
     else {
       cache.get(localId).orElse {
-        fptr.synchronized {
-          fptr.seek(offsetOf(localId))
-          fptr.readFully(METADATA_BLOCK_FOR_READ)
+        val offset = fptr1.synchronized {
+          fptr1.seek(localId * 8)
+          fptr1.readLong()
+        }
+
+        fptr2.synchronized {
+          fptr2.seek(offset)
+          fptr2.readFully(METADATA_BLOCK_FOR_READ)
         }
 
         val dis = new DataInputStream(new ByteArrayInputStream(METADATA_BLOCK_FOR_READ))
@@ -169,19 +259,22 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
     //padding
     dos.write(new Array[Byte](Constants.METADATA_ENTRY_LENGTH_WITH_PADDING - dos.size()))
 
-    fptr.synchronized {
+    val offset2 = fptr2.length()
+
+    fptr2.synchronized {
       //maybe overwrite
-      fptr.seek(offsetOf(localId))
-      fptr.write(block.toByteArray)
+      fptr2.seek(offset2)
+      fptr2.write(block.toByteArray)
+    }
+
+    fptr1.synchronized {
+      fptr1.seek(localId * 8)
+      fptr1.writeLong(offset2)
     }
 
     dos.close()
 
     cache.put(localId, FileMetadata(localId, time, offset, length, crc32, status))
-  }
-
-  private def offsetOf(localId: Long): Long = {
-    OFFSET_OF_CONTENT + Constants.METADATA_ENTRY_LENGTH_WITH_PADDING * localId
   }
 
   //since=0,tail=1
@@ -196,7 +289,7 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
 
     while (n < tail && bodyPatchSize < Constants.MAX_PATCH_SIZE) {
       val meta = read(n).get
-      if (meta.status == Constants.FILE_STATUS_GLOBAL_WRITTEN || meta.status == Constants.FILE_STATUS_MERGED) {
+      if (meta.status == Constants.FILE_STATUS_MERGED) {
         ids += (n -> meta.length)
         bodyPatchSize += meta.length
       }
@@ -209,10 +302,11 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
   }
 
   def close(): Unit = {
-    fptr.close()
+    fptr1.close()
+    fptr2.close()
   }
 
-  def count() = (fptr.length() - OFFSET_OF_CONTENT) / Constants.METADATA_ENTRY_LENGTH_WITH_PADDING
+  def count() = (fptr2.length() - OFFSET_OF_CONTENT) / Constants.METADATA_ENTRY_LENGTH_WITH_PADDING
 }
 
 class RegionBodyStore(conf: RegionConfig) {
@@ -274,31 +368,33 @@ class RegionBodyStore(conf: RegionConfig) {
 
 /**
   * a Region store files in storeDir
+  * new file-->stage-->wal-->body
   */
 class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listener: RegionEventListener) extends Logging {
   val isPrimary = (regionId >> 16) == nodeId
   val isSecondary = !isPrimary
 
-  private lazy val rlog = new RegionOpLog(conf)
-  private lazy val rbuffer = new RegionFileBuffer(conf)
-  private lazy val rmem = new RegionMem(conf)
-  private lazy val rbody = new RegionBodyStore(conf)
-  private lazy val rmeta = new RegionMetadataStore(conf)
-  private lazy val rtrash = new RegionTrashStore(conf)
+  private lazy val wal = new RegionWal(conf)
+  private lazy val idgen = new RegionLocalIdGen(conf)
+  private lazy val stage = new RegionFileStage(conf)
+  private lazy val mem = new RegionMem(conf, performWrite(_), performDelete(_))
+  private lazy val body = new RegionBodyStore(conf)
+  private lazy val meta = new RegionMetadataStore(conf)
 
-  def revision() = rmeta.count() //fids.current
+  def revision() = meta.count() //fids.current
 
-  def fileCount() = rmeta.count() - rtrash.count()
+  def fileCount() = meta.count() + mem.countCommitted
 
-  def bufferedFileCount() = rmem.mem.size
+  def unmergedFileCount() = mem.countCommitted
 
-  def bodyLength() = rbody.fptr.length()
+  def bodyLength() = body.fptr.length()
 
   //TODO: archive
   def isWritable = bodyLength <= conf.globalSetting.regionSizeLimit
 
   def listFiles(): Iterable[FileEntry] = {
-    rmeta.entries().map { meta =>
+    //FIXME
+    meta.entries().map { meta =>
       new FileEntry() {
         override val id = FileId.make(regionId, meta.localId)
         override val creationTime = meta.creationTime
@@ -317,66 +413,53 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
   }
 
   def createLocalId(): Rollbackable = {
-    val localId = rmeta.createNextId()
-    traffic.toWrite(localId)
+    val localId = idgen.nextId()
+    Rollbackable.success(localId) {
+    }
+  }
+
+  def commitFile(localId: Long): Rollbackable = {
+    wal.logCreateFile(localId)
+    mem.commit(localId)
     Rollbackable.success(localId) {
 
     }
   }
 
-  def markGlobalWritten(localId: Long, length: Long): Rollbackable = {
-    rmeta.write(localId, Constants.FILE_STATUS_GLOBAL_WRITTEN, -1, length, 0)
-    traffic.completeWrite(localId)
-    Rollbackable.success(localId) {
-
-    }
-  }
-
-  def writeLogFile(localId: Long, buf: ByteBuffer, crc32: Long): Rollbackable = {
-    //save temp file
-    /*
-    rmeta.write(localId, Constants.FILE_STATUS_TO_WRITE, -1, -1, 0)
-    rmem.write(localId, buf.duplicate(), crc32)
-    */
-    rbuffer.append(localId, buf, crc32)
-    rmem.append(localId, buf, crc32)
+  def stageFile(localId: Long, buf: ByteBuffer, crc32: Long): Rollbackable = {
+    stage.append(localId, buf.duplicate(), crc32)
+    mem.stage(localId, buf.duplicate(), crc32)
     Rollbackable.success(localId) {
 
     }
   }
 
   def close(): Unit = {
-    rbody.close()
-    rmeta.close()
-    rtrash.close()
+    wal.close()
+    idgen.close()
+    mem.close()
+    body.close()
+    meta.close()
   }
 
   def read(localId: Long): Option[ByteBuffer] = {
-    if (rtrash.contains(localId))
-      None
-    else {
-      rmeta.read(localId) match {
-        case None => None
-        case Some(meta) =>
-          meta.status match {
-            case Constants.FILE_STATUS_GLOBAL_WRITTEN =>
-              Some(rmem.read(localId, meta.length))
-            case Constants.FILE_STATUS_MERGED =>
-              Some(rbody.read(meta.offset, meta.length))
-            case _ => None
-          }
-      }
+    mem.read(localId) match {
+      case (_, true) => None
+      case (Some(buf), false) => Some(buf.nioBuffer())
+      case (None, false) =>
+        meta.read(localId) match {
+          case None =>
+            None
+          case Some(meta) =>
+            Some(body.read(meta.offset, meta.length))
+        }
     }
   }
 
   def delete(localId: Long): Boolean = {
-    if (rmeta.read(localId).isDefined && !rtrash.contains(localId)) {
-      rtrash.append(localId)
-      true
-    }
-    else {
-      false
-    }
+    wal.logRemoveFile(localId)
+    mem.remove(localId)
+    true
   }
 
   def offerPatch(sinceRevision: Long): ByteBuf = {
@@ -392,7 +475,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
       buf
     }
     else {
-      val metas = rmeta.offerMetaPatch(sinceRevision)
+      val metas = meta.offerMetaPatch(sinceRevision)
 
       //flag, regionId, revision, fileCount
       buf.writeByte(Constants.MARK_GET_REGION_PATCH_OK).
@@ -433,12 +516,12 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
           val buf = Unpooled.buffer(1024)
           buf.writeBytes(is, fileSize.toInt)
 
-          val tx = Atomic("save local file") {
+          val tx = Atomic("file->stage") {
             case _ =>
-              this.writeLogFile(localId, buf.nioBuffer(), crc32)
-          } --> Atomic("mark global written") {
+              this.stageFile(localId, buf.nioBuffer(), crc32)
+          } --> Atomic("file->commit") {
             case _ =>
-              this.markGlobalWritten(localId, fileSize)
+              this.commitFile(localId)
           }
 
           TransactionRunner.perform(tx, regionId, RetryStrategy.FOR_TIMES(conf.globalSetting.maxWriteRetryTimes))
@@ -448,52 +531,24 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
     }
   }
 
-  def cleanup(stopFlag: () => Boolean): Iterator[Long] = {
-    val list: Iterator[Long] = rmem.list()
-    for (localId <- list if !stopFlag()) {
-      rmeta.read(localId).map { meta =>
-        meta.status match {
-          case Constants.FILE_STATUS_GLOBAL_WRITTEN =>
-            //save in body
-            val buf = rmem.read(localId, meta.length)
-            val tx = Atomic("append to body") {
-              case _ =>
-                val crc32 = CrcUtils.computeCrc32(buf.duplicate())
-                val (offset: Long, length: Long, actualWritten: Long) = rbody.append(buf, crc32)
-                Rollbackable.success((offset, length, actualWritten, crc32)) {
-                  rbody.unwrite(offset)
-                }
-            } --> Atomic("marked merged") {
-              case (offset: Long, length: Long, actualWritten: Long, crc32: Long) =>
-                rmeta.write(localId, Constants.FILE_STATUS_MERGED, offset, length, crc32)
-                Rollbackable.success(true) {
+  def performDelete(id: Long): Unit = {
 
-                }
-            } --> Atomic("delete buffered file") {
-              case _ =>
-                rmem.delete(localId)
-                Rollbackable.success(true) {
-                }
-            }
+  }
 
-            TransactionRunner.perform(tx, regionId, RetryStrategy.FOR_TIMES(conf.globalSetting.maxWriteRetryTimes))
+  def performWrite(file: MemFileEntry): Unit = {
+    //write body
+    val localId = file.localId
+    val crc32 = file.crc32
+    val (offset: Long, length: Long, actualWritten: Long) = body.append(file.buf.nioBuffer(), crc32)
+    //write metadata
+    meta.write(localId, Constants.FILE_STATUS_MERGED, offset, length, crc32)
 
-            if (logger.isTraceEnabled()) {
-              logger.trace(s"[region-$regionId@$nodeId] local file merged: $localId")
-            }
-          case _ =>
-            if (traffic.isToWrite(localId)) {
-              if (logger.isTraceEnabled()) {
-                logger.trace(s"[region-$regionId@$nodeId] cleaned local file: $localId")
-              }
+    if (logger.isDebugEnabled)
+      logger.debug(s"[region-${regionId}@$nodeId] written : $localId")
+  }
 
-              rmem.delete(localId)
-            }
-        }
-      }
-    }
-
-    list
+  def flush() = {
+    mem.flush()
   }
 
   def info = RegionInfo(nodeId, regionId, revision, isPrimary, isWritable, bodyLength)
@@ -563,8 +618,10 @@ class LocalRegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetti
       regionDir.mkdir()
 
       new File(regionDir, "body").createNewFile()
-      new File(regionDir, "meta").createNewFile()
-      new File(regionDir, "trash").createNewFile()
+      new File(regionDir, "meta1").createNewFile()
+      new File(regionDir, "meta2").createNewFile()
+      new File(regionDir, "wal").createNewFile()
+      new File(regionDir, "stage").createNewFile()
 
       if (logger.isTraceEnabled())
         logger.trace(s"[region-$regionId@$nodeId] created: dir=$regionDir")

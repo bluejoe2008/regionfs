@@ -381,10 +381,7 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
 
       try {
         val localRegion: Region = maybeRegion.get
-        if (localRegion.revision <= fileId.localId)
-          throw new FileNotFoundException(nodeId, fileId)
-
-        val success = localRegion.delete(fileId.localId)
+        localRegion.delete(fileId)
         val regions =
         //is a primary region?
           if (globalSetting.replicaNum > 1 && (fileId.regionId >> 16) == nodeId) {
@@ -401,7 +398,7 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
           }
 
         remoteRegionWatcher.cacheRemoteSeconaryRegions(regions)
-        ctx.reply(DeleteFileResponse(success, null, regions))
+        ctx.reply(DeleteFileResponse(true, null, regions))
       }
       catch {
         case e: Throwable =>
@@ -416,11 +413,8 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
       }
 
       try {
-        if (maybeRegion.get.revision <= fileId.localId)
-          throw new FileNotFoundException(nodeId, fileId)
-
-        val success = maybeRegion.get.delete(fileId.localId)
-        ctx.reply(DeleteSecondaryFileResponse(success, null, maybeRegion.get.info))
+        maybeRegion.get.delete(fileId)
+        ctx.reply(DeleteSecondaryFileResponse(true, null, maybeRegion.get.info))
       }
       catch {
         case e: Throwable =>

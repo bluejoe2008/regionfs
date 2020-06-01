@@ -165,7 +165,7 @@ class LocalRegionCleaner(conf: GlobalSetting,
     val regions = localRegionManager.regions.values
     for (region <- regions if !stopFlag) {
       try {
-        region.flush()
+        region.flushAll()
       }
       catch {
         case t: Throwable =>

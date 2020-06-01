@@ -49,6 +49,8 @@ class RegionLocalIdGen(conf: RegionConfig) {
     bound.set(end)
   }
 
+  def currentId() = id.get()
+
   def nextId(): Long = {
     val nid = id.incrementAndGet()
     //all ids consumed
@@ -132,17 +134,19 @@ class RegionMem(val conf: RegionConfig, write: (MemFileEntry) => Unit, delete: (
     committed += localId -> (staged.remove(localId).get)
   }
 
-  def remove(localId: Long): Unit = {
-    removed += localId
+  def remove(localId: Long): Boolean = {
+    if (removed.contains(localId)) {
+      //delete twice?
+      false
+    }
+    else {
+      removed += localId
+      true
+    }
   }
 
   def read(localId: Long): (Option[ByteBuf], Boolean) = {
     committed.get(localId).map(_.buf) -> removed.contains(localId)
-  }
-
-  def checkIfFull(): Unit = {
-    val totalSize = (committed -- removed).values.map(_.length).reduce(_ + _)
-    totalSize > conf.globalSetting.maxRegionMemSize
   }
 
   def flush(): Unit = {
@@ -215,19 +219,20 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
   val cache: Cache[Long, FileMetadata] = new FixSizedCache[Long, FileMetadata](1024)
 
   def entries(): Iterable[FileMetadata] = {
-    (0 to count().toInt - 1).map(read(_).get)
+    (1 to count().toInt).map(read(_).get)
   }
 
   val METADATA_BLOCK_FOR_READ = new Array[Byte](Constants.METADATA_ENTRY_LENGTH_WITH_PADDING)
 
+  //localId starts with 1
   def read(localId: Long): Option[FileMetadata] = {
-    if (localId >= count()) {
+    if (localId > count()) {
       None
     }
     else {
       cache.get(localId).orElse {
         val offset = fptr1.synchronized {
-          fptr1.seek(localId * 8)
+          fptr1.seek((localId - 1) * 8)
           fptr1.readLong()
         }
 
@@ -266,13 +271,13 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
       fptr2.seek(offset2)
       fptr2.write(block.toByteArray)
     }
+    dos.close()
 
+    //localId starts with 1
     fptr1.synchronized {
-      fptr1.seek(localId * 8)
+      fptr1.seek((localId - 1) * 8)
       fptr1.writeLong(offset2)
     }
-
-    dos.close()
 
     cache.put(localId, FileMetadata(localId, time, offset, length, crc32, status))
   }
@@ -306,13 +311,13 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
     fptr2.close()
   }
 
-  def count() = (fptr2.length() - OFFSET_OF_CONTENT) / Constants.METADATA_ENTRY_LENGTH_WITH_PADDING
+  def count() = fptr1.length() / 8
 }
 
 class RegionBodyStore(conf: RegionConfig) {
   //region file, one file for each region by far
-  private val fileBody = new File(conf.regionDir, "body")
-  lazy val fptr = new RandomAccessFile(fileBody, "rw")
+  private val file = new File(conf.regionDir, "body")
+  lazy val fptr = new RandomAccessFile(file, "rw")
 
   /**
     * @return (offset: Long, length: Long, actualWritten: Long)
@@ -381,7 +386,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
   private lazy val body = new RegionBodyStore(conf)
   private lazy val meta = new RegionMetadataStore(conf)
 
-  def revision() = meta.count() //fids.current
+  def revision() = idgen.currentId
 
   def fileCount() = meta.count() + mem.countCommitted
 
@@ -456,10 +461,19 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
     }
   }
 
-  def delete(localId: Long): Boolean = {
-    wal.logRemoveFile(localId)
-    mem.remove(localId)
-    true
+  def delete(fileId: FileId): Unit = {
+    val localId = fileId.localId
+    if (revision < localId)
+      throw new FileNotFoundException(nodeId, fileId)
+
+    if (read(localId).isDefined) {
+      if (mem.remove(localId)) {
+        wal.logRemoveFile(localId)
+      }
+    }
+    else {
+      throw new FileNotFoundException(nodeId, fileId)
+    }
   }
 
   def offerPatch(sinceRevision: Long): ByteBuf = {
@@ -547,7 +561,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
       logger.debug(s"[region-${regionId}@$nodeId] written : $localId")
   }
 
-  def flush() = {
+  def flushAll() = {
     mem.flush()
   }
 

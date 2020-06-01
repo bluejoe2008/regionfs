@@ -86,7 +86,7 @@ class FileIOWith1Node1ReplicaTest extends FileTestBase {
     }
 
     val count3 = super.countFiles();
-    Assert.assertEquals(count3, count2 + 10 * BLOB_LENGTH.size + 10 * BLOB_LENGTH.size)
+    Assert.assertEquals(count2 + 10 * BLOB_LENGTH.size + 10 * BLOB_LENGTH.size, count3)
   }
 
   @Test
@@ -102,7 +102,7 @@ class FileIOWith1Node1ReplicaTest extends FileTestBase {
     regionWithCount.foreach { x =>
       val region = primaryRegionOf(x._1)
       Assert.assertEquals(x._2.size, region.unmergedFileCount())
-      Assert.assertNotEquals(0, countFiles(region, Constants.FILE_STATUS_MERGED))
+      Assert.assertEquals(0, countFiles(region, Constants.FILE_STATUS_MERGED))
     }
 
     Thread.sleep(3000)
@@ -153,14 +153,14 @@ class FileIOWith1Node1ReplicaTest extends FileTestBase {
     Assert.assertEquals(count1 + 1, count2)
 
     timing(true) {
-      Assert.assertEquals(true, Await.result(client.deleteFile(id), Duration.Inf))
+      Assert.assertTrue(Await.result(client.deleteFile(id), Duration.Inf))
     }
 
     val count3 = super.countFiles()
     Assert.assertEquals(count1, count3)
 
     timing(true) {
-      Assert.assertEquals(false, Await.result(client.deleteFile(id), Duration.Inf))
+      Assert.assertFalse(Await.result(client.deleteFile(id), Duration.Inf))
     }
 
     val count4 = super.countFiles()

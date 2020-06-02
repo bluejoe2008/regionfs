@@ -284,6 +284,7 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
     }
 
     override def onStop(): Unit = {
+      localRegionManager.shutdown
       logger.info("stop endpoint")
     }
 
@@ -332,7 +333,7 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
       case GetNodeStatRequest() =>
         val nodeStat = NodeStat(nodeId, address,
           localRegionManager.regions.values.filter(_.isPrimary).map { region =>
-            RegionStat(region.regionId, region.fileCount, region.bodyLength)
+            RegionStat(region.regionId, region.fileCount, region.regionSize())
           }.toList)
 
         ctx.reply(GetNodeStatResponse(nodeStat))

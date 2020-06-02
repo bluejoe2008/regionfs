@@ -24,7 +24,7 @@ class LocalRegionFileIOTest extends FileTestBase {
     Assert.assertEquals(65537, region.regionId)
     Assert.assertEquals(true, region.isPrimary)
     Assert.assertEquals(0, region.revision)
-    Assert.assertEquals(0, region.bodyLength)
+    Assert.assertEquals(0, region.regionSize())
 
     val bytes1 = IOUtils.toByteArray(new FileInputStream(new File("./testdata/inputs/9999999")))
     val buf = ByteBuffer.wrap(bytes1)

@@ -60,6 +60,7 @@ class RegionLocalIdGen(conf: RegionConfig) {
     nid
   }
 
+  //save current id
   def flush(): Unit = {
     val fos = new DataOutputStream(new FileOutputStream(file))
     fos.writeLong(id.get())
@@ -71,8 +72,8 @@ class RegionLocalIdGen(conf: RegionConfig) {
   }
 }
 
-class RegionWal(conf: RegionConfig) {
-  private val file = new File(conf.regionDir, "wal")
+class RegionOperationLog(conf: RegionConfig) {
+  private val file = new File(conf.regionDir, "log")
   private val appender = new FileOutputStream(file, true).getChannel
 
   def logCreateFile(localId: Long): Long = {
@@ -118,9 +119,8 @@ class RegionFileStage(conf: RegionConfig) {
 
 case class MemFileEntry(localId: Long, buf: ByteBuf, length: Long, crc32: Long)
 
-class RegionMem(val conf: RegionConfig, write: (MemFileEntry) => Unit, delete: (Long) => Unit)
+class RegionMem(regionName: RegionName, conf: RegionConfig, write: (MemFileEntry) => Unit, delete: (Long) => Unit)
   extends Logging {
-
   private val staged = mutable.Map[Long, MemFileEntry]()
   private val committed = mutable.Map[Long, MemFileEntry]()
   private val removed = mutable.Set[Long]()
@@ -130,8 +130,10 @@ class RegionMem(val conf: RegionConfig, write: (MemFileEntry) => Unit, delete: (
     staged += localId -> MemFileEntry(localId, buf2, buf2.readableBytes(), crc32)
   }
 
-  def commit(localId: Long): Unit = {
-    committed += localId -> (staged.remove(localId).get)
+  def commit(localId: Long): MemFileEntry = {
+    val entry = staged.remove(localId).get
+    committed += localId -> entry
+    entry
   }
 
   def remove(localId: Long): Boolean = {
@@ -145,36 +147,48 @@ class RegionMem(val conf: RegionConfig, write: (MemFileEntry) => Unit, delete: (
     }
   }
 
-  def read(localId: Long): (Option[ByteBuf], Boolean) = {
-    committed.get(localId).map(_.buf) -> removed.contains(localId)
+  def read(localId: Long): (Option[MemFileEntry], Boolean) = {
+    committed.get(localId) -> removed.contains(localId)
   }
 
-  def flush(): Unit = {
-    val consumedCreated = ArrayBuffer[Long]()
+  def flushOnce(): Unit = {
+    committed.synchronized {
+      val consumedCreated = ArrayBuffer[Long]()
 
-    committed.foreach { kv =>
-      if (!removed.contains(kv._1)) {
-        write(kv._2)
+      committed.foreach { kv =>
+        if (!removed.contains(kv._1)) {
+          write(kv._2)
+        }
+        consumedCreated += kv._1
       }
-      consumedCreated += kv._1
-    }
 
-    val consumeRemoved = ArrayBuffer[Long]()
-    committed.foreach { kv =>
-      if (!committed.contains(kv._1)) {
-        delete(kv._1)
+      val consumeRemoved = ArrayBuffer[Long]()
+      committed.foreach { kv =>
+        if (!committed.contains(kv._1)) {
+          delete(kv._1)
+        }
+        consumeRemoved += kv._1
       }
-      consumeRemoved += kv._1
-    }
 
-    this.synchronized {
-      committed --= consumedCreated
-      removed --= consumeRemoved
+      this.synchronized {
+        committed --= consumedCreated
+        removed --= consumeRemoved
+      }
+
+      //if (!consumedCreated.isEmpty && logger.isDebugEnabled)
+      logger.debug(s"${regionName} flushed: ${consumedCreated.toList}")
+    }
+  }
+
+  def flushAll(): Unit = {
+    println(regionName, committed.size, removed.size)
+    while (!committed.isEmpty || !removed.isEmpty) {
+      flushOnce
     }
   }
 
   def close(): Unit = {
-    flush()
+    flushAll()
   }
 
   def countCommitted = committed.size - removed.size
@@ -317,7 +331,9 @@ class RegionMetadataStore(conf: RegionConfig) extends Logging {
 class RegionBodyStore(conf: RegionConfig) {
   //region file, one file for each region by far
   private val file = new File(conf.regionDir, "body")
-  lazy val fptr = new RandomAccessFile(file, "rw")
+  private lazy val fptr = new RandomAccessFile(file, "rw")
+
+  def bodySize() = fptr.length()
 
   /**
     * @return (offset: Long, length: Long, actualWritten: Long)
@@ -371,6 +387,10 @@ class RegionBodyStore(conf: RegionConfig) {
   }
 }
 
+case class RegionName(nodeId: Int, regionId: Long) {
+  override def toString = s"[region-${regionId}@$nodeId]"
+}
+
 /**
   * a Region store files in storeDir
   * new file-->stage-->wal-->body
@@ -379,23 +399,28 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
   val isPrimary = (regionId >> 16) == nodeId
   val isSecondary = !isPrimary
 
-  private lazy val wal = new RegionWal(conf)
+  val regionName = RegionName(nodeId, regionId)
+
+  private lazy val wal = new RegionOperationLog(conf)
   private lazy val idgen = new RegionLocalIdGen(conf)
   private lazy val stage = new RegionFileStage(conf)
-  private lazy val mem = new RegionMem(conf, performWrite(_), performDelete(_))
+  private lazy val mem = new RegionMem(regionName, conf, performWrite(_), performDelete(_))
   private lazy val body = new RegionBodyStore(conf)
   private lazy val meta = new RegionMetadataStore(conf)
 
   def revision() = idgen.currentId
 
-  def fileCount() = meta.count() + mem.countCommitted
+  private val _regionFileCount = new AtomicLong(meta.count())
+  private val _regionSize = new AtomicLong(body.bodySize)
 
-  def unmergedFileCount() = mem.countCommitted
+  def fileCount(): Long = _regionFileCount.get()
 
-  def bodyLength() = body.fptr.length()
+  def unmergedFileCount(): Long = mem.countCommitted
+
+  def regionSize(): Long = _regionSize.get
 
   //TODO: archive
-  def isWritable = bodyLength <= conf.globalSetting.regionSizeLimit
+  def isWritable = regionSize <= conf.globalSetting.regionSizeLimit
 
   def listFiles(): Iterable[FileEntry] = {
     //FIXME
@@ -425,7 +450,11 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
 
   def commitFile(localId: Long): Rollbackable = {
     wal.logCreateFile(localId)
-    mem.commit(localId)
+    val file = mem.commit(localId)
+
+    _regionFileCount.incrementAndGet()
+    _regionSize.addAndGet(file.length)
+
     Rollbackable.success(localId) {
 
     }
@@ -440,9 +469,10 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
   }
 
   def close(): Unit = {
+    flushAll()
+    mem.close()
     wal.close()
     idgen.close()
-    mem.close()
     body.close()
     meta.close()
   }
@@ -450,7 +480,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
   def read(localId: Long): Option[ByteBuffer] = {
     mem.read(localId) match {
       case (_, true) => None
-      case (Some(buf), false) => Some(buf.nioBuffer())
+      case (Some(file), false) => Some(file.buf.nioBuffer())
       case (None, false) =>
         meta.read(localId) match {
           case None =>
@@ -466,12 +496,14 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
     if (revision < localId)
       throw new FileNotFoundException(nodeId, fileId)
 
-    if (read(localId).isDefined) {
+    read(localId).map { buf =>
       if (mem.remove(localId)) {
         wal.logRemoveFile(localId)
+
+        _regionFileCount.decrementAndGet()
+        _regionSize.addAndGet(-1 * buf.remaining())
       }
-    }
-    else {
+    }.orElse {
       throw new FileNotFoundException(nodeId, fileId)
     }
   }
@@ -558,14 +590,14 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
     meta.write(localId, Constants.FILE_STATUS_MERGED, offset, length, crc32)
 
     if (logger.isDebugEnabled)
-      logger.debug(s"[region-${regionId}@$nodeId] written : $localId")
+      logger.debug(s"[region-${regionId}@$nodeId] merged : $localId")
   }
 
   def flushAll() = {
-    mem.flush()
+    mem.flushAll()
   }
 
-  def info = RegionInfo(nodeId, regionId, revision, isPrimary, isWritable, bodyLength)
+  def info = RegionInfo(nodeId, regionId, revision, isPrimary, isWritable, regionSize())
 }
 
 /**
@@ -610,6 +642,10 @@ class LocalRegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetti
     _createNewRegion(regionId)
   }
 
+  def shutdown(): Unit = {
+    regions.foreach(_._2.close())
+  }
+
   def get(id: Long): Option[Region] = regions.get(id)
 
   def update(region: Region): Region = {
@@ -617,7 +653,7 @@ class LocalRegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetti
 
     this.synchronized {
       regions(region.regionId) = newRegion
-      //TODO: should close this object
+      //TODO: should close this object, but when?
       //region.close()
     }
 
@@ -634,7 +670,7 @@ class LocalRegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetti
       new File(regionDir, "body").createNewFile()
       new File(regionDir, "meta1").createNewFile()
       new File(regionDir, "meta2").createNewFile()
-      new File(regionDir, "wal").createNewFile()
+      new File(regionDir, "log").createNewFile()
       new File(regionDir, "stage").createNewFile()
 
       if (logger.isTraceEnabled())
@@ -648,6 +684,7 @@ class LocalRegionManager(nodeId: Int, storeDir: File, globalSetting: GlobalSetti
       regions += (regionId -> region)
       ring += regionId
     }
+
     region
   }
 }

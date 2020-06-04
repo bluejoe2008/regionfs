@@ -170,9 +170,9 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
   def shutdown(): Unit = {
     if (alive) {
       clientFactory.close()
-      neighbourNodesWatcher.close
+      neighbourNodesWatcher.close()
       remoteRegionWatcher.close()
-
+      localRegionManager.shutdown
       new File(storeDir, ".lock").delete()
       env.shutdown()
       zookeeper.close()
@@ -284,7 +284,6 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
     }
 
     override def onStop(): Unit = {
-      localRegionManager.shutdown
       logger.info("stop endpoint")
     }
 

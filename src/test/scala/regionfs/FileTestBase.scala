@@ -56,6 +56,7 @@ class FileTestBase extends Logging {
   @Before
   def setup() {
     FileUtils.deleteDirectory(new File("./testdata/nodes"));
+
     Profiler.enableTiming = true
     new GlobalSettingWriter().write(con.GLOBAL_SETTING);
 

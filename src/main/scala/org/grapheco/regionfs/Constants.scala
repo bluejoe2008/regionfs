@@ -36,6 +36,14 @@ object Constants {
   val CONSISTENCY_STRATEGY_EVENTUAL = 1
   val CONSISTENCY_STRATEGY_STRONG = 0
 
+  val DEFAULT_REGION_MEM_DIRTY_TIMEOUT = 10 * 60 * 1000
+  val DEFAULT_REGION_MEM_ENTRY_COUNT = 50
+  val DEFAULT_REGION_MEM_SIZE = 1 * 1024 * 1024
+
+  val PARAMETER_KEY_REGION_MEM_DIRTY_TIMEOUT = "region.mem.dirty.timeout"
+  val PARAMETER_KEY_REGION_MEM_ENTRY_COUNT = "region.mem.entry.count"
+  val PARAMETER_KEY_REGION_MEM_SIZE = "region.mem.size"
+
   val PARAMETER_KEY_CONSISTENCY_STRATEGY = "consistency.strategy"
   val PARAMETER_KEY_MIN_WRITABLE_REGIONS = "region.min.writable"
   val PARAMETER_KEY_REPLICA_NUM = "replica.num"

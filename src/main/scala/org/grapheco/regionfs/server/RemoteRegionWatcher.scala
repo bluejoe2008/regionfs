@@ -140,21 +140,20 @@ trait InterruptableWorker {
   }
 
   final def stop(): Unit = {
-    stopFlag.set(true)
     if (running) {
+      stopFlag.set(true)
+      beforeTerminate()
+
       if (sleeping) {
         thread.interrupt()
       }
-      else {
-        if (!stopFlag.get()) {
-          beforeTerminate()
-          thread.join()
-        }
-      }
+
+      thread.join()
     }
   }
 }
 
+//flush region files
 class LocalRegionCleaner(conf: GlobalSetting,
                          nodeId: Int,
                          localRegionManager: LocalRegionManager)
@@ -165,7 +164,7 @@ class LocalRegionCleaner(conf: GlobalSetting,
     val regions = localRegionManager.regions.values
     for (region <- regions if !stopFlag) {
       try {
-        region.flushAll()
+        region.flushAll(false)
       }
       catch {
         case t: Throwable =>
@@ -183,11 +182,12 @@ class LocalRegionCleaner(conf: GlobalSetting,
 
   def beforeTerminate(): Unit = {
     if (logger.isTraceEnabled()) {
-      logger.trace(s"[node-$nodeId] stoping ${this.getClass.getSimpleName}...")
+      logger.trace(s"[node-$nodeId] stopping ${this.getClass.getSimpleName}...")
     }
   }
 }
 
+//sync files from primary region
 class PrimaryRegionWatcher(conf: GlobalSetting,
                            nodeId: Int,
                            localRegionManager: LocalRegionManager,

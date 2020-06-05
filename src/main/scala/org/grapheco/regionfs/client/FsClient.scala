@@ -28,6 +28,7 @@ class FsClient(zks: String) extends Logging {
   val globalSetting = zookeeper.loadGlobalSetting()
   val clientFactory = new FsNodeClientFactory(globalSetting)
   val ringNodes = new Ring[Int]()
+  implicit val ec = clientFactory.executionContext
 
   //get all nodes
   val cachedClients = mutable.Map[Int, FsNodeClient]()
@@ -80,19 +81,7 @@ class FsClient(zks: String) extends Logging {
     }
   }
 
-  def writeFile(content: ByteBuffer): Future[FileId] = {
-    assertNodesNotEmpty()
-    val crc32 = CrcUtils.computeCrc32(content.duplicate())
-    val chosenNodeId: Int = ringNodes.take()
-    val client = clientOf(chosenNodeId)
-    implicit val ec: ExecutionContext = clientFactory.executionContext
-    client.createFile(crc32, content.duplicate()).map(
-      x => {
-        //update local cache
-        cacheAliveRegions(x.fileId.regionId, x.infos)
-        x.fileId
-      })
-  }
+  def writeFile(content: ByteBuffer): Future[FileId] = writeFiles(Array(content)).map(_.head)
 
   def writeFiles(contents: Array[ByteBuffer]): Future[Array[FileId]] = {
     assertNodesNotEmpty()
@@ -117,7 +106,6 @@ class FsClient(zks: String) extends Logging {
       }
     }
 
-    implicit val ec: ExecutionContext = clientFactory.executionContext
     val futures: Iterable[Future[Array[FileId]]] = groups.map { group =>
       val chosenNodeId: Int = ringNodes.take()
       val client = clientOf(chosenNodeId)
@@ -190,7 +178,6 @@ class FsClient(zks: String) extends Logging {
 
   def processFiles[X, Y](map: (Iterable[RegionFileEntry]) => X, reduce: (Iterable[X]) => Y): Future[Y] = {
     val futures = mapNodeWithAddress.map(x => clientOf(x._1).processFiles(map))
-    implicit val ec: ExecutionContext = clientFactory.executionContext
     Future {
       reduce(futures.map(Await.result(_, Duration.Inf)))
     }
@@ -200,7 +187,6 @@ class FsClient(zks: String) extends Logging {
     //primary node
     val client = clientOf((fileId.regionId >> 16).toInt)
     val future = client.deleteFile(fileId)
-    implicit val ec: ExecutionContext = clientFactory.executionContext
 
     future.map { x =>
       cacheAliveRegions(fileId.regionId, x.infos)
@@ -268,21 +254,17 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
     }
   }
 
-  def createFile(crc32: Long, content: ByteBuffer): Future[CreateFileResponse] = {
-    safeCall {
-      endPointRef.askWithBuffer[CreateFileResponse](
-        CreateFileRequest(content.remaining(), crc32),
-        Unpooled.wrappedBuffer(content)
-      )
-    }
+  def registerSeconaryRegions(localSecondaryRegions: Array[RegionInfo]) = {
+    endPointRef.send(RegisterSecondaryRegionsRequest(localSecondaryRegions))
   }
 
   def createFiles(files: Array[(ByteBuffer, Long)]): Future[CreateFilesResponse] = {
     val buf = Unpooled.buffer(1024)
-    files.foreach { kv =>
-      buf.writeLong(kv._1.remaining()).writeLong(kv._2)
-      buf.writeBytes(kv._1)
+    for ((filebuf, crc32) <- files) {
+      buf.writeLong(filebuf.remaining()).writeLong(crc32)
+      buf.writeBytes(filebuf)
     }
+
     safeCall {
       endPointRef.askWithBuffer[CreateFilesResponse](
         CreateFilesRequest(files.length), buf
@@ -290,39 +272,21 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
     }
   }
 
-  def registerSeconaryRegions(localSecondaryRegions: Array[RegionInfo]) = {
-    endPointRef.send(RegisterSecondaryRegionsRequest(localSecondaryRegions))
-  }
-
   def createSecondaryRegion(regionId: Long): Future[CreateSecondaryRegionResponse] = {
     endPointRef.ask[CreateSecondaryRegionResponse](
       CreateSecondaryRegionRequest(regionId))
-  }
-
-  def createSecondaryFile(
-                           regionId: Long,
-                           maybeLocalId: Long,
-                           totalLength: Long,
-                           creationTime: Long,
-                           crc32: Long,
-                           content: ByteBuffer): Future[CreateSecondaryFileResponse] = {
-    safeCall {
-      endPointRef.askWithBuffer[CreateSecondaryFileResponse](
-        CreateSecondaryFileRequest(regionId, maybeLocalId, totalLength, creationTime, crc32),
-        Unpooled.wrappedBuffer(content))
-    }
   }
 
   def createSecondaryFiles(
                             regionId: Long,
                             localIds: Array[Long],
                             creationTime: Long,
-                            files: Iterable[(Long, Long, ByteBuf)]): Future[CreateSecondaryFilesResponse] = {
+                            files: Array[(Long, Long, ByteBuf)]): Future[CreateSecondaryFilesResponse] = {
     val buf = Unpooled.buffer(1024)
-    files.foreach { file =>
-      val (length, crc32, buf) = file
-      buf.writeLong(length).writeLong(crc32)
-      buf.writeBytes(buf)
+
+    for ((localId, (length, crc32, filebuf)) <- localIds.zip(files)) {
+      buf.writeLong(localId).writeLong(length).writeLong(crc32)
+      buf.writeBytes(filebuf.duplicate())
     }
 
     safeCall {
@@ -331,17 +295,10 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
     }
   }
 
-  def markSecondaryFilesWritten(regionId: Long, localIds: Array[Long]): Future[MarkSecondaryFileWrittenResponse] = {
+  def markSecondaryFilesWritten(regionId: Long, localIds: Array[Long]): Future[MarkSecondaryFilesWrittenResponse] = {
     safeCall {
-      endPointRef.askWithBuffer[MarkSecondaryFileWrittenResponse](
+      endPointRef.askWithBuffer[MarkSecondaryFilesWrittenResponse](
         MarkSecondaryFilesWrittenRequest(regionId, localIds))
-    }
-  }
-
-  def markSecondaryFileWritten(regionId: Long, localId: Long, length: Long): Future[MarkSecondaryFileWrittenResponse] = {
-    safeCall {
-      endPointRef.askWithBuffer[MarkSecondaryFileWrittenResponse](
-        MarkSecondaryFileWrittenRequest(regionId, localId, length))
     }
   }
 

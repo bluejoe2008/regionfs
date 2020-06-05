@@ -466,9 +466,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
 
   def stageFiles(localIds: Array[Long], files: Array[(Long, Long, ByteBuf)], creationTime: Long): Rollbackable = {
 
-    (localIds.zip(files)).foreach { kv =>
-      val (localId, file) = kv
-      val (length, crc32, buf) = file
+    for ((localId, (length, crc32, buf)) <- localIds.zip(files)) {
       stage.append(localId, buf.duplicate().nioBuffer(), creationTime, crc32)
       mem.stage(localId, buf.duplicate().nioBuffer(), creationTime, crc32)
     }

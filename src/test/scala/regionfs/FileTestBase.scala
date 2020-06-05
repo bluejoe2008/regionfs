@@ -39,9 +39,12 @@ class FileTestBase extends Logging {
     servers.find(_.nodeId == (regionId >> 16).toInt).head.localRegionManager.get(regionId).get
   }
 
-  def countFiles(region: Region, status: Byte): Int = {
-    region.listFiles().filter(_.status == status).size
+  def countFiles(region: Region): Int = {
+    region.listFiles().size
   }
+
+  def countFiles() =
+    admin.stat(Duration("4s")).nodeStats.map(_.regionStats.map(_.fileCount).sum).sum
 
   def readBytes(fid: FileId): Array[Byte] = {
     Await.result(toBytesAsync(fid), Duration("10s"))
@@ -91,9 +94,6 @@ class FileTestBase extends Logging {
       makeFile(new File(s"./testdata/inputs/$i"), i)
     }
   }
-
-  def countFiles() =
-    admin.stat(Duration("4s")).nodeStats.map(_.regionStats.map(_.fileCount).sum).sum
 
   def makeFile(dst: File, length: Long): Unit = {
     val fos = new FileOutputStream(dst)

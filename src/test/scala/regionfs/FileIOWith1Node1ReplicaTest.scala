@@ -101,8 +101,8 @@ class FileIOWith1Node1ReplicaTest extends FileTestBase {
 
     regionWithCount.foreach { x =>
       val region = primaryRegionOf(x._1)
-      Assert.assertEquals(x._2.size, region.unmergedFileCount())
-      Assert.assertEquals(0, countFiles(region, Constants.FILE_STATUS_MERGED))
+      Assert.assertEquals(x._2.size, region.bufferedFileCount())
+      Assert.assertEquals(x._2.size, countFiles(region))
     }
 
     Thread.sleep(3000)
@@ -110,8 +110,8 @@ class FileIOWith1Node1ReplicaTest extends FileTestBase {
     //buffered files will be flushed
     regionWithCount.foreach { x =>
       val region = primaryRegionOf(x._1)
-      Assert.assertEquals(0, region.unmergedFileCount())
-      Assert.assertNotEquals(0, countFiles(region, Constants.FILE_STATUS_MERGED))
+      Assert.assertEquals(0, region.bufferedFileCount())
+      Assert.assertEquals(x._2.size, countFiles(region))
     }
 
     //get_file() is ok

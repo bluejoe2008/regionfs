@@ -47,7 +47,7 @@ class FileIOWith3Node3ReplicaStrongConsistencyTest extends FileIOWith1Node1Repli
           Assert.assertEquals(1, region.fileCount);
           Assert.assertEquals(1, region.revision);
           Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(new File(s"./testdata/inputs/999"))),
-            IOUtils.toByteArray(new ByteBufferInputStream(region.read(fid1.localId).get)))
+            IOUtils.toByteArray(new ByteBufferInputStream(region.read(fid1.localId).get.buffer)))
       }
     }
 
@@ -67,7 +67,7 @@ class FileIOWith3Node3ReplicaStrongConsistencyTest extends FileIOWith1Node1Repli
           Assert.assertEquals(1, region.fileCount);
           Assert.assertEquals(1, region.revision);
           Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(new File(s"./testdata/inputs/9999"))),
-            IOUtils.toByteArray(new ByteBufferInputStream(region.read(fid2.localId).get)))
+            IOUtils.toByteArray(new ByteBufferInputStream(region.read(fid2.localId).get.buffer)))
       }
     }
 

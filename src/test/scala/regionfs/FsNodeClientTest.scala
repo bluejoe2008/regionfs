@@ -22,7 +22,7 @@ class FsNodeClientTest extends FileTestBase {
     val client1 = client.clientOf(1)
     implicit val ec = client1.executionContext
     val future = client1.createSecondaryFile(65537, 1,
-      999,
+      999, System.currentTimeMillis(),
       CrcUtils.computeCrc32(new FileInputStream(new File(s"./testdata/inputs/999"))),
       ByteBuffer.wrap(IOUtils.toByteArray(new FileInputStream(new File(s"./testdata/inputs/999")))))
     val res = Await.result(future.map(x => FileId(x.regionId, x.localId)), Duration.Inf)
@@ -35,7 +35,7 @@ class FsNodeClientTest extends FileTestBase {
     client.writeFile(ByteBuffer.wrap(IOUtils.toByteArray(new FileInputStream(new File(s"./testdata/inputs/999")))))
     val client1 = client.clientOf(1)
     val futures = (1 to 10).map(x => client1.createSecondaryFile(65537, x,
-      999,
+      999, System.currentTimeMillis(),
       CrcUtils.computeCrc32(new FileInputStream(new File(s"./testdata/inputs/999"))),
       ByteBuffer.wrap(IOUtils.toByteArray(new FileInputStream(new File(s"./testdata/inputs/999"))))))
     val res = futures.map(Await.result(_, Duration.Inf)).map(x => FileId(x.regionId, x.localId))

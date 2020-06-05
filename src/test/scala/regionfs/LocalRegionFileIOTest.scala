@@ -36,7 +36,7 @@ class LocalRegionFileIOTest extends FileTestBase {
           region.createLocalId()
       } --> Atomic("save local file") {
         case localId: Long =>
-          region.stageFile(localId, clone, CrcUtils.computeCrc32(buf.duplicate()))
+          region.stageFile(localId, clone, System.currentTimeMillis(), CrcUtils.computeCrc32(buf.duplicate()))
       } --> Atomic("mark global written") {
         case localId: Long =>
           region.commitFile(localId)
@@ -46,7 +46,7 @@ class LocalRegionFileIOTest extends FileTestBase {
     }
 
     val bytes2 = timing(true, 10) {
-      val buf = region.read(id).get
+      val buf = region.read(id).get.buffer
       val bytes = new Array[Byte](buf.remaining())
       buf.get(bytes)
       bytes

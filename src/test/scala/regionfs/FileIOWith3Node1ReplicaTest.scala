@@ -12,7 +12,8 @@ class FileIOWith3Node1ReplicaTest extends FileIOWith1Node1ReplicaTest {
       "blob.crc.enabled" -> "true",
       "region.version.check.interval" -> "1000",
       "consistency.strategy" -> "strong",
-      "region.file.cleanup.interval" -> "2000"
+      "region.file.cleanup.interval" -> "1000",
+      "region.mem.dirty.timeout" -> "1000"
     )
   }
 }

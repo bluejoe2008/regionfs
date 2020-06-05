@@ -12,7 +12,7 @@ import net.neoremind.kraps.util.ByteBufferInputStream
 import org.grapheco.commons.util.Logging
 import org.grapheco.hippo.util.ByteBufferUtils._
 import org.grapheco.regionfs._
-import org.grapheco.regionfs.server.{FileEntry, RegionInfo}
+import org.grapheco.regionfs.server.{RegionFileEntry, RegionInfo}
 import org.grapheco.regionfs.util._
 
 import scala.collection.mutable
@@ -98,7 +98,7 @@ class FsClient(zks: String) extends Logging {
 
     val chosenNodeId = if (globalSetting.replicaNum > 1) {
       val maybeRegionOwnerNodes = cachedRegionMap.get(fileId.regionId).map(
-        _.filter(_.revision > fileId.localId).map(_.nodeId))
+        _.filter(_.revision >= fileId.localId).map(_.nodeId))
 
       if (maybeRegionOwnerNodes.isEmpty) {
         val nodeId = (fileId.regionId >> 16).toInt
@@ -149,7 +149,7 @@ class FsClient(zks: String) extends Logging {
       cachedRegionMap(regionId) = regions
   }
 
-  def processFiles[X, Y](map: (Iterable[FileEntry]) => X, reduce: (Iterable[X]) => Y): Future[Y] = {
+  def processFiles[X, Y](map: (Iterable[RegionFileEntry]) => X, reduce: (Iterable[X]) => Y): Future[Y] = {
     val futures = mapNodeWithAddress.map(x => clientOf(x._1).processFiles(map))
     implicit val ec: ExecutionContext = clientFactory.executionContext
     Future {
@@ -251,11 +251,12 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
                            regionId: Long,
                            maybeLocalId: Long,
                            totalLength: Long,
+                           creationTime: Long,
                            crc32: Long,
                            content: ByteBuffer): Future[CreateSecondaryFileResponse] = {
     safeCall {
       endPointRef.askWithBuffer[CreateSecondaryFileResponse](
-        CreateSecondaryFileRequest(regionId, maybeLocalId, totalLength, crc32),
+        CreateSecondaryFileRequest(regionId, maybeLocalId, totalLength, creationTime, crc32),
         Unpooled.wrappedBuffer(content))
     }
   }
@@ -273,7 +274,7 @@ class FsNodeClient(globalSetting: GlobalSetting, val endPointRef: HippoEndpointR
     }
   }
 
-  def processFiles[T](process: (Iterable[FileEntry]) => T): Future[T] = {
+  def processFiles[T](process: (Iterable[RegionFileEntry]) => T): Future[T] = {
     safeCall {
       endPointRef.ask[ProcessFilesResponse[T]](ProcessFilesRequest(process)).map(_.value)
     }

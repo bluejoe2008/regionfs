@@ -45,7 +45,7 @@ class FileIOWith3Node3ReplicaEventualConsistencyTest extends FileIOWith1Node1Rep
         Assert.assertEquals(true, region.isPrimary);
 
         Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(new File(s"./testdata/inputs/999"))),
-          IOUtils.toByteArray(new ByteBufferInputStream(region.read(fid1.localId).get)))
+          IOUtils.toByteArray(new ByteBufferInputStream(region.read(fid1.localId).get.buffer)))
     }
 
     //regions on node-2,3 have not be synced
@@ -76,7 +76,7 @@ class FileIOWith3Node3ReplicaEventualConsistencyTest extends FileIOWith1Node1Rep
         Assert.assertEquals(false, region.isPrimary);
 
         Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(new File(s"./testdata/inputs/999"))),
-          IOUtils.toByteArray(new ByteBufferInputStream(region.read(fid1.localId).get)))
+          IOUtils.toByteArray(new ByteBufferInputStream(region.read(fid1.localId).get.buffer)))
     }
 
     assertRegion(3, fid1.regionId) {
@@ -87,7 +87,7 @@ class FileIOWith3Node3ReplicaEventualConsistencyTest extends FileIOWith1Node1Rep
         Assert.assertEquals(false, region.isPrimary);
 
         Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(new File(s"./testdata/inputs/999"))),
-          IOUtils.toByteArray(new ByteBufferInputStream(region.read(fid1.localId).get)))
+          IOUtils.toByteArray(new ByteBufferInputStream(region.read(fid1.localId).get.buffer)))
     }
 
     //now, we write large files
@@ -99,7 +99,7 @@ class FileIOWith3Node3ReplicaEventualConsistencyTest extends FileIOWith1Node1Rep
       assertRegion(nodeId, fid2.regionId) {
         (region) =>
           Assert.assertArrayEquals(IOUtils.toByteArray(new FileInputStream(new File(s"./testdata/inputs/9999999"))),
-            IOUtils.toByteArray(new ByteBufferInputStream(region.read(fid1.localId).get)))
+            IOUtils.toByteArray(new ByteBufferInputStream(region.read(fid1.localId).get.buffer)))
       }
     }
   }

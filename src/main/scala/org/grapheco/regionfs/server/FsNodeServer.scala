@@ -446,8 +446,8 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
       case CreateFileRequest(totalLength: Long, crc32: Long) =>
         handleCreateFileRequest(totalLength, crc32, extraInput, ctx)
 
-      case CreateSecondaryFileRequest(regionId: Long, localId: Long, totalLength: Long, crc32: Long) =>
-        handleCreateSecondaryFileRequest(regionId, localId, totalLength, crc32, extraInput, ctx)
+      case CreateSecondaryFileRequest(regionId: Long, localId: Long, totalLength: Long, creationTime: Long, crc32: Long) =>
+        handleCreateSecondaryFileRequest(regionId, localId, totalLength, creationTime, crc32, extraInput, ctx)
 
       case MarkSecondaryFileWrittenRequest(regionId: Long, localId: Long, totalLength: Long) =>
         handleMarkSecondaryFileWrittenRequest(regionId, localId, totalLength, ctx)
@@ -475,12 +475,13 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
       }
 
       val localRegion: Region = maybeRegion.get
-      val maybeBuffer = localRegion.read(fileId.localId)
-      if (maybeBuffer.isEmpty) {
+      val maybeFile = localRegion.read(fileId.localId)
+      if (maybeFile.isEmpty) {
         throw new FileNotFoundException(nodeId, fileId)
       }
 
-      maybeBuffer.foreach { buf0 =>
+      maybeFile.foreach { file =>
+        val buf0 = file.buffer
         val body = Unpooled.wrappedBuffer(buf0.duplicate())
         val crc32 = CrcUtils.computeCrc32(buf0.duplicate())
 
@@ -501,7 +502,7 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
       ctx.reply(MarkSecondaryFileWrittenResponse(regionId, localId, region.info))
     }
 
-    private def handleCreateSecondaryFileRequest(regionId: Long, localId: Long, totalLength: Long, crc32: Long, extraInput: ByteBuffer, ctx: ReceiveContext): Unit = {
+    private def handleCreateSecondaryFileRequest(regionId: Long, localId: Long, totalLength: Long, creationTime: Long, crc32: Long, extraInput: ByteBuffer, ctx: ReceiveContext): Unit = {
       assert(totalLength >= 0)
 
       if (CrcUtils.computeCrc32(extraInput.duplicate()) != crc32) {
@@ -509,7 +510,8 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
       }
 
       val region = localRegionManager.get(regionId).get
-      region.stageFile(localId, extraInput.duplicate(), crc32)
+      region.updateLocalId(localId)
+      region.stageFile(localId, extraInput.duplicate(), creationTime, crc32)
       ctx.reply(CreateSecondaryFileResponse(regionId, localId))
     }
 
@@ -527,22 +529,23 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
       val mutex = zookeeper.createRegionWriteLock(regionId)
       mutex.acquire()
 
+      val creationTime = System.currentTimeMillis()
+
       try {
         //replicaNum > 1
         if (globalSetting.replicaNum > 1 &&
           globalSetting.consistencyStrategy == Constants.CONSISTENCY_STRATEGY_STRONG) {
-
           val tx = Atomic("create local id") {
             case _ =>
               localRegion.createLocalId()
           } --> Atomic("request to create secondary file") {
             case localId: Long =>
               Rollbackable.success(localId -> neighbourRegions.map(x =>
-                clientOf(x.nodeId).createSecondaryFile(regionId, localId, totalLength, crc32,
+                clientOf(x.nodeId).createSecondaryFile(regionId, localId, totalLength, creationTime, crc32,
                   buf.duplicate()))) {}
           } --> Atomic("file->staged") {
             case (localId: Long, futures: Array[Future[CreateSecondaryFileResponse]]) =>
-              localRegion.stageFile(localId, buf.duplicate(), crc32) map {
+              localRegion.stageFile(localId, buf.duplicate(), creationTime, crc32) map {
                 case _ =>
                   Rollbackable.success(localId -> futures) {}
               }
@@ -576,7 +579,7 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
               localRegion.createLocalId()
           } --> Atomic("file->staged") {
             case localId: Long =>
-              localRegion.stageFile(localId, buf.duplicate(), crc32)
+              localRegion.stageFile(localId, buf.duplicate(), creationTime, crc32)
           } --> Atomic("file->committed") {
             case (localId: Long) =>
               localRegion.commitFile(localId)

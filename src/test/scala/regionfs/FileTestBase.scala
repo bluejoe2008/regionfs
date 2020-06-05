@@ -127,6 +127,20 @@ class FileTestBase extends Logging {
     Await.result(client.writeFile(ByteBuffer.wrap(bytes)), Duration("4s"))
   }
 
+  def writeFiles(srcs: Iterable[File]): Iterable[FileId] = {
+    writeBytes(srcs.map(file => {
+      IOUtils.toByteArray(new FileInputStream(file))
+    }))
+  }
+
+  def writeTexts(texts: Iterable[String]): Iterable[FileId] = {
+    writeBytes(texts.map(_.getBytes))
+  }
+
+  private def writeBytes(arrayBytes: Iterable[Array[Byte]]): Array[FileId] = {
+    Await.result(client.writeFiles(arrayBytes.map(ByteBuffer.wrap(_)).toArray), Duration("4s"))
+  }
+
   def writeFileAsync(text: String): Future[FileId] = {
     writeFileAsync(text.getBytes)
   }

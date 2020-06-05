@@ -446,6 +446,9 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
       case CreateFileRequest(totalLength: Long, crc32: Long) =>
         handleCreateFileRequest(totalLength, crc32, extraInput, ctx)
 
+      case CreateFilesRequest(fileCount: Int) =>
+        handleCreateFilesRequest(fileCount, extraInput, ctx)
+
       case CreateSecondaryFileRequest(regionId: Long, localId: Long, totalLength: Long, creationTime: Long, crc32: Long) =>
         handleCreateSecondaryFileRequest(regionId, localId, totalLength, creationTime, crc32, extraInput, ctx)
 
@@ -600,6 +603,101 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
         }
       }
     }
+
+    private def handleCreateFilesRequest(fileCount: Int, extraInput: ByteBuffer, ctx: ReceiveContext): Unit = {
+      val buf = Unpooled.wrappedBuffer(extraInput)
+
+      //primary region
+      val files = (1 to fileCount).map { _ =>
+        val length = buf.readLong
+        val crc32 = buf.readLong
+        val filebuf = buf.readBytes(length.toInt)
+
+        if (CrcUtils.computeCrc32(filebuf.duplicate().nioBuffer()) != crc32) {
+          throw new ReceivedMismatchedStreamException()
+        }
+
+        (length, crc32, filebuf)
+      }.toArray
+
+      val (localRegion: Region, neighbourRegions: Array[RegionInfo]) = chooseRegionForWrite()
+      val regionId = localRegion.regionId
+
+      val mutex = zookeeper.createRegionWriteLock(regionId)
+      mutex.acquire()
+
+      val creationTime = System.currentTimeMillis()
+
+      try {
+        //replicaNum > 1
+        if (globalSetting.replicaNum > 1 &&
+          globalSetting.consistencyStrategy == Constants.CONSISTENCY_STRATEGY_STRONG) {
+          val tx = Atomic("create local id") {
+            case _ =>
+              localRegion.createLocalIds(fileCount)
+          } --> Atomic("request to create secondary file") {
+            case localIds: Array[Long] =>
+              Rollbackable.success(localIds -> neighbourRegions.map(x =>
+                clientOf(x.nodeId).createSecondaryFiles(regionId, localIds, creationTime, files))) {
+              }
+          } --> Atomic("file->staged") {
+            case (localIds: Array[Long], futures: Array[Future[CreateSecondaryFilesResponse]]) =>
+              localRegion.stageFiles(localIds, files, creationTime) map {
+                case _ =>
+                  Rollbackable.success(localIds -> futures) {}
+              }
+          } --> Atomic("waits all secondary file creation response") {
+            case (localIds: Array[Long], futures: Array[Future[CreateSecondaryFileResponse]]) =>
+              futures.foreach(Await.result(_, Duration.Inf))
+
+              Rollbackable.success(localIds) {}
+          } --> Atomic("file->committed") {
+            case localIds: Array[Long] =>
+              val futures =
+                neighbourRegions.map(x => clientOf(x.nodeId).markSecondaryFilesWritten(regionId, localIds))
+
+              val neighbourResults = futures.map(Await.result(_, Duration.Inf)).map(x => x.info)
+
+              localRegion.commitFiles(localIds)
+              remoteRegionWatcher.cacheRemoteSeconaryRegions(neighbourResults)
+
+              val fids = localIds.map(localId => FileId.make(regionId, localId))
+              ctx.reply(CreateFilesResponse(localRegion.regionId, fids, (Set(localRegion.info) ++ neighbourResults).toArray))
+
+              Rollbackable.success(fids) {
+              }
+          }
+
+          TransactionRunner.perform(tx, regionId, RetryStrategy.FOR_TIMES(globalSetting.maxWriteRetryTimes))
+        }
+        else {
+          val tx = Atomic("create local id") {
+            case _ =>
+              localRegion.createLocalIds(fileCount)
+          } --> Atomic("file->staged") {
+            case localIds: Array[Long] =>
+              localRegion.stageFiles(localIds, files, creationTime)
+          } --> Atomic("file->committed") {
+            case localIds: Array[Long] =>
+              localRegion.commitFiles(localIds)
+          } --> Atomic("response") {
+            case localIds: Array[Long] =>
+              val fids = localIds.map(localId => FileId.make(regionId, localId))
+              ctx.reply(CreateFilesResponse(localRegion.regionId, fids, Array(localRegion.info)))
+              Rollbackable.success(fids) {
+              }
+          }
+
+          TransactionRunner.perform(tx, regionId, RetryStrategy.FOR_TIMES(globalSetting.maxWriteRetryTimes))
+        }
+      }
+      finally {
+        if (mutex.isAcquiredInThisProcess) {
+          mutex.release()
+        }
+      }
+    }
+
   }
 
 }

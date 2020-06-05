@@ -4,7 +4,7 @@ import java.io.{File, FileInputStream}
 
 import org.apache.commons.io.IOUtils
 import org.grapheco.commons.util.Profiler._
-import org.grapheco.regionfs.{Constants, FileId}
+import org.grapheco.regionfs.FileId
 import org.junit.{Assert, Test}
 
 import scala.concurrent.Await
@@ -14,16 +14,6 @@ import scala.concurrent.duration.Duration
   * Created by bluejoe on 2019/8/23.
   */
 class FileIOWith1Node1ReplicaTest extends FileTestBase {
-  //@Test
-  def testBulkWrite(): Unit = {
-    (0 to 5000000).foreach { x =>
-      println(s"writing file $x...")
-      timing() {
-        super.writeFile(new File(s"./testdata/inputs/2048"))
-      }
-    }
-  }
-
   @Test
   def testWrite(): Unit = {
     val count1 = super.countFiles();
@@ -49,6 +39,35 @@ class FileIOWith1Node1ReplicaTest extends FileTestBase {
         val bytes2 = readBytes(id)
         Assert.assertArrayEquals(bytes, bytes2)
       }
+    }
+
+    val count3 = super.countFiles();
+    Assert.assertEquals(count2 + 10 * BLOB_LENGTH.size + 10 * BLOB_LENGTH.size, count3)
+  }
+
+  @Test
+  def testBulkWrite(): Unit = {
+    val count1 = super.countFiles();
+    println(s"test bulk writing(10 files)...")
+    timing(true) {
+      super.writeTexts((1 to 10).map(_ => "hello, world"))
+    }
+
+    val count2 = super.countFiles();
+    Assert.assertEquals(count1 + 10, count2)
+
+    for (i <- BLOB_LENGTH) {
+      println(s"writing $i bytes...")
+      timing(true) {
+        super.writeFiles((1 to 10).map(_ => new File(s"./testdata/inputs/$i")))
+      }
+    }
+
+    for (i <- BLOB_LENGTH) {
+      val bytes = readBytes(new File(s"./testdata/inputs/$i"))
+      val ids = super.writeFiles((1 to 10).map(_ => new File(s"./testdata/inputs/$i")))
+      val bytes2 = readBytes(ids.head)
+      Assert.assertArrayEquals(bytes, bytes2)
     }
 
     val count3 = super.countFiles();

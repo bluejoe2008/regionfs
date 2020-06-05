@@ -21,7 +21,7 @@ class GlobalSetting(val props: Properties) {
         None
       }
   }
-
+  lazy val maxWriteFileBatchSize: Long = 2 * 1024 * 1024
   lazy val consistencyStrategy: Int = conf.get(Constants.PARAMETER_KEY_CONSISTENCY_STRATEGY).
     withDefault(Constants.CONSISTENCY_STRATEGY_STRONG).
     withOptions(Map("strong" -> Constants.CONSISTENCY_STRATEGY_STRONG,

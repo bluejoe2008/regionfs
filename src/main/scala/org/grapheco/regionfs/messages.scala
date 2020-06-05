@@ -15,6 +15,10 @@ case class CreateSecondaryRegionResponse(info: RegionInfo) {
 
 }
 
+case class CreateSecondaryFilesResponse(info: RegionInfo) {
+
+}
+
 case class ShutdownRequest() {
 
 }
@@ -51,11 +55,23 @@ case class CreateFileRequest(totalLength: Long, crc32: Long) {
 
 }
 
+case class CreateFilesRequest(fileCount: Int) {
+
+}
+
 case class CreateFileResponse(fileId: FileId, infos: Array[RegionInfo]) {
 
 }
 
+case class CreateFilesResponse(regionId: Long, fileIds: Array[FileId], infos: Array[RegionInfo]) {
+
+}
+
 case class CreateSecondaryFileRequest(regionId: Long, localId: Long, totalLength: Long, creationTime: Long, crc32: Long) {
+
+}
+
+case class CreateSecondaryFilesRequest(regionId: Long, creationTime: Long, fileCount: Int) {
 
 }
 
@@ -64,6 +80,10 @@ case class CreateSecondaryFileResponse(regionId: Long, localId: Long) {
 }
 
 case class MarkSecondaryFileWrittenRequest(regionId: Long, localId: Long, length: Long) {
+
+}
+
+case class MarkSecondaryFilesWrittenRequest(regionId: Long, localIds: Array[Long]) {
 
 }
 

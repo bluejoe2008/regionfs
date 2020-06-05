@@ -412,6 +412,12 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
     }
   }
 
+  def createLocalIds(num: Int): Rollbackable = {
+    val localIds = (1 to num).map(_ => idgen.nextId())
+    Rollbackable.success(localIds.toArray) {
+    }
+  }
+
   def updateLocalId(localId: Long): Rollbackable = {
     try {
       idgen.update(localId)
@@ -436,11 +442,38 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
     }
   }
 
+  def commitFiles(localIds: Array[Long]): Rollbackable = {
+    localIds.foreach { localId =>
+      oplog.logCreateFile(localId)
+      val file = mem.commit(localId)
+
+      _regionFileCount.incrementAndGet()
+      _regionSize.addAndGet(file.length)
+    }
+
+    Rollbackable.success(localIds) {
+
+    }
+  }
+
   def stageFile(localId: Long, buf: ByteBuffer, creationTime: Long, crc32: Long): Rollbackable = {
     stage.append(localId, buf.duplicate(), creationTime, crc32)
     mem.stage(localId, buf.duplicate(), creationTime, crc32)
     Rollbackable.success(localId) {
 
+    }
+  }
+
+  def stageFiles(localIds: Array[Long], files: Array[(Long, Long, ByteBuf)], creationTime: Long): Rollbackable = {
+
+    (localIds.zip(files)).foreach { kv =>
+      val (localId, file) = kv
+      val (length, crc32, buf) = file
+      stage.append(localId, buf.duplicate().nioBuffer(), creationTime, crc32)
+      mem.stage(localId, buf.duplicate().nioBuffer(), creationTime, crc32)
+    }
+
+    Rollbackable.success(localIds) {
     }
   }
 

@@ -2,6 +2,7 @@ package org.grapheco.regionfs.server
 
 import java.util.concurrent.atomic.AtomicBoolean
 
+import io.netty.buffer.Unpooled
 import org.grapheco.commons.util.Logging
 import org.grapheco.hippo.util.ByteBufferInputStream
 import org.grapheco.regionfs.client.FsNodeClient
@@ -215,14 +216,11 @@ class PrimaryRegionWatcher(conf: GlobalSetting,
 
             Await.result(clientOf(primaryNodeId).getPatch(
               localRegion.regionId, localRevision, (buf) => {
-                val is = new ByteBufferInputStream(buf)
-                localRegion.applyPatch(is, {
+                localRegion.applyPatch(Unpooled.wrappedBuffer(buf), {
                   val updatedRegion = localRegionManager.update(localRegion)
                   if (logger.isTraceEnabled())
                     logger.trace(s"[region-${localRegion.regionId}@$nodeId] updated: $localRevision->${updatedRegion.revision}")
                 })
-
-                is.close()
               }), Duration("10s"))
           }
         })

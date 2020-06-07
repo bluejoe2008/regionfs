@@ -512,7 +512,7 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
         val localId = buf.readLong()
         val length = buf.readLong
         val crc32 = buf.readLong
-        val filebuf = buf.readBytes(length.toInt)
+        val filebuf = buf.readSlice(length.toInt) //buf.readBytes(length.toInt)
 
         if (CrcUtils.computeCrc32(filebuf.duplicate().nioBuffer()) != crc32) {
           throw new ReceivedMismatchedStreamException()
@@ -538,7 +538,7 @@ class FsNodeServer(val zks: String, val nodeId: Int, val storeDir: File, host: S
       val files = (1 to fileCount).map { _ =>
         val length = buf.readLong
         val crc32 = buf.readLong
-        val filebuf = buf.readBytes(length.toInt)
+        val filebuf = buf.readSlice(length.toInt) //buf.readBytes(length.toInt)
 
         if (CrcUtils.computeCrc32(filebuf.duplicate().nioBuffer()) != crc32) {
           throw new ReceivedMismatchedStreamException()

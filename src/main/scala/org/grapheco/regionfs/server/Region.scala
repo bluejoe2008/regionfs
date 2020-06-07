@@ -94,7 +94,7 @@ class RegionMem(regionName: RegionName, conf: RegionConfig, write: (Iterable[Mem
   private val staged = mutable.Map[Long, MemFileEntry]()
   private val committed = mutable.Map[Long, MemFileEntry]()
   private val removed = mutable.Set[Long]()
-  private var _lastFlushTime: Long = 0
+  private var _lastFlushTime: Long = System.currentTimeMillis()
 
   def entries(): Stream[Long] = {
     (committed -- removed).keys.toStream
@@ -185,7 +185,7 @@ class RegionMem(regionName: RegionName, conf: RegionConfig, write: (Iterable[Mem
 
   }
 
-  def countCommitted = committed.size - removed.size
+  def countUnflushed = committed.size - removed.size
 }
 
 /**
@@ -374,7 +374,7 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
 
   def fileCount(): Long = _regionFileCount.get()
 
-  def bufferedFileCount(): Long = mem.countCommitted
+  def bufferedFileCount(): Long = mem.countUnflushed
 
   def regionSize(): Long = _regionSize.get
 
@@ -523,7 +523,6 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
 
   def offerPatch(sinceRevision: Long): ByteBuf = {
     val buf = Unpooled.buffer()
-
     val rev = revision
 
     //1!=0
@@ -550,40 +549,38 @@ class Region(val nodeId: Int, val regionId: Long, val conf: RegionConfig, listen
   }
 
   //return value means if update is ok
-  def applyPatch(is: InputStream, callbackOnUpdated: => Unit): Boolean = {
-    val dis = new DataInputStream(is)
-    val mark = dis.readByte()
+  def applyPatch(buf: ByteBuf, callbackOnUpdated: => Unit): Boolean = {
+    val mark = buf.readByte()
     mark match {
       case Constants.MARK_GET_REGION_PATCH_ALREADY_UP_TO_DATE =>
         false
 
       case Constants.MARK_GET_REGION_PATCH_SERVER_IS_BUSY =>
-        val regionId = dis.readLong()
+        val regionId = buf.readLong()
         if (logger.isDebugEnabled)
           logger.debug(s"server is busy now: ${regionId >> 16}")
 
         false
       case Constants.MARK_GET_REGION_PATCH_OK =>
         val (regionId, revision) = (
-          dis.readLong(), dis.readLong())
+          buf.readLong(), buf.readLong())
 
-        var mark: Byte = dis.readByte()
+        var mark: Byte = buf.readByte()
         while (mark != -1) {
-          val (localId, creationTime, fileSize, crc32) = (dis.readLong(), dis.readLong(), dis.readLong(), dis.readLong())
-          val buf = Unpooled.buffer(1024)
-          buf.writeBytes(is, fileSize.toInt)
+          val (localId, creationTime, fileSize, crc32) = (buf.readLong(), buf.readLong(), buf.readLong(), buf.readLong())
+          val buf2 = buf.readSlice(fileSize.toInt)
 
           val tx = Atomic("file->stage") {
             case _ =>
               this.updateLocalId(localId)
-              this.stageFile(localId, buf.nioBuffer(), creationTime, crc32)
+              this.stageFile(localId, buf2.nioBuffer(), creationTime, crc32)
           } --> Atomic("file->commit") {
             case _ =>
               this.commitFile(localId)
           }
 
           TransactionRunner.perform(tx, regionId, RetryStrategy.FOR_TIMES(conf.globalSetting.maxWriteRetryTimes))
-          mark = dis.readByte()
+          mark = buf.readByte()
         }
 
         true

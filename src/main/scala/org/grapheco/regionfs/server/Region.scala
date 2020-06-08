@@ -129,7 +129,7 @@ class RegionMem(regionName: RegionName, conf: RegionConfig, write: (Iterable[Mem
   def isDirtyEnough(): Boolean = {
     if (!committed.isEmpty) {
       val time = System.currentTimeMillis()
-      if (time - _lastFlushTime > conf.globalSetting.maxRegionMemDirtyTime)
+      if (time - _lastFlushTime > conf.globalSetting.maxRegionMemAlive)
         true
       else
         (committed.size + removed.size) > conf.globalSetting.maxRegionMemEntryCount ||

@@ -3,6 +3,7 @@ package regionfs
 import java.io.File
 
 import org.apache.commons.io.FileUtils
+import org.grapheco.regionfs.Constants
 import org.grapheco.regionfs.server.{FsNodeServer, NodeIdAlreadyExistException, RegionStoreLockedException}
 import org.junit.{Assert, Before, Test}
 
@@ -20,14 +21,14 @@ class StartNodeServerTest {
   @Test
   def testNodeIdConflict(): Unit = {
     val server1 = FsNodeServer.create(Map(
-      "node.id" -> "1", "zookeeper.address" -> "localhost:2181", "server.port" -> "1224", "data.storeDir" -> "./nodes/node1"),
+      "node.id" -> "1", "zookeeper.address" -> "localhost:2181", "server.port" -> "1224", Constants.PARAMETER_KEY_DATA_STORE_DIR -> "./nodes/node1"),
       new File("./testdata"))
 
     new File("./testdata/nodes/node2").mkdirs()
     var server2: FsNodeServer = null
     try {
       server2 = FsNodeServer.create(Map(
-        "node.id" -> "1", "zookeeper.address" -> "localhost:2181", "server.port" -> "1225", "data.storeDir" -> "./nodes/node2"),
+        "node.id" -> "1", "zookeeper.address" -> "localhost:2181", "server.port" -> "1225", Constants.PARAMETER_KEY_DATA_STORE_DIR -> "./nodes/node2"),
         new File("./testdata"))
 
       Assert.assertTrue(false)
@@ -45,14 +46,20 @@ class StartNodeServerTest {
   @Test
   def testNodePathConflict(): Unit = {
     val server1 = FsNodeServer.create(Map(
-      "node.id" -> "1", "zookeeper.address" -> "localhost:2181", "server.port" -> "1224", "data.storeDir" -> "./nodes/node1"),
+      "node.id" -> "1",
+      "zookeeper.address" -> "localhost:2181",
+      "server.port" -> "1224",
+      Constants.PARAMETER_KEY_DATA_STORE_DIR -> "./nodes/node1"),
       new File("./testdata"))
 
     new File("./testdata/nodes/node2").mkdirs()
     var server2: FsNodeServer = null
     try {
       server2 = FsNodeServer.create(Map(
-        "node.id" -> "2", "zookeeper.address" -> "localhost:2181", "server.port" -> "1225", "data.storeDir" -> "./nodes/node1"),
+        "node.id" -> "2",
+        "zookeeper.address" -> "localhost:2181",
+        "server.port" -> "1225",
+        Constants.PARAMETER_KEY_DATA_STORE_DIR -> "./nodes/node1"),
         new File("./testdata"))
 
       Assert.assertTrue(false)

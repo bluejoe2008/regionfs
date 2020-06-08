@@ -36,25 +36,25 @@ object Constants {
   val CONSISTENCY_STRATEGY_EVENTUAL = 1
   val CONSISTENCY_STRATEGY_STRONG = 0
 
-  val DEFAULT_REGION_MEM_DIRTY_TIMEOUT = 10 * 60 * 1000
-  val DEFAULT_REGION_MEM_ENTRY_COUNT = 50
-  val DEFAULT_REGION_MEM_SIZE = 1 * 1024 * 1024
-
-  val PARAMETER_KEY_REGION_MEM_DIRTY_TIMEOUT = "region.mem.dirty.timeout"
-  val PARAMETER_KEY_REGION_MEM_ENTRY_COUNT = "region.mem.entry.count"
-  val PARAMETER_KEY_REGION_MEM_SIZE = "region.mem.size"
-
+  val DEFAULT_REGION_MEM_DIRTY_TIMEOUT: Long = 10 * 60 * 1000
+  val DEFAULT_REGION_MEM_ENTRY_COUNT: Long = 50
+  val DEFAULT_REGION_MEM_SIZE: Long = 1 * 1024 * 1024
+  val DEFAULT_MAX_WRITE_FILE_BATCH_SIZE: Long = 2 * 1024 * 1024
+  val PARAMETER_KEY_REGION_MEM_MAX_ALIVE = "region.mem.max_alive"
+  val PARAMETER_KEY_REGION_MEM_MAX_ENTRY_COUNT = "region.mem.max_entry_count"
+  val PARAMETER_KEY_REGION_MEM_MAX_TOTAL_SIZE = "region.mem.max_total_size"
+  val PARAMETER_KEY_MAX_WRITE_FILE_BATCH_SIZE = "write.max_batch_size"
   val PARAMETER_KEY_CONSISTENCY_STRATEGY = "consistency.strategy"
-  val PARAMETER_KEY_MIN_WRITABLE_REGIONS = "region.min.writable"
-  val PARAMETER_KEY_REPLICA_NUM = "replica.num"
-  val PARAMETER_KEY_REGION_SIZE_LIMIT = "region.size.limit"
-  val PARAMETER_KEY_REGION_VERSION_CHECK_INTERVAL = "region.version.check.interval"
-  val PARAMETER_KEY_REGION_FILE_CLEANUP_INTERVAL = "region.file.cleanup.interval"
-  val PARAMETER_KEY_EXECUTOR_THREAD_POOL_SIZE = "executor.thread.pool.size"
+  val PARAMETER_KEY_MIN_WRITABLE_REGIONS = "region.min_writable"
+  val PARAMETER_KEY_REPLICA_NUM = "region.replica_num"
+  val PARAMETER_KEY_REGION_SIZE_LIMIT = "region.max_size"
+  val PARAMETER_KEY_REGION_VERSION_CHECK_INTERVAL = "region.version_check_interval"
+  val PARAMETER_KEY_REGION_FILE_CLEANUP_INTERVAL = "region.cleanup_interval"
+  val PARAMETER_KEY_EXECUTOR_THREAD_POOL_SIZE = "executor.thread_pool_size"
+  val PARAMETER_KEY_WRITE_RETRY_TIMES = "write.max_retry_times"
   val PARAMETER_KEY_ZOOKEEPER_ADDRESS = "zookeeper.address"
   val PARAMETER_KEY_NODE_ID = "node.id"
   val PARAMETER_KEY_SERVER_HOST = "server.host"
   val PARAMETER_KEY_SERVER_PORT = "server.port"
-  val PARAMETER_KEY_DATA_STORE_DIR = "data.storeDir"
-  val PARAMETER_KEY_WRITE_RETRY_TIMES = "write.retry.times"
+  val PARAMETER_KEY_DATA_STORE_DIR = "data.store_dir"
 }

@@ -21,14 +21,14 @@ class GlobalSetting(val props: Properties) {
         None
       }
   }
-  lazy val maxWriteFileBatchSize: Long = 2 * 1024 * 1024
+  lazy val maxWriteFileBatchSize: Long = conf.get(Constants.PARAMETER_KEY_MAX_WRITE_FILE_BATCH_SIZE).withDefault(Constants.DEFAULT_MAX_WRITE_FILE_BATCH_SIZE).asLong
   lazy val consistencyStrategy: Int = conf.get(Constants.PARAMETER_KEY_CONSISTENCY_STRATEGY).
     withDefault(Constants.CONSISTENCY_STRATEGY_STRONG).
     withOptions(Map("strong" -> Constants.CONSISTENCY_STRATEGY_STRONG,
       "eventual" -> Constants.CONSISTENCY_STRATEGY_EVENTUAL)).asInt
-  lazy val maxRegionMemDirtyTime = conf.get(Constants.PARAMETER_KEY_REGION_MEM_DIRTY_TIMEOUT).withDefault(Constants.DEFAULT_REGION_MEM_DIRTY_TIMEOUT).asLong
-  lazy val maxRegionMemEntryCount: Long = conf.get(Constants.PARAMETER_KEY_REGION_MEM_ENTRY_COUNT).withDefault(Constants.DEFAULT_REGION_MEM_ENTRY_COUNT).asLong
-  lazy val maxRegionMemSize: Long = conf.get(Constants.PARAMETER_KEY_REGION_MEM_SIZE).withDefault(Constants.DEFAULT_REGION_MEM_SIZE).asLong
+  lazy val maxRegionMemAlive = conf.get(Constants.PARAMETER_KEY_REGION_MEM_MAX_ALIVE).withDefault(Constants.DEFAULT_REGION_MEM_DIRTY_TIMEOUT).asLong
+  lazy val maxRegionMemEntryCount: Long = conf.get(Constants.PARAMETER_KEY_REGION_MEM_MAX_ENTRY_COUNT).withDefault(Constants.DEFAULT_REGION_MEM_ENTRY_COUNT).asLong
+  lazy val maxRegionMemSize: Long = conf.get(Constants.PARAMETER_KEY_REGION_MEM_MAX_TOTAL_SIZE).withDefault(Constants.DEFAULT_REGION_MEM_SIZE).asLong
   lazy val minWritableRegions: Int = conf.get(Constants.PARAMETER_KEY_MIN_WRITABLE_REGIONS).withDefault(Constants.DEFAULT_MIN_WRITABLE_REGIONS).asInt
   lazy val replicaNum: Int = conf.get(Constants.PARAMETER_KEY_REPLICA_NUM).withDefault(Constants.DEFAULT_REPLICA_NUM).asInt
   lazy val regionSizeLimit: Long = conf.get(Constants.PARAMETER_KEY_REGION_SIZE_LIMIT).withDefault(Constants.DEFAULT_REGION_SIZE_LIMIT).asLong

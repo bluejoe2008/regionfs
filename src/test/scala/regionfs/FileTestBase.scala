@@ -8,7 +8,7 @@ import org.grapheco.commons.util.{Logging, Profiler}
 import org.grapheco.regionfs.client.{FsAdmin, FsClient}
 import org.grapheco.regionfs.server.{FsNodeServer, Region, RegionEvent, RegionEventListener}
 import org.grapheco.regionfs.util.ByteBufferConversions._
-import org.grapheco.regionfs.{FileId, GlobalSettingWriter}
+import org.grapheco.regionfs.{Constants, FileId, GlobalSettingWriter}
 import org.junit.{After, Before}
 
 import scala.collection.mutable.ArrayBuffer
@@ -69,14 +69,14 @@ class FileTestBase extends Logging {
         "zookeeper.address" -> con.zookeeperString,
         "server.host" -> "localhost",
         "server.port" -> s"${x._2}",
-        "data.storeDir" -> new File(s"./testdata/nodes/node${x._1}").getCanonicalFile.getAbsolutePath,
+        Constants.PARAMETER_KEY_DATA_STORE_DIR -> new File(s"./testdata/nodes/node${x._1}").getCanonicalFile.getAbsolutePath,
         "node.id" -> s"${x._1}"
       )
     })
 
     for (conf <- confs) {
       try {
-        new File(conf("data.storeDir")).mkdirs()
+        new File(conf(Constants.PARAMETER_KEY_DATA_STORE_DIR)).mkdirs()
         servers += FsNodeServer.create(conf)
       }
       catch {

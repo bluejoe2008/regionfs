@@ -14,6 +14,16 @@ import scala.concurrent.duration.Duration
   * Created by bluejoe on 2019/8/23.
   */
 class FileIOWith1Node1ReplicaTest extends FileTestBase {
+  //@Test
+  def testBulkWrite(): Unit = {
+    (0 to 5000000).foreach { x =>
+      println(s"writing file $x...")
+      timing() {
+        super.writeFile(new File(s"./testdata/inputs/2048"))
+      }
+    }
+  }
+
   @Test
   def testWrite(): Unit = {
     val count1 = super.countFiles();
@@ -46,7 +56,7 @@ class FileIOWith1Node1ReplicaTest extends FileTestBase {
   }
 
   @Test
-  def testBulkWrite(): Unit = {
+  def testBatchedWrite(): Unit = {
     val count1 = super.countFiles();
     println(s"test bulk writing(10 files)...")
     timing(true) {
